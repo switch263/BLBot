@@ -31,7 +31,6 @@ async def roll(ctx, dice: str):
         return
 
     result = ', '.join(str(random.randint(1, limit)) for r in range(rolls))
-    print(result)
     await ctx.send(result)
 
 
@@ -79,10 +78,7 @@ async def eightball(ctx):
 
 @bot.command()
 async def weather(ctx, arg, country='US'):
-    print(arg)
-    print(country)
     city_name = arg + ',' + country
-    print(city_name)
     API_KEY = openweatherapikey
     #api = "http://api.openweathermap.org/data/2.5/forecast?units=metric&q={city}&APPID={key}"
     api = "http://api.openweathermap.org/data/2.5/weather?units=imperial&q={city}&APPID={key}"
@@ -90,9 +86,6 @@ async def weather(ctx, arg, country='US'):
     url = api.format(city=city_name, key=API_KEY)
     response = requests.get(url)
     js = response.json()
-
-    print(url)
-    print(js)
 
     if js["cod"] == '404':
         value = "404, dodging a barf"
@@ -110,7 +103,6 @@ async def test(ctx, *, message):
 @bot.command()
 async def lenny(ctx):
     lenny = requests.get("https://api.lenny.today/v1/random?limit=1").json()
-    print(type(lenny))
     await ctx.send(lenny[0]["face"])
 
 bot.run(token)
