@@ -1,3 +1,4 @@
+#!env/bin/python3.7
 import discord
 from discord.ext import commands
 import random
@@ -53,7 +54,7 @@ async def joined(ctx, member: discord.Member):
     await ctx.send('{0.name} joined in {0.joined_at}'.format(member))
 
 
-@bot.command()
+@bot.command(aliases=['8ball','8b'])
 async def eightball(ctx):
     """ Return an 8-ball response."""
     answers = [
@@ -105,4 +106,13 @@ async def lenny(ctx):
     lenny = requests.get("https://api.lenny.today/v1/random?limit=1").json()
     await ctx.send(lenny[0]["face"])
 
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send("Not a thing I know how to do, partner! :cowboy:")
+    else:
+        raise ValueError(error)
+
 bot.run(token)
+
