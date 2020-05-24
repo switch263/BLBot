@@ -2,7 +2,11 @@ import discord
 from discord.ext import commands
 import requests
 import random
+import os
+from pathlib import Path
 
+cwd = Path(__file__).parents[0]
+cwd = str(os.getcwd())
 
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
@@ -52,6 +56,26 @@ class BasicCommands(commands.Cog):
     async def lenny(self, ctx):
         lenny = requests.get("https://api.lenny.today/v1/random?limit=1").json()
         await ctx.send(lenny[0]["face"])
+
+    @commands.command(name="Reload", aliases=['reload'])
+    @commands.is_owner()
+    async def Reload(self, ctx):
+        try:
+            for cog in list(self.bot.cogs):
+                print("Unloaded {}".format(cog))
+                self.bot.unload_extension("cogs.{}".format(cog.lower()))
+            await ctx.send("All cogs unloaded")
+            for file in os.listdir(cwd + "/cogs"):
+                if file.endswith(".py") and not file.startswith("_"):
+                    #self.bot.unload_extension(f"cogs.{file[:-3]}")
+                    self.bot.load_extension(f"cogs.{file[:-3]}")
+                    await ctx.send("{} reloaded".format(file[:-3]))
+        except ValueError as e:
+            await ctx.send("Unable to reload cogs. Check console for possible traceback. {}".format(e))
+
+    @Reload.error
+    async def Reload_error(self, ctx, error):
+        await ctx.send("Unable to reload cogs. {}".format(error))
 
 
 def setup(bot):
