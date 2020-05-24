@@ -3,7 +3,7 @@ from discord.ext import commands
 from config import dbtype, dbfile
 import sqlite3
 from sqlite3 import Error
-import sqlalchemy
+
 
 class Quotes(commands.Cog):
     def __init__(self, bot):
