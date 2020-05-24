@@ -10,7 +10,7 @@ class BasicCommands(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Ping module has been loaded\n-----")
+        print("Basic commands module has been loaded\n-----")
 
     @commands.command(name='Ping', aliases=['ping'])
     async def ping(self, ctx):
