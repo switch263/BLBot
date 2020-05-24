@@ -18,9 +18,7 @@ print(f"{cwd}\n-----")
 
 @bot.event
 async def on_ready():
-    print('Logged in as')
-    print(bot.user.name)
-    print(bot.user.id)
+    print('Logged in as {}, {}'.format(bot.user.name, bot.user.id))
     print('------')
 
 
@@ -31,6 +29,24 @@ async def on_command_error(ctx, error):
     else:
         raise ValueError(error)
 
+
+@bot.command(name="Reload", aliases=['reload'])
+#@commands.has_role('Admin')
+@commands.is_owner()
+async def Reload(ctx):
+    try:
+        print("Attempting to reload cogs")
+        for file in os.listdir(cwd + "/cogs"):
+            if file.endswith(".py") and not file.startswith("_"):
+                bot.unload_extension(f"cogs.{file[:-3]}")
+                bot.load_extension(f"cogs.{file[:-3]}")
+                await ctx.send("{} reloaded".format(file[:-3]))
+    except:
+        await ctx.send("Unable to reload cogs. Check console for possible traceback.")
+
+@Reload.error
+async def Reload_error(ctx, error):
+    await ctx.send("Unable to reload cogs. {}".format(error))
 
 if __name__ == '__main__':
     # When running this file, if it is the 'main' file
