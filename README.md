@@ -5,6 +5,7 @@ Dependent upon discord.py (https://github.com/Rapptz/discord.py) and a few more 
 
 Edit config.py to specify your weather API key and Discord bot token as appropriate before running bot.py directly.
 
+Cogs (plugins) live in cogs/ and can be added / extended easily. There is a pre-built function (reload) that will unload all running cogs and then parse all files in cogs/ to load any that still exist on disk back into memory.
 
 # Dockerfile
 
