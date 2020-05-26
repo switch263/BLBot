@@ -20,3 +20,21 @@ docker build --tag blbot .
 
 docker run -d --name blbot blbot
 ```
+
+
+# Compose Usage
+```
+version: '3'
+
+services:
+  blbot:
+    restart: always
+    image: /blbot:latest
+    container_name: blbot
+    environment:
+      - "OPENWEATHER_API_KEY=xxx"
+      - "DISCORD_TOKEN=xxx"
+
+    volumes:
+      - /data/blbot/quotes.db:/app/quotes.db
+```

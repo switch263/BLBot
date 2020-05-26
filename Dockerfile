@@ -1,4 +1,7 @@
 FROM alpine
+ENV OPENWEATHER_API_KEY = 1234
+ENV DISCORD_TOKEN = 1234
+
 RUN apk upgrade --no-cache \
   && apk add --no-cache \
     musl \
@@ -19,9 +22,7 @@ RUN cd /usr/bin \
   && ln -sf pip3 pip
 
 COPY . /app
-
 WORKDIR /app
 
 RUN pip install -r requirements.txt
-
 CMD python ./bot.py
