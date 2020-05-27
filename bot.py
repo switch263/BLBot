@@ -5,15 +5,20 @@ import os
 from pathlib import Path
 import json
 from discord.ext import commands
-
 from config import *
+import logging
+import sys
+
+token = os.environ.get('DISCORD_TOKEN')
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+
+
 
 description = '''A basic discord bot for my gaming group, the Bored Lunatics'''
 bot = commands.Bot(command_prefix='!', description=description)
 
 cwd = Path(__file__).parents[0]
 cwd = str(cwd)
-
 
 @bot.event
 async def on_ready():
