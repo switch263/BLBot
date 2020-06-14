@@ -27,7 +27,7 @@ class weather(commands.Cog):
             value = "Sorry partner, I can't find that location."
 
         else:
-            value = "Station: {1}, {2}\nTemperature: {3}°F (Low {4} High {5})\nHumidity: {6}\nConditions: {7}, {8}\nWind: {9}mph".format(
+            value = "Station: {}, {}\nTemperature: {}°F (Low {}°F High {}°F)\nHumidity: {}%\nConditions: {}, {}\nWind: {}mph".format(
                     js["name"],
                     js["sys"]["country"],
                     js["main"]["temp"],
