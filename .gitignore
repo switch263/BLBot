@@ -1,3 +1,4 @@
 config.py*
 *.pyc
 quotes.db
+docker-compose.yml
