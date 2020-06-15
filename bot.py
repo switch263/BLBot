@@ -14,7 +14,7 @@ logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 
 
-description = '''A basic discord bot for my gaming group, the Bored Lunatics'''
+description = """A very basic discord bot, originally written for my group of gaming idiots called the Bored Lunatics. Hence the name blbot! Find the source code at https://github.com/switch263/BLBot"""
 bot = commands.Bot(command_prefix='!', description=description)
 
 cwd = Path(__file__).parents[0]
