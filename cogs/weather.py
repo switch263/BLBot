@@ -16,6 +16,7 @@ class weather(commands.Cog):
 
     @commands.command(name='Weather', aliases=['weather', 'w'])
     async def weather(self, ctx, arg, country='US'):
+        """ Check the weather at the closest station near you. Defaults to US. Displayed in imperial units. Usage: !weather \"Austin, TX\" or !weather 78704 """
         city_name = arg + ',' + country
         api = "http://api.openweathermap.org/data/2.5/weather?units=imperial&q={city}&APPID={key}"
 
