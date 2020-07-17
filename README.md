@@ -38,3 +38,6 @@ services:
     volumes:
       - /data/blbot/quotes.db:/app/quotes.db
 ```
+
+# drone.io builds
+This project is drone.io build ready
