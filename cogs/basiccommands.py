@@ -37,11 +37,12 @@ class BasicCommands(commands.Cog):
         """Chooses between multiple choices."""
         await ctx.send(random.choice(choices))
 
-    @commands.command()
-    async def repeat(self, ctx, times: int, content='repeating...'):
-        """Repeats a message multiple times."""
-        for i in range(times):
-            await ctx.send(content)
+    # Disabled because this is real dumb to allow people to do...
+    #@commands.command()
+    #async def repeat(self, ctx, times: int, content='repeating...'):
+    #    """Repeats a message multiple times."""
+    #    for i in range(times):
+    #        await ctx.send(content)
 
     @commands.command()
     async def joined(self, ctx, member: discord.Member):
@@ -67,7 +68,6 @@ class BasicCommands(commands.Cog):
             await ctx.send("All cogs unloaded")
             for file in os.listdir(cwd + "/cogs"):
                 if file.endswith(".py") and not file.startswith("_"):
-                    #self.bot.unload_extension(f"cogs.{file[:-3]}")
                     self.bot.load_extension(f"cogs.{file[:-3]}")
                     await ctx.send("{} reloaded".format(file[:-3]))
         except ValueError as e:
