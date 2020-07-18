@@ -40,4 +40,4 @@ services:
 ```
 
 # drone.io builds
-This project is drone.io build ready
+This project is drone.io build ready.
