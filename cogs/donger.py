@@ -33,4 +33,4 @@ class donger(commands.Cog):
             await ctx.send("8====D~ ~ ~")
 
 def setup(bot):
-    bot.add_cog(temperature(bot))
+    bot.add_cog(donger(bot))
