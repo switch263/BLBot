@@ -28,7 +28,7 @@ class donger(commands.Cog):
         if member:
             random.seed()
             motion = motions[random.randrange(len(motions))]
-            dongermsg = "{} {} their donger at {}"
+            dongermsg = "{} {} their donger at {} 8====D~ ~ ~"
             dongermsg = dongermsg.format(ctx.message.author.mention, motion, member.mention)
             await ctx.send(dongermsg)
         else:
