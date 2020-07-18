@@ -11,7 +11,7 @@ class donger(commands.Cog):
         print("Donger module has been loaded\n-----")
 
     @commands.command(aliases=['donger'])
-    async def Donger(self, ctx, member: discord.Member):
+    async def Donger(self, ctx, member: discord.Member = None):
         motions = ['neighs', 'negotiates', 'ogles', 'neglects', 'quavers', 'scowls', 'telephones', 'salivates',
                    'satisfys', 'sheathes', 'traipses', 'parades', 'offends', 'manipulates', 'compiles', 'mispronounces',
                    'murders', 'runs', 'vaginas', 'locks', 'whoolies', 'bangs', 'drops', 'itches', 'hugs', 'bakes',
