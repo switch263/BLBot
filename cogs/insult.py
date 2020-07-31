@@ -13,11 +13,11 @@ class insult(commands.Cog):
     @commands.command(aliases=['Insult'])
     async def insult(self, ctx, member: discord.Member = None):
         """ Insult the target if one is given, otherwise insult the user that asked. """
-        with open(list-of-insults) as f:
+        with open("list-of-insults") as f:
             insult_list = f.readlines()
 
         random.seed()
-        insult = insult_list[random.randrange(len(insult_list))]
+        insult = insult_list[random.randrange(len(insult_list))].strip()
         if member:
             insultmsg = "Hey, {}! {} said you're a {}!"
             insultmsg = insultmsg.format(member.mention, ctx.message.author.mention, insult)
