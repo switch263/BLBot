@@ -24,7 +24,8 @@ class Quotes(commands.Cog):
                 print(e)
             finally:
                 if dbconn:
-                    print("Connected to {} using database {}".format(dbtype, dbfile))
+                    print("Connected to {} using database {}".format(
+                        dbtype, dbfile))
                     dbconn.close()
         print("Quotes module has been loaded\n-----")
 
@@ -33,7 +34,8 @@ class Quotes(commands.Cog):
         """ commands to add and retrieve quotes to/from the db"""
         if subcommand.lower() == 'add':
             if not quote:
-                await ctx.send(":interrobang: You need to give me a quote to add!")
+                await ctx.send(
+                    ":interrobang: You need to give me a quote to add!")
                 pass
 
             if quote:
@@ -44,7 +46,8 @@ class Quotes(commands.Cog):
                     cur.execute("INSERT INTO quotes VALUES (?)", [quote])
                     rowid = cur.lastrowid
                     dbconn.commit()
-                    await ctx.send(":microphone: " + "[" + str(rowid) + "] " + quote + " added to database")
+                    await ctx.send(":microphone: " + "[" + str(rowid) + "] " +
+                                   quote + " added to database")
                     dbconn.close()
 
         if subcommand.lower() == "get":
@@ -53,7 +56,8 @@ class Quotes(commands.Cog):
                 # user wants a specific quote ID
                 dbconn = sqlite3.connect(dbfile)
                 cur = dbconn.cursor()
-                randquote = cur.execute("SELECT * FROM quotes WHERE rowid = ?;", [quote])
+                randquote = cur.execute(
+                    "SELECT * FROM quotes WHERE rowid = ?;", [quote])
                 randquote = randquote.fetchall()[0][0]
                 id = quote
                 await ctx.send("[" + str(id) + "] " + randquote)
@@ -62,9 +66,12 @@ class Quotes(commands.Cog):
                 # assume user wants a random quote back
                 dbconn = sqlite3.connect(dbfile)
                 cur = dbconn.cursor()
-                randquote = cur.execute("SELECT * FROM quotes ORDER BY RANDOM() LIMIT 1;")
+                randquote = cur.execute(
+                    "SELECT * FROM quotes ORDER BY RANDOM() LIMIT 1;")
                 randquote = randquote.fetchall()[0][0]
-                rowid = cur.execute("SELECT rowid FROM quotes WHERE quote like (?)", [randquote])
+                rowid = cur.execute(
+                    "SELECT rowid FROM quotes WHERE quote like (?)",
+                    [randquote])
                 id = rowid.fetchall()[0][0]
                 await ctx.send("[" + str(id) + "] " + randquote)
                 dbconn.close()

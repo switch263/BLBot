@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import random
 
+
 class insult(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -20,7 +21,8 @@ class insult(commands.Cog):
         insult = insult_list[random.randrange(len(insult_list))].strip()
         if member:
             insultmsg = "Hey, {}! {} said you're a {}!"
-            insultmsg = insultmsg.format(member.mention, ctx.message.author.mention, insult)
+            insultmsg = insultmsg.format(member.mention,
+                                         ctx.message.author.mention, insult)
             await ctx.send(insultmsg)
         else:
             insultmsg = "Hey, {}! You're a {}!"
@@ -30,4 +32,3 @@ class insult(commands.Cog):
 
 def setup(bot):
     bot.add_cog(insult(bot))
-

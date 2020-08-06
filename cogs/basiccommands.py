@@ -9,6 +9,7 @@ from lenny import lenny
 cwd = Path(__file__).parents[0]
 cwd = str(os.getcwd())
 
+
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -33,7 +34,8 @@ class BasicCommands(commands.Cog):
         result = ', '.join(str(random.randint(1, limit)) for r in range(rolls))
         await ctx.send(result)
 
-    @commands.command(description='For when you wanna settle the score some other way')
+    @commands.command(
+        description='For when you wanna settle the score some other way')
     async def choose(self, ctx, *choices: str):
         """Chooses between multiple choices."""
         await ctx.send(random.choice(choices))
@@ -71,7 +73,9 @@ class BasicCommands(commands.Cog):
                     self.bot.load_extension(f"cogs.{file[:-3]}")
                     await ctx.send("{} reloaded".format(file[:-3]))
         except ValueError as e:
-            await ctx.send("Unable to reload cogs. Check console for possible traceback. {}".format(e))
+            await ctx.send(
+                "Unable to reload cogs. Check console for possible traceback. {}"
+                .format(e))
 
     @Reload.error
     async def Reload_error(self, ctx, error):
@@ -80,4 +84,3 @@ class BasicCommands(commands.Cog):
 
 def setup(bot):
     bot.add_cog(BasicCommands(bot))
-

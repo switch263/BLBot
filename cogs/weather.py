@@ -5,10 +5,10 @@ import os
 
 OPENWEATHER_API_KEY = os.environ.get('OPENWEATHER_API_KEY')
 
+
 class weather(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -29,17 +29,13 @@ class weather(commands.Cog):
 
         else:
             value = "Station: {}, {}\nTemperature: {}°F (Low {}°F High {}°F)\nHumidity: {}%\nConditions: {}, {}\nWind: {}mph".format(
-                    js["name"],
-                    js["sys"]["country"],
-                    js["main"]["temp"],
-                    js["main"]["temp_min"],
-                    js["main"]["temp_max"],
-                    js["main"]["humidity"],
-                    js["weather"][0]["main"],
-                    js["weather"][0]["description"],
-                    js["wind"]["speed"])
+                js["name"], js["sys"]["country"], js["main"]["temp"],
+                js["main"]["temp_min"], js["main"]["temp_max"],
+                js["main"]["humidity"], js["weather"][0]["main"],
+                js["weather"][0]["description"], js["wind"]["speed"])
 
         await ctx.send(value)
+
 
 def setup(bot):
     bot.add_cog(weather(bot))
