@@ -34,8 +34,7 @@ steps:
       from_secret: docker_repo
     username:
       from_secret: docker_username
-    auto_tag: true
-    auto_tag_suffix: linux-amd64
+    tags: latest
     purge: true
   when:
     exclude:
