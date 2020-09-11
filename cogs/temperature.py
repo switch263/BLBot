@@ -10,13 +10,13 @@ class temperature(commands.Cog):
         print("Temperature conversion module has been loaded\n-----")
 
     @commands.command(aliases=['ctf'])
-    async def CTF(self, ctx, temp: int):
+    async def CTF(self, ctx, temp: float):
         """ converts celcius to fahrenheit"""
         convert = round(temp * 1.8 + 32, 1)
         await ctx.send(":thermometer: " + str(temp) + "°C is " + str(convert) + "°F")
 
     @commands.command(aliases=['ftc'])
-    async def FTC(self, ctx, temp: int):
+    async def FTC(self, ctx, temp: float):
         """ converts fahrenheit to celcius"""
         convert = round((temp - 32) / 1.8, 1)
         await ctx.send(":thermometer: " + str(temp) + "°F is " + str(convert) + "°C")
