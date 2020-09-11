@@ -4,6 +4,7 @@ import requests
 import random
 import os
 from pathlib import Path
+from lenny import lenny
 
 cwd = Path(__file__).parents[0]
 cwd = str(os.getcwd())
@@ -55,8 +56,7 @@ class BasicCommands(commands.Cog):
 
     @commands.command()
     async def lenny(self, ctx):
-        lenny = requests.get("https://api.lenny.today/v1/random?limit=1").json()
-        await ctx.send(lenny[0]["face"])
+        await ctx.send(lenny())
 
     @commands.command(name="Reload", aliases=['reload'])
     @commands.is_owner()
