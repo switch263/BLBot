@@ -17,7 +17,7 @@ class fight(commands.Cog):
         if member:
             fighter2 = member.mention
         else:
-            fighter2 = 'themself'
+            fighter2 = ctx.message.author.mention
         bang = ["BANG", "POW", "SLAM", "WHACK", "SLAP", "KAPOW", "ZAM", "BOOM"]
         blow_type = ["devastating", "destructive", "ruthless", "damaging", "ruinous", "catastrophic",
                      "traumatic", "shattering", "overwhelming", "crushing", "fierce", "deadly", "lethal",
