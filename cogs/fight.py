@@ -15,7 +15,7 @@ class fight(commands.Cog):
     async def fight(self, ctx, member: discord.Member = None):
         fighter1 = ctx.message.author.mention
         if member:
-            fighter2 = member
+            fighter2 = member.mention
         else:
             fighter2 = 'themself'
         bang = ["BANG", "POW", "SLAM", "WHACK", "SLAP", "KAPOW", "ZAM", "BOOM"]
