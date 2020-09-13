@@ -17,7 +17,7 @@ class fight(commands.Cog):
         if member:
             fighter2 = member.mention
         else:
-            fighter2 = ctx.message.author.mention
+            fighter2 = random.choice(ctx.message.channel.members).mention
         bang = ["BANG", "POW", "SLAM", "WHACK", "SLAP", "KAPOW", "ZAM", "BOOM"]
         blow_type = ["devastating", "destructive", "ruthless", "damaging", "ruinous", "catastrophic",
                      "traumatic", "shattering", "overwhelming", "crushing", "fierce", "deadly", "lethal",

@@ -4,7 +4,8 @@ import requests
 import random
 import os
 from pathlib import Path
-from lenny import lenny
+#from lenny import lenny
+from time import sleep
 
 cwd = Path(__file__).parents[0]
 cwd = str(os.getcwd())
@@ -33,7 +34,8 @@ class BasicCommands(commands.Cog):
         result = ', '.join(str(random.randint(1, limit)) for r in range(rolls))
         await ctx.send(result)
 
-    @commands.command(description='For when you wanna settle the score some other way')
+    @commands.command(description='For when you wanna settle the score some other way', name="Choose", aliases=['pick',
+                                                                                                                'Pick'])
     async def choose(self, ctx, *choices: str):
         """Chooses between multiple choices."""
         await ctx.send(random.choice(choices))
@@ -66,10 +68,12 @@ class BasicCommands(commands.Cog):
                 print("Unloaded {}".format(cog))
                 self.bot.unload_extension("cogs.{}".format(cog.lower()))
             await ctx.send("All cogs unloaded")
+            message = ""
             for file in os.listdir(cwd + "/cogs"):
                 if file.endswith(".py") and not file.startswith("_"):
                     self.bot.load_extension(f"cogs.{file[:-3]}")
-                    await ctx.send("{} reloaded".format(file[:-3]))
+                    message += "{} reloaded\n".format(file[:-3])
+            await ctx.send(message)
         except ValueError as e:
             await ctx.send("Unable to reload cogs. Check console for possible traceback. {}".format(e))
 
