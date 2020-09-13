@@ -33,8 +33,8 @@ class BasicCommands(commands.Cog):
         result = ', '.join(str(random.randint(1, limit)) for r in range(rolls))
         await ctx.send(result)
 
-    @commands.command(description='For when you wanna settle the score some other way', name="Choose", aliases=['pick',
-                                                                                                                'Pick'])
+    @commands.command(description='For when you wanna settle the score some other way', name="Choose",
+                      aliases=['pick', 'Pick', 'choose'])
     async def choose(self, ctx, *choices: str):
         """Chooses between multiple choices."""
         await ctx.send(random.choice(choices))
