@@ -4,8 +4,7 @@ import requests
 import random
 import os
 from pathlib import Path
-#from lenny import lenny
-from time import sleep
+from lenny import lenny
 
 cwd = Path(__file__).parents[0]
 cwd = str(os.getcwd())
