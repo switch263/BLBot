@@ -12,7 +12,7 @@ class mock(commands.Cog):
         print("Mock module has been loaded\n-----")
 
     @commands.command(aliases=['Mock'])
-    async def mock(self, ctx, mockstring: str):
+    async def mock(self, ctx, *, mockstring: str):
         """ Automatic spongebob-mocking-text """
         output_text = ""
         for char in mockstring:
