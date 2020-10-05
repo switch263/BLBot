@@ -11,9 +11,9 @@ class hf(commands.Cog):
         print("hf module has been loaded\n-----")
 
     @commands.command(aliases=['hotfuckin','HotFuckin'])
-    async def hf(self, ctx, *, mockstring: str):
+    async def hf(self, ctx):
         """ A Special Response for a Special Group Member """
-        message = "C:\\HOTFUCKIN\\"
+        message = """C:\\HOTFUCKIN\\"""
         await ctx.send(message)
 
 
