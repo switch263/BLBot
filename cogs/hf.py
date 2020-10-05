@@ -13,7 +13,8 @@ class hf(commands.Cog):
     @commands.command(aliases=['hotfuckin','HotFuckin'])
     async def hf(self, ctx, *, mockstring: str):
         """ A Special Response for a Special Group Member """
-        await ctx.send("C:\HOTFUCKIN\\")
+        message = r'C:\HOTFUCKIN\'
+        await ctx.send(message)
 
 
 def setup(bot):
