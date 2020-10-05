@@ -13,7 +13,7 @@ class hf(commands.Cog):
     @commands.command(aliases=['hotfuckin','HotFuckin'])
     async def hf(self, ctx, *, mockstring: str):
         """ A Special Response for a Special Group Member """
-        message = r'C:\HOTFUCKIN\'
+        message = "C:\\HOTFUCKIN\\"
         await ctx.send(message)
 
 
