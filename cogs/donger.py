@@ -25,17 +25,17 @@ class donger(commands.Cog):
                    'displays', 'drags', 'greases', 'intensifies', 'irritates', 'loves', 'manipulates', 'overflows',
                    'preaches', 'queues', 'screams', 'thaws', 'thrusts', 'tickles', 'degloves', 'springs', 'stimulates',
                    'washes', 'inserts', 'bequeaths']
-        if member:
-            random.seed()
-            motion = motions[random.randrange(len(motions))]
-            dongermsg = "{} {} their donger at {} 8====D~ ~ ~"
-            dongermsg = dongermsg.format(ctx.message.author.mention, motion, member.mention)
-            await ctx.send(dongermsg)
-        elif member == ctx.message.author:
+        if member == ctx.message.author:
             random.seed()
             motion = motions[random.randrange(len(motions))]
             dongermsg = "{} {} with their own donger 8====D~ ~ ~"
             dongermsg = dongermsg.format(ctx.message.author.mention, motion)
+            await ctx.send(dongermsg)
+        elif member:
+            random.seed()
+            motion = motions[random.randrange(len(motions))]
+            dongermsg = "{} {} their donger at {} 8====D~ ~ ~"
+            dongermsg = dongermsg.format(ctx.message.author.mention, motion, member.mention)
             await ctx.send(dongermsg)
         elif not member:
             await ctx.send("8====D~ ~ ~")
