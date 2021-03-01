@@ -18,7 +18,7 @@ class weather(commands.Cog):
     async def weather(self, ctx, arg):
         """ Checks Weather. !w 78704, !w London, UK, etc"""
         lookup = arg.replace(" ", "+")
-        api = f"{API_KEY}\"{lookup}\"/{API_KEY}"
+        api = f"{API_URL}\"{lookup}\"/{API_KEY}"
         response = requests.get(api)
         js = response.json()
         weather_message = js["discord"]
