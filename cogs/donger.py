@@ -20,7 +20,7 @@ class donger(commands.Cog):
                    'apologises', 'assaults', 'brandishes', 'brags', 'clucks', 'digests', 'emphasises', 'ensnares',
                    'gravitates', 'hogs', 'head-butts', 'butts', 'honks', 'fingers', 'eviscerates', 'excavates', 'folds',
                    'exclaims', 'hypnotises', 'interviews', 'raises', 'flaps', 'wobbles', 'shakes', 'gyrates',
-                   'helicopters', 'flops', 'agitates', 'atobes', 'waves his donger in the air like he just dont care',
+                   'helicopters', 'flops', 'agitates', 'waves his donger in the air like he just dont care',
                    'blipps', 'reiterates', 'drives', 'leans', 'polishes', 'chokes', 'announces', 'applauds', 'compiles',
                    'displays', 'drags', 'greases', 'intensifies', 'irritates', 'loves', 'manipulates', 'overflows',
                    'preaches', 'queues', 'screams', 'thaws', 'thrusts', 'tickles', 'degloves', 'springs', 'stimulates',

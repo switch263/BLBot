@@ -12,8 +12,11 @@ class fight(commands.Cog):
         print("Fight module has been loaded\n-----")
 
     @commands.command(aliases=['Fight'])
-    async def fight(self, ctx, member: discord.Member = None):
-        fighter1 = ctx.message.author.mention
+    async def fight(self, ctx, member: discord.Member = None, member2: discord.Member = None):
+        if member2:
+            fighter1 == member.mention
+        else:
+            fighter1 = ctx.message.author.mention
         if member:
             fighter2 = member.mention
         else:
