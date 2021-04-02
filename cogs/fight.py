@@ -14,7 +14,7 @@ class fight(commands.Cog):
     @commands.command(aliases=['Fight'])
     async def fight(self, ctx, member: discord.Member = None, member2: discord.Member = None):
         if member2:
-            fighter1 == member2.mention
+            fighter1 = member2.mention
         else:
             fighter1 = ctx.message.author.mention
         if member:
