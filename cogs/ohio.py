@@ -10,7 +10,7 @@ class ohio(commands.Cog):
         print("Ohio module has been loaded\n-----")
 
     @commands.command(aliases=['Ohio'])
-    async def lasaga(self, ctx, member: discord.Member = None):
+    async def ohio(self, ctx, member: discord.Member = None):
         if member:
             target = member.mention
             await ctx.send("1-800-FUCK-OHIO! " + target)
