@@ -13,7 +13,7 @@ class rekt(commands.Cog):
     async def on_ready(self):
         print("rekt module has been loaded\n-----")
 
-    @commands.command(aliases=['rekt','Rekt'])
+    @commands.command(aliases=['Rekt'])
     async def rekt(self, ctx, member: discord.Member = None):
         """ Get Riggity Rekt """
         random.seed()
