@@ -18,7 +18,7 @@ class rekt(commands.Cog):
         """ Get Riggity Rekt """
         random.seed()
         if member:
-            message = member.mention + random.choice(rekt_list)
+            message = member.mention + " " + random.choice(rekt_list)
         else:
             message = random.choice(rekt_list)
         await ctx.send(message)
