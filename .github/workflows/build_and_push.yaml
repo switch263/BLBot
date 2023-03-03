@@ -1,6 +1,4 @@
 on:
-  schedule:
-    - cron: '27 19 * * *'
   push:
     branches: [ "main" ]
     tags: [ 'v*.*.*' ]
