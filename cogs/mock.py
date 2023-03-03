@@ -14,15 +14,16 @@ class mock(commands.Cog):
     @commands.command(aliases=['Mock'])
     async def mock(self, ctx, *, mockstring: str):
         """ Automatic spongebob-mocking-text """
+        lowerString = mockstring.lower()
         output_text = ""
-        for char in mockstring:
-            if char.isalpha():
-                if random.random() > 0.5:
-                    output_text += char.upper()
-                else:
-                    output_text += char.lower()
+        counter = 0
+        for char in lowerString:
+            if char != ' ':
+                counter += 1
+            if counter % 2 == 0:
+                output_text += char.lower()
             else:
-                output_text += char
+                output_text += char.upper()
         await ctx.send(output_text)
 
 
