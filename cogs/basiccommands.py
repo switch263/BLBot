@@ -1,13 +1,15 @@
+import os
+import random
+import datetime
 import discord
 from discord.ext import commands
-import requests
-import random
-import os
 from pathlib import Path
 from lenny import lenny
 
+
 cwd = Path(__file__).parents[0]
 cwd = str(os.getcwd())
+
 
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
@@ -17,39 +19,36 @@ class BasicCommands(commands.Cog):
     async def on_ready(self):
         print("Basic commands module has been loaded\n-----")
 
-    @commands.command(name='Ping', aliases=['ping'])
+    @commands.command(name='ping')
     async def ping(self, ctx):
-        await ctx.send('Pong!')
+        timestamp = ctx.message.created_at.astimezone(datetime.timezone.utc)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        latency = now_utc - timestamp
+        latency_in_ms = round(latency.total_seconds() * 1000)
+        await ctx.send(f'Pong! ({latency_in_ms} ms)')
 
     @commands.command()
     async def roll(self, ctx, dice: str):
         """Rolls a dice in NdN format."""
         try:
             rolls, limit = map(int, dice.split('d'))
-        except Exception:
+        except ValueError:
             await ctx.send('Format has to be in NdN!')
             return
 
-        result = ', '.join(str(random.randint(1, limit)) for r in range(rolls))
+        result = ', '.join(str(random.randint(1, limit)) for _ in range(rolls))
         await ctx.send(result)
 
-    @commands.command(description='For when you wanna settle the score some other way', name="Choose",
-                      aliases=['pick', 'Pick', 'choose'])
+    @commands.command(description='For when you wanna settle the score some other way', name="choose",
+                      aliases=['pick'])
     async def choose(self, ctx, *choices: str):
         """Chooses between multiple choices."""
         await ctx.send(random.choice(choices))
 
-    # Disabled because this is real dumb to allow people to do...
-    #@commands.command()
-    #async def repeat(self, ctx, times: int, content='repeating...'):
-    #    """Repeats a message multiple times."""
-    #    for i in range(times):
-    #        await ctx.send(content)
-
     @commands.command()
     async def joined(self, ctx, member: discord.Member):
         """Says when a member joined."""
-        await ctx.send('{0.name} joined in {0.joined_at}'.format(member))
+        await ctx.send(f'{member.name} joined in {member.joined_at}')
 
     @commands.command()
     async def test(self, ctx, *, message):
@@ -59,28 +58,30 @@ class BasicCommands(commands.Cog):
     async def lenny(self, ctx):
         await ctx.send(lenny())
 
-    @commands.command(name="Reload", aliases=['reload'])
+    @commands.command(name="reload")
     @commands.is_owner()
-    async def Reload(self, ctx):
+    async def reload_cogs(self, ctx):
         try:
             for cog in list(self.bot.cogs):
-                print("Unloaded {}".format(cog))
-                self.bot.unload_extension("cogs.{}".format(cog.lower()))
+                self.bot.unload_extension(f"cogs.{cog.lower()}")
+                print(f"Unloaded {cog}")
             await ctx.send("All cogs unloaded")
+
             message = ""
             for file in os.listdir(cwd + "/cogs"):
                 if file.endswith(".py") and not file.startswith("_"):
                     self.bot.load_extension(f"cogs.{file[:-3]}")
-                    message += "{} reloaded\n".format(file[:-3])
-            await ctx.send(message)
-        except ValueError as e:
-            await ctx.send("Unable to reload cogs. Check console for possible traceback. {}".format(e))
+                    message += f"{file[:-3]} reloaded\n"
 
-    @Reload.error
-    async def Reload_error(self, ctx, error):
-        await ctx.send("Unable to reload cogs. {}".format(error))
+            await ctx.send(message)
+
+        except Exception as e:
+            await ctx.send(f"Unable to reload cogs. Check console for possible traceback. {e}")
+
+    @reload_cogs.error
+    async def reload_cogs_error(self, ctx, error):
+        await ctx.send(f"Unable to reload cogs. {error}")
 
 
 def setup(bot):
     bot.add_cog(BasicCommands(bot))
-
