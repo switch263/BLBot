@@ -27,7 +27,7 @@ class BasicCommands(commands.Cog):
         latency_in_ms = round(latency.total_seconds() * 1000)
         await ctx.send(f'Pong! ({latency_in_ms} ms)')
 
-    @commands.command()
+    @commands.command(name="roll")
     async def roll(self, ctx, dice: str):
         """Rolls a dice in NdN format."""
         try:
@@ -39,22 +39,22 @@ class BasicCommands(commands.Cog):
         result = ', '.join(str(random.randint(1, limit)) for _ in range(rolls))
         await ctx.send(result)
 
-    @commands.command(description='For when you wanna settle the score some other way', name="choose",
+    @commands.command(name="choose",
                       aliases=['pick'])
     async def choose(self, ctx, *choices: str):
         """Chooses between multiple choices."""
         await ctx.send(random.choice(choices))
 
-    @commands.command()
+    @commands.command(name="joined")
     async def joined(self, ctx, member: discord.Member):
         """Says when a member joined."""
         await ctx.send(f'{member.name} joined in {member.joined_at}')
 
-    @commands.command()
+    @commands.command(name="test")
     async def test(self, ctx, *, message):
         await ctx.send(message)
 
-    @commands.command()
+    @commands.command(name="lenny")
     async def lenny(self, ctx):
         await ctx.send(lenny())
 
