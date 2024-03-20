@@ -4,31 +4,15 @@ import sqlite3
 import random
 import time
 import os
+import logging
+import datetime
+
+logger = logging.getLogger(__name__)
 
 class Duels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = "duel.db"
-        self.create_tables()
-
-        self.round_announcements = [
-            "The tension is palpable! Get ready for...",
-            "Buckle up folks, this round's gonna be wild...",
-            "May the odds be ever in your favor (or not)...",
-            "Let the chaotic combat commence!",
-            "A battle for the ages is about to unfold...",
-            "Witness the clash of titans!"
-        ]
-
-        self.combat_quips = [
-            "A flurry of furious fingers!",
-            "An epic clash of keyboards!",
-            "The sound of frantic typing echoes through the server...",
-            "Sweat drips from their brows as they strategize...",
-            "A surprise meme attack! It's super effective!",
-            "They unleash a devastating emote barrage!",
-            "With a mighty keystroke, they land a critical hit!"
-        ]
+        self.stats = bot.get_cog('Stats')
 
         self.victory_cries = [
             "Annihilation! Utter domination!",
@@ -122,7 +106,7 @@ class Duels(commands.Cog):
             "summoning the spirits of forgotten video game characters",
             "redirecting a firewall to disrupt the opponent's flow",
             "laughable attempt at using a meme",
-            "uno reverse followed by 3x draw 4's while also not shouting uno"
+            "uno reverse followed by 3x draw 4's while also not shouting uno",
             "meeting them at Cars and Coffee while driving a mustang",
             "strategically re-rolling with a loaded die",
             "the power of an obscure fandom wiki",
@@ -131,82 +115,18 @@ class Duels(commands.Cog):
             "your mom jokes, that hit surprisingly to home cause your mom do be that way"
         ]
 
-    def create_tables(self):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cooldowns (
-                guild_id INTEGER,
-                channel_id INTEGER,
-                last_duel INTEGER
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS stats (
-                guild_id INTEGER,
-                user_id INTEGER,
-                wins INTEGER DEFAULT 0,
-                losses INTEGER DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id)
-            )
-        ''')
-        conn.commit()
-        conn.close()
 
-    def get_user_stats(self, guild_id, user_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT wins, losses FROM stats WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
-        stats = cursor.fetchone()
-        conn.close()
-        return stats if stats else (0, 0)
-
-    def get_top_stats(self, guild_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, wins, losses FROM stats WHERE guild_id = ? ORDER BY wins DESC LIMIT 3", (guild_id,))
-        top_stats = cursor.fetchall()
-        conn.close()
-        return top_stats
-
-    def record_duel_result(self, guild_id, winner_id, loser_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO stats (guild_id, user_id, wins) VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) DO UPDATE SET wins = wins + 1", (guild_id, winner_id))
-        cursor.execute("INSERT INTO stats (guild_id, user_id, losses) VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) DO UPDATE SET losses = losses + 1", (guild_id, loser_id))
-        conn.commit()
-        conn.close()
-
-    def is_on_cooldown(self, guild_id, channel_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM cooldowns WHERE guild_id = ? AND channel_id = ?", (guild_id, channel_id))
-        result = cursor.fetchone()
-        conn.close()
-
-        if result is not None:
-            last_duel_time = result[2]
-            duel_cooldown = os.getenv('DUEL_COOLDOWN', 60)
-            try:
-                duel_cooldown = int(duel_cooldown)
-            except ValueError:
-                duel_cooldown = 60
-
-            cooldown_end_time = last_duel_time + duel_cooldown
-            current_time = int(time.time())
-            if current_time < cooldown_end_time:
-                seconds_remaining = max(0, cooldown_end_time - current_time)
-                minutes, seconds = divmod(seconds_remaining, 60)
-                return True, minutes, seconds
-        return False, 0, 0
-
-
-    def record_cooldown(self, guild_id, channel_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO cooldowns (guild_id, channel_id, last_duel) VALUES (?, ?, ?)", (guild_id, channel_id, int(time.time())))
-        conn.commit()
-        conn.close()
+    @commands.Cog.listener()
+    async def on_ready(self):
+        logger.info("duel module has been loaded")
+        try:
+            if self.stats:
+                self.stats.register_cog("duel", ["wins", "losses"])
+                logger.info("Registering duel with stats")
+            else:
+                logger.warning("Stats cog not found.")
+        except Exception as e:
+            logger.error(f"Error registering duel with stats: {e}")
 
     def generate_victory_message(self, winner_mention, loser_mention):
         actions = "! ".join(random.choices(self.action_verbs, k=3))
@@ -217,16 +137,11 @@ class Duels(commands.Cog):
         message = f"{actions}! {winner_mention} {victory_action} over {loser_mention} {random_preposition} {victory_description}."
         return message
 
-
-    @commands.command()
+    @commands.command(help="Challenge another member to a duel! Usage: `!duel @username`. Can only be used guild-wide once per hour.", description="Initiates a duel between the command invoker and the specified member. Best 2 out of 3.")
+    @commands.cooldown(rate=1, per=3600, type=commands.BucketType.guild)
     async def duel(self, ctx, member: discord.Member = None):
         if member is None:
-            await ctx.send("To duel someone, use `!duel @username`. For stats, use `!duel_stats @username`.")
-            return
-
-        is_cooldown, minutes, seconds = self.is_on_cooldown(ctx.guild.id, ctx.channel.id)
-        if is_cooldown:
-            await ctx.send(f"Hold your horses! Duels in this channel are on cooldown. Try again in {minutes} minutes and {seconds} seconds.")
+            await ctx.send("To duel someone, use `!duel @username`. For stats, use `!stats duel @username`.")
             return
 
         await ctx.send(f"ATTENTION EVERYONE....{ctx.author.mention} has challenged {member.mention} to a duel... let the battle commence, best 2/3")
@@ -237,8 +152,6 @@ class Duels(commands.Cog):
 
         for round_num in range(1, 4):
             await ctx.send(f"ROUND {round_num}")
-            await ctx.send(random.choice(self.round_announcements))
-            await ctx.send(random.choice(self.combat_quips))
             time.sleep(2)
 
             round_victor = random.choice([ctx.author, member])
@@ -247,28 +160,14 @@ class Duels(commands.Cog):
             await ctx.send(victory_message)
 
             if score[round_victor] == 2:
-                self.record_duel_result(ctx.guild.id, round_victor.id, (member if round_victor == ctx.author else ctx.author).id)
+                if self.stats:
+                    await self.stats.update_stats("duel", userid=str(round_victor.id), wins=1)
+                    await self.stats.update_stats("duel", userid=str((member if round_victor == ctx.author else ctx.author).id).strip("<!@>"), losses=1)
+                    logger.debug("Updating duel stats")
                 await ctx.send("GAME OVER! Victory to...")
                 await ctx.send(f"{round_victor.mention}!! {random.choice(self.victory_cries)}")
                 break
-
-        self.record_cooldown(ctx.guild.id, ctx.channel.id)
-
-    @commands.command()
-    async def duel_stats(self, ctx, member: discord.Member = None):
-        if member is None:
-            member = ctx.author
-        wins, losses = self.get_user_stats(ctx.guild.id, member.id)
-        await ctx.send(f"{member.display_name}'s Duel Stats:\n**{wins}** wins, **{losses}** losses")
-
-    @commands.command()
-    async def duel_cooldown(self, ctx):
-        is_cooldown, minutes, seconds = self.is_on_cooldown(ctx.guild.id, ctx.channel.id)
-        if is_cooldown:
-            await ctx.send(f"Duels in this channel are on cooldown. Come back in {minutes} minutes and {seconds} seconds.")
-        else:
-            await ctx.send("There's no duel cooldown currently. Challenge away!")
-
+        
 def setup(bot):
     bot.add_cog(Duels(bot))
 

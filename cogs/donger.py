@@ -1,45 +1,69 @@
+import json
+import os
+import logging
 import discord
-from discord.ext import commands
 import random
+from discord.ext import commands
 
-class donger(commands.Cog):
+class Donger(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.logger = logging.getLogger(__name__)
+        self.stats = bot.get_cog('Stats')
+
+        self.motions = [
+            'addresses', 'agitates', 'ambles', 'antagonises', 'applauds', 'apologises', 'assaults', 'bangs',
+            'bakes', 'bequeaths', 'bemoans', 'beseeches', 'blipps', 'brandishes', 'brags', 'butts', 'chastises',
+            'cheers', 'chokes', 'clucks', 'compiles', 'deciphers', 'decrys', 'dangles', 'digests', 'displays',
+            'dives', 'donger', 'drops', 'drags', 'drives', 'dawdles', 'eviscerates', 'excavates', 'exclaims',
+            'fingers', 'flops', 'folds', 'fastens', 'flaps', 'folds', 'flutters', 'gathers', 'gravitates',
+            'greases', 'grabs', 'gyrates', 'helicopters', 'hogs', 'honks', 'hugs', 'hypnotises', 'inserts',
+            'intensifies', 'interviews', 'irritates', 'itches', 'jogs', 'jumps', 'leans', 'loves', 'locks',
+            'manipulates', 'mispronounces', 'manipulates', 'manipulates', 'manipulates', 'murders', 'neglects',
+            'negotiates', 'neighs', 'offends', 'opens', 'overflows', 'parades', 'polishes', 'preaches', 'prowls',
+            'queues', 'questions', 'raises', 'rinses', 'reiterates', 'runs', 'salivates', 'satisfys', 'scowls',
+            'screams', 'shakes', 'sheathes', 'screams', 'shakes', 'springs', 'stimulates', 'sways', 'swings',
+            'taps', 'telephones', 'tickles', 'traipses', 'thaws', 'thrusts', 'twirls', 'twists', 'vaginas',
+            'waves', 'washes', 'whoolies', 'wobbles', 'wobbles', 'zigzags'
+        ]
+
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Donger module has been loaded\n-----")
+        self.logger.info("Donger module has been loaded")
+        try:
+            if self.stats:
+                self.stats.register_cog("donger", ["actor", "target"])
+                logger.info("Registering duel with stats")
+            else:
+                logger.warning("Stats cog not found.")
+        except Exception as e:
+            logger.error(f"Error registering duel with stats: {e}")
 
-    @commands.command(aliases=['donger'])
+
+    @commands.command(aliases=['donger'], help="Motions your donger Example: !donger <@user>")
+    @commands.cooldown(1, 30, commands.BucketType.user)
     async def Donger(self, ctx, member: discord.Member = None):
-        motions = ['neighs', 'negotiates', 'ogles', 'neglects', 'quavers', 'scowls', 'telephones', 'salivates',
-                   'satisfys', 'sheathes', 'traipses', 'parades', 'offends', 'manipulates', 'compiles', 'mispronounces',
-                   'murders', 'runs', 'vaginas', 'locks', 'whoolies', 'bangs', 'drops', 'itches', 'hugs', 'bakes',
-                   'fastens', 'grabs', 'jumps', 'jogs', 'questions', 'rinses', 'opens', 'knits', 'addresses', 'bemoans',
-                   'beseeches', 'chastises', 'deciphers', 'dawdles', 'dangles', 'cheers', 'decrys', 'antagonises',
-                   'apologises', 'assaults', 'brandishes', 'brags', 'clucks', 'digests', 'emphasises', 'ensnares',
-                   'gravitates', 'hogs', 'head-butts', 'butts', 'honks', 'fingers', 'eviscerates', 'excavates', 'folds',
-                   'exclaims', 'hypnotises', 'interviews', 'raises', 'flaps', 'wobbles', 'shakes', 'gyrates',
-                   'helicopters', 'flops', 'agitates', 'waves his donger in the air like he just dont care',
-                   'blipps', 'reiterates', 'drives', 'leans', 'polishes', 'chokes', 'announces', 'applauds', 'compiles',
-                   'displays', 'drags', 'greases', 'intensifies', 'irritates', 'loves', 'manipulates', 'overflows',
-                   'preaches', 'queues', 'screams', 'thaws', 'thrusts', 'tickles', 'degloves', 'springs', 'stimulates',
-                   'washes', 'inserts', 'bequeaths']
-        if member == ctx.message.author:
-            random.seed()
-            motion = motions[random.randrange(len(motions))]
-            dongermsg = "{} {} with their own donger 8====D~ ~ ~"
-            dongermsg = dongermsg.format(ctx.message.author.mention, motion)
-            await ctx.send(dongermsg)
-        elif member:
-            random.seed()
-            motion = motions[random.randrange(len(motions))]
-            dongermsg = "{} {} their donger at {} 8====D~ ~ ~"
-            dongermsg = dongermsg.format(ctx.message.author.mention, motion, member.mention)
-            await ctx.send(dongermsg)
-        elif not member:
-            await ctx.send("8====D~ ~ ~")
-
+        try:
+            if member == ctx.message.author:
+                motion = random.choice(self.motions)
+                dongermsg = f"{ctx.message.author.mention} {motion} with their own donger 8====D~ ~ ~"
+                if self.stats:
+                    await self.stats.update_stats("donger", userid=str(ctx.author.id), actor=1)
+                await ctx.send(dongermsg)
+            elif member:
+                motion = random.choice(self.motions)
+                dongermsg = f"{ctx.message.author.mention} {motion} their donger at {member.mention} 8====D~ ~ ~"
+                if self.stats:
+                    await self.stats.update_stats("donger", userid=str(ctx.author.id), actor=1)
+                    await self.stats.update_stats("donger", userid=str(member.id), target=1)
+                await ctx.send(dongermsg)
+            else:
+                await ctx.send("8====D~ ~ ~")
+        except Exception as e:
+            self.logger.error(f"An error occurred: {e}")
+            await ctx.send("Oops! Something went wrong.")
 
 def setup(bot):
-    bot.add_cog(donger(bot))
+    bot.add_cog(Donger(bot))
+

@@ -1,9 +1,20 @@
 FROM python:3.8
-ENV OPENWEATHER_API_KEY = 1234
-ENV DISCORD_TOKEN = 1234
 
+# Set environment variables
+ENV OPENWEATHER_API_KEY=1234
+ENV DISCORD_TOKEN=1234
+
+# Copy the application files
 COPY . /app
+
+# Set the working directory
 WORKDIR /app
 
-RUN pip3 install -r requirements.txt
-CMD python3 ./bot.py
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+RUN pip freeze > /tmp/pip.txt
+
+# Run the application
+CMD ["python", "./bot.py"]
+

@@ -1,43 +1,52 @@
 # BLBot
 Discord bot for my gaming server full of idiots
 
-Dependent upon discord.py (https://github.com/Rapptz/discord.py) and a few more common libraries.
-
-Edit config.py to specify your weather API key and Discord bot token as appropriate before running bot.py directly.
-
-Cogs (plugins) live in cogs/ and can be added / extended easily. There is a pre-built function (reload) that will unload all running cogs and then parse all files in cogs/ to load any that still exist on disk back into memory.
+Cogs (plugins) live in cogs/ and can be added / extended easily. 
 
 # Dockerfile
 
-Built on Alpine, installs python3, pip, setuptools, wheel, before moving on to the application and requirements.
-
+Uses python:3.8 image.
 ```
 git clone https://github.com/switch263/BLBot.git
 cd BLBot/
-edit config.py to your liking
 
 docker build --tag blbot .
 
 docker run -d --name blbot blbot
 ```
 
+# Usage
+This bot utilizes the py-cord fork of discord.py,sqlalchemy library for stats and quotes (plus more in the future possibly), meaning you can use various types of databases if you wish to run this at scale for whatever dumb reason.
+By default it uses sqlite (located at data/blbot.db), but supports postgres out of the box.
 
-# Compose Usage
+## Compose Usage w/ Postgresql
 ```
 version: '3'
-
 services:
   blbot:
-    restart: always
-    image: /blbot:latest
-    container_name: blbot
+    image: ghcr.io/switch263/blbot:latest
     environment:
-      - "OPENWEATHER_API_KEY=xxx"
-      - "DISCORD_TOKEN=xxx"
-
+      - DISCORD_TOKEN=AAAA.BBBB.CCCC
+      - DATABASE_URL=postgresql://blbot:blbot@pgsql:5432/blbot
+  pgsql:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: blbot
+      POSTGRES_PASSWORD: blbot
+      POSTGRES_DB: blbot
     volumes:
-      - /data/blbot/quotes.db:/app/quotes.db
+      - ./database:/var/lib/postgresql/data
+
 ```
 
-# drone.io builds
-This project is drone.io build ready.
+## Compose Usage w/ Sqlite
+```
+version: '3'
+services:
+  blbot:
+    image: ghcr.io/switch263/blbot:latest
+    environment:
+      - DISCORD_TOKEN=AAAA.BBBB.CCCC
+    volumes:
+      - ./data/blbot.db:/app/data/blbot.db
+```
