@@ -48,10 +48,12 @@ async def on_command_error(ctx, error):
     else:
         logger.error(f"Unexpected error occurred: {error}")
 
+bot.load_extension("cogs.stats")
+
 # Load cogs from the cogs directory
 if __name__ == '__main__':
     for file in os.listdir(os.path.join(cwd, "cogs")):
-        if file.endswith(".py") and not file.startswith("_"):
+        if file.endswith(".py") and not file.startswith("_") and file != "stats.py":
             bot.load_extension(f"cogs.{file[:-3]}")
     bot.run(token)
 
