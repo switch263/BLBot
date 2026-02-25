@@ -16,5 +16,5 @@ class lasaga(commands.Cog):
         await ctx.send(lasagaimg)
 
 
-def setup(bot):
-    bot.add_cog(lasaga(bot))
+async def setup(bot):
+    await bot.add_cog(lasaga(bot))

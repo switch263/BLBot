@@ -33,6 +33,6 @@ class eightball(commands.Cog):
         await ctx.send(":8ball:" + random.choice(answers))
 
 
-def setup(bot):
-    bot.add_cog(eightball(bot))
+async def setup(bot):
+    await bot.add_cog(eightball(bot))
 

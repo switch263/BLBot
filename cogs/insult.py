@@ -40,6 +40,6 @@ class insult(commands.Cog):
             await ctx.send(insultmsg)
 
 
-def setup(bot):
-    bot.add_cog(insult(bot))
+async def setup(bot):
+    await bot.add_cog(insult(bot))
 

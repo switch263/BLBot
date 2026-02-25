@@ -71,14 +71,14 @@ class BasicCommands(commands.Cog):
         try:
             for cog in list(self.bot.cogs):
                 print("Unloaded {}".format(cog))
-                self.bot.unload_extension("cogs.{}".format(cog.lower()))
+                await self.bot.unload_extension("cogs.{}".format(cog.lower()))
             await ctx.send("All cogs unloaded")
             message = ""
             # Security: Use os.path.join to prevent path traversal
             cogs_dir = os.path.join(cwd, "cogs")
             for file in os.listdir(cogs_dir):
                 if file.endswith(".py") and not file.startswith("_"):
-                    self.bot.load_extension(f"cogs.{file[:-3]}")
+                    await self.bot.load_extension(f"cogs.{file[:-3]}")
                     message += "{} reloaded\n".format(file[:-3])
             await ctx.send(message)
         except ValueError as e:
@@ -90,6 +90,6 @@ class BasicCommands(commands.Cog):
         await ctx.send("Unable to reload cogs. {}".format(error))
 
 
-def setup(bot):
-    bot.add_cog(BasicCommands(bot))
+async def setup(bot):
+    await bot.add_cog(BasicCommands(bot))
 

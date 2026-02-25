@@ -45,5 +45,5 @@ class fight(commands.Cog):
         await ctx.send(out)
 
 
-def setup(bot):
-    bot.add_cog(fight(bot))
+async def setup(bot):
+    await bot.add_cog(fight(bot))

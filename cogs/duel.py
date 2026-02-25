@@ -291,7 +291,7 @@ class Duels(commands.Cog):
         else:
             await ctx.send("There's no duel cooldown currently. Challenge away!")
 
-def setup(bot):
-    bot.add_cog(Duels(bot))
+async def setup(bot):
+    await bot.add_cog(Duels(bot))
 
 

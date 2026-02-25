@@ -39,6 +39,6 @@ class Slaps(commands.Cog):
             target = self.random_generator.choice(self.slap_targets)
             await ctx.send(f"{ctx.author.mention} delivers a {self.random_generator.choice(self.slap_adjectives)} {self.random_generator.choice(self.slap_sounds)} to {member.mention}'s {target}!")
 
-def setup(bot):
-    bot.add_cog(Slaps(bot))
+async def setup(bot):
+    await bot.add_cog(Slaps(bot))
 

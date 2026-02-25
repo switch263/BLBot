@@ -44,5 +44,5 @@ class bdsm(commands.Cog):
             bdsmmsg = bdsmmsg.format(ctx.message.author.mention)
             await ctx.send(bdsmmsg)
 
-def setup(bot):
-    bot.add_cog(bdsm(bot))
+async def setup(bot):
+    await bot.add_cog(bdsm(bot))

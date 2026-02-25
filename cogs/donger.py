@@ -41,5 +41,5 @@ class donger(commands.Cog):
             await ctx.send("8====D~ ~ ~")
 
 
-def setup(bot):
-    bot.add_cog(donger(bot))
+async def setup(bot):
+    await bot.add_cog(donger(bot))

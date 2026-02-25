@@ -203,5 +203,5 @@ class XKCD(commands.Cog):
         await interaction.followup.send(embed=embed)
 
 
-def setup(bot):
-    bot.add_cog(XKCD(bot))
+async def setup(bot):
+    await bot.add_cog(XKCD(bot))

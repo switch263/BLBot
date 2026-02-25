@@ -21,6 +21,6 @@ class tarkov_time(commands.Cog):
         await ctx.send(message)
 
 
-def setup(bot):
-    bot.add_cog(tarkov_time(bot))
+async def setup(bot):
+    await bot.add_cog(tarkov_time(bot))
 

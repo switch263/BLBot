@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import sys
+import asyncio
 # Load configuration from a separate file
 from config import *
 
@@ -49,9 +50,22 @@ async def on_command_error(ctx, error):
         logger.error(f"Unexpected error occurred: {error}")
 
 # Load cogs from the cogs directory
-if __name__ == '__main__':
+async def load_extensions():
+    """Load all cog extensions asynchronously (required for discord.py 2.0+/py-cord 2.0+)"""
     for file in os.listdir(os.path.join(cwd, "cogs")):
         if file.endswith(".py") and not file.startswith("_"):
-            bot.load_extension(f"cogs.{file[:-3]}")
-    bot.run(token)
+            try:
+                await bot.load_extension(f"cogs.{file[:-3]}")
+                logger.info(f"Loaded extension: cogs.{file[:-3]}")
+            except Exception as e:
+                logger.error(f"Failed to load extension cogs.{file[:-3]}: {e}")
+
+async def main():
+    """Main function to load extensions and start the bot"""
+    async with bot:
+        await load_extensions()
+        await bot.start(token)
+
+if __name__ == '__main__':
+    asyncio.run(main())
 

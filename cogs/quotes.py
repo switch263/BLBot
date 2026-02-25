@@ -98,5 +98,5 @@ class Quotes(commands.Cog):
                 print(f"Unexpected error: {e}")
 
 
-def setup(bot):
-    bot.add_cog(Quotes(bot))
+async def setup(bot):
+    await bot.add_cog(Quotes(bot))
