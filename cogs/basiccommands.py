@@ -30,6 +30,14 @@ class BasicCommands(commands.Cog):
             await ctx.send('Format has to be in NdN!')
             return
 
+        # Security: Prevent DoS by limiting rolls and dice size
+        if rolls < 1 or rolls > 100:
+            await ctx.send('Number of rolls must be between 1 and 100!')
+            return
+        if limit < 1 or limit > 1000:
+            await ctx.send('Dice sides must be between 1 and 1000!')
+            return
+
         result = ', '.join(str(random.randint(1, limit)) for r in range(rolls))
         await ctx.send(result)
 
@@ -51,9 +59,7 @@ class BasicCommands(commands.Cog):
         """Says when a member joined."""
         await ctx.send('{0.name} joined in {0.joined_at}'.format(member))
 
-    @commands.command()
-    async def test(self, ctx, *, message):
-        await ctx.send(message)
+    # Removed: test command (security risk - echoes unvalidated user input)
 
     @commands.command()
     async def lenny(self, ctx):
@@ -68,13 +74,16 @@ class BasicCommands(commands.Cog):
                 self.bot.unload_extension("cogs.{}".format(cog.lower()))
             await ctx.send("All cogs unloaded")
             message = ""
-            for file in os.listdir(cwd + "/cogs"):
+            # Security: Use os.path.join to prevent path traversal
+            cogs_dir = os.path.join(cwd, "cogs")
+            for file in os.listdir(cogs_dir):
                 if file.endswith(".py") and not file.startswith("_"):
                     self.bot.load_extension(f"cogs.{file[:-3]}")
                     message += "{} reloaded\n".format(file[:-3])
             await ctx.send(message)
         except ValueError as e:
-            await ctx.send("Unable to reload cogs. Check console for possible traceback. {}".format(e))
+            # Security: Don't expose internal error details
+            await ctx.send("Unable to reload cogs. Check console for details.")
 
     @Reload.error
     async def Reload_error(self, ctx, error):

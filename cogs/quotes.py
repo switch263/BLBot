@@ -34,40 +34,68 @@ class Quotes(commands.Cog):
         if subcommand.lower() == 'add':
             if not quote:
                 await ctx.send(":interrobang: You need to give me a quote to add!")
-                pass
+                return
 
-            if quote:
-                if len(quote.strip()) > 0:
-                    # add the quote to the database if it's non-zero
-                    dbconn = sqlite3.connect(dbfile)
+            # Security: Validate input length
+            if len(quote.strip()) == 0:
+                await ctx.send(":interrobang: Quote cannot be empty!")
+                return
+                
+            if len(quote) > 2000:
+                await ctx.send(":interrobang: Quote is too long! Maximum 2000 characters.")
+                return
+
+            # Security: Use context manager to ensure connection is closed
+            try:
+                with sqlite3.connect(dbfile) as dbconn:
                     cur = dbconn.cursor()
                     cur.execute("INSERT INTO quotes VALUES (?)", [quote])
                     rowid = cur.lastrowid
                     dbconn.commit()
                     await ctx.send(":microphone: " + "[" + str(rowid) + "] " + quote + " added to database")
-                    dbconn.close()
+            except sqlite3.Error as e:
+                await ctx.send("Error adding quote to database.")
+                print(f"Database error: {e}")
 
-        if subcommand.lower() == "get":
+        elif subcommand.lower() == "get":
             try:
-                quote = int(quote)
-                # user wants a specific quote ID
-                dbconn = sqlite3.connect(dbfile)
-                cur = dbconn.cursor()
-                randquote = cur.execute("SELECT * FROM quotes WHERE rowid = ?;", [quote])
-                randquote = randquote.fetchall()[0][0]
-                id = quote
-                await ctx.send("[" + str(id) + "] " + randquote)
-                dbconn.close()
-            except:
-                # assume user wants a random quote back
-                dbconn = sqlite3.connect(dbfile)
-                cur = dbconn.cursor()
-                randquote = cur.execute("SELECT * FROM quotes ORDER BY RANDOM() LIMIT 1;")
-                randquote = randquote.fetchall()[0][0]
-                rowid = cur.execute("SELECT rowid FROM quotes WHERE quote like (?)", [randquote])
-                id = rowid.fetchall()[0][0]
-                await ctx.send("[" + str(id) + "] " + randquote)
-                dbconn.close()
+                quote_id = int(quote) if quote else None
+                
+                with sqlite3.connect(dbfile) as dbconn:
+                    cur = dbconn.cursor()
+                    
+                    if quote_id:
+                        # user wants a specific quote ID
+                        randquote = cur.execute("SELECT * FROM quotes WHERE rowid = ?;", [quote_id])
+                        result = randquote.fetchall()
+                        if not result:
+                            await ctx.send(f"No quote found with ID {quote_id}")
+                            return
+                        randquote = result[0][0]
+                        id = quote_id
+                    else:
+                        # user wants a random quote
+                        randquote = cur.execute("SELECT * FROM quotes ORDER BY RANDOM() LIMIT 1;")
+                        result = randquote.fetchall()
+                        if not result:
+                            await ctx.send("No quotes in database yet!")
+                            return
+                        randquote = result[0][0]
+                        rowid = cur.execute("SELECT rowid FROM quotes WHERE quote like (?)", [randquote])
+                        id = rowid.fetchall()[0][0]
+                    
+                    await ctx.send("[" + str(id) + "] " + randquote)
+                    
+            except ValueError:
+                await ctx.send("Invalid quote ID. Please provide a number or leave empty for random.")
+            except sqlite3.Error as e:
+                await ctx.send("Error retrieving quote from database.")
+                print(f"Database error: {e}")
+            except IndexError:
+                await ctx.send("No quotes in database yet!")
+            except Exception as e:
+                await ctx.send("An error occurred.")
+                print(f"Unexpected error: {e}")
 
 
 def setup(bot):
