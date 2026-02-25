@@ -22,6 +22,6 @@ class temperature(commands.Cog):
         await ctx.send(":thermometer: " + str(temp) + "°F is " + str(convert) + "°C")
 
 
-def setup(bot):
-    bot.add_cog(temperature(bot))
+async def setup(bot):
+    await bot.add_cog(temperature(bot))
 

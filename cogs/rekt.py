@@ -24,5 +24,5 @@ class rekt(commands.Cog):
         await ctx.send(message)
 
 
-def setup(bot):
-    bot.add_cog(rekt(bot))
+async def setup(bot):
+    await bot.add_cog(rekt(bot))

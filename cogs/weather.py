@@ -308,6 +308,6 @@ class WeatherCog(commands.Cog):
             logger.exception(f"Unexpected error in weather slash command: {e}")
 
 
-def setup(bot):
+async def setup(bot):
     """Load the cog"""
-    bot.add_cog(WeatherCog(bot))
+    await bot.add_cog(WeatherCog(bot))

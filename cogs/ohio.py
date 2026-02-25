@@ -18,5 +18,5 @@ class ohio(commands.Cog):
             await ctx.send("1-800-FUCK-OHIO!")
 
 
-def setup(bot):
-    bot.add_cog(ohio(bot))
+async def setup(bot):
+    await bot.add_cog(ohio(bot))

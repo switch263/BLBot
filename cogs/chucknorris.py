@@ -24,6 +24,6 @@ class ChuckNorrisFacts(commands.Cog):
         except Exception:
             await ctx.send('An error occurred.')
 
-def setup(bot):
-    bot.add_cog(ChuckNorrisFacts(bot))
+async def setup(bot):
+    await bot.add_cog(ChuckNorrisFacts(bot))
 
