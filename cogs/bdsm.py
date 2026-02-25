@@ -22,8 +22,20 @@ class bdsm(commands.Cog):
             print("lol bdsm!")
             user = ctx.message.author
             victim = member
-            with codecs.open("bdsm.json", encoding="utf-8") as f:
-                bdsm_data = json.load(f)
+            try:
+                # Security: Proper error handling for file operations
+                with codecs.open("bdsm.json", encoding="utf-8") as f:
+                    bdsm_data = json.load(f)
+            except FileNotFoundError:
+                await ctx.send("Error: Configuration file not found.")
+                return
+            except json.JSONDecodeError:
+                await ctx.send("Error: Invalid configuration file.")
+                return
+            except Exception:
+                await ctx.send("Error loading configuration.")
+                return
+                
             generator = textgen.TextGenerator(bdsm_data["templates"], bdsm_data["parts"], variables={"user": str(victim)})
             bdsmmsg = "%s %s" % (user.mention, generator.generate_string())
             await ctx.send(bdsmmsg)

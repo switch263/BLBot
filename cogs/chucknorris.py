@@ -10,16 +10,19 @@ class ChuckNorrisFacts(commands.Cog):
     async def chuck_norris_fact(self, ctx):
         url = 'https://api.chucknorris.io/jokes/random'
         try:
-            response = requests.get(url)
+            # Security: Add timeout to prevent hanging requests
+            response = requests.get(url, timeout=10)
             response.raise_for_status()  # Raise exception for bad status codes
             chuck_fact = response.json()['value']
             await ctx.send(chuck_fact)
+        except requests.exceptions.Timeout:
+            await ctx.send('Request timed out. Please try again.')
         except requests.exceptions.RequestException as e:
-            await ctx.send(f'Failed to fetch Chuck Norris fact: {e}')
+            await ctx.send('Failed to fetch Chuck Norris fact.')
         except KeyError:
             await ctx.send('Failed to parse Chuck Norris fact response.')
-        except Exception as e:
-            await ctx.send(f'An error occurred: {e}')
+        except Exception:
+            await ctx.send('An error occurred.')
 
 def setup(bot):
     bot.add_cog(ChuckNorrisFacts(bot))

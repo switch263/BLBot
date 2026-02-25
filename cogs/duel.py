@@ -3,6 +3,7 @@ from discord.ext import commands
 import sqlite3
 import random
 import time
+import asyncio
 import os
 
 class Duels(commands.Cog):
@@ -132,63 +133,80 @@ class Duels(commands.Cog):
         ]
 
     def create_tables(self):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cooldowns (
-                guild_id INTEGER,
-                channel_id INTEGER,
-                last_duel INTEGER
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS stats (
-                guild_id INTEGER,
-                user_id INTEGER,
-                wins INTEGER DEFAULT 0,
-                losses INTEGER DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id)
-            )
-        ''')
-        conn.commit()
-        conn.close()
+        # Security: Use context manager for database connections
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS cooldowns (
+                        guild_id INTEGER,
+                        channel_id INTEGER,
+                        last_duel INTEGER
+                    )
+                ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS stats (
+                        guild_id INTEGER,
+                        user_id INTEGER,
+                        wins INTEGER DEFAULT 0,
+                        losses INTEGER DEFAULT 0,
+                        PRIMARY KEY (guild_id, user_id)
+                    )
+                ''')
+                conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error creating tables: {e}")
 
     def get_user_stats(self, guild_id, user_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT wins, losses FROM stats WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
-        stats = cursor.fetchone()
-        conn.close()
-        return stats if stats else (0, 0)
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT wins, losses FROM stats WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+                stats = cursor.fetchone()
+                return stats if stats else (0, 0)
+        except sqlite3.Error as e:
+            print(f"Database error getting stats: {e}")
+            return (0, 0)
 
     def get_top_stats(self, guild_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, wins, losses FROM stats WHERE guild_id = ? ORDER BY wins DESC LIMIT 3", (guild_id,))
-        top_stats = cursor.fetchall()
-        conn.close()
-        return top_stats
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id, wins, losses FROM stats WHERE guild_id = ? ORDER BY wins DESC LIMIT 3", (guild_id,))
+                top_stats = cursor.fetchall()
+                return top_stats
+        except sqlite3.Error as e:
+            print(f"Database error getting top stats: {e}")
+            return []
 
     def record_duel_result(self, guild_id, winner_id, loser_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO stats (guild_id, user_id, wins) VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) DO UPDATE SET wins = wins + 1", (guild_id, winner_id))
-        cursor.execute("INSERT INTO stats (guild_id, user_id, losses) VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) DO UPDATE SET losses = losses + 1", (guild_id, loser_id))
-        conn.commit()
-        conn.close()
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO stats (guild_id, user_id, wins) VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) DO UPDATE SET wins = wins + 1", (guild_id, winner_id))
+                cursor.execute("INSERT INTO stats (guild_id, user_id, losses) VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) DO UPDATE SET losses = losses + 1", (guild_id, loser_id))
+                conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error recording duel result: {e}")
 
     def is_on_cooldown(self, guild_id, channel_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM cooldowns WHERE guild_id = ? AND channel_id = ?", (guild_id, channel_id))
-        result = cursor.fetchone()
-        conn.close()
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM cooldowns WHERE guild_id = ? AND channel_id = ?", (guild_id, channel_id))
+                result = cursor.fetchone()
+        except sqlite3.Error as e:
+            print(f"Database error checking cooldown: {e}")
+            return False, 0, 0
 
         if result is not None:
             last_duel_time = result[2]
-            duel_cooldown = os.getenv('DUEL_COOLDOWN', 60)
+            # Security: Validate and sanitize environment variable
+            duel_cooldown = os.getenv('DUEL_COOLDOWN', '60')
             try:
                 duel_cooldown = int(duel_cooldown)
+                # Ensure cooldown is reasonable (1 second to 1 day)
+                duel_cooldown = max(1, min(duel_cooldown, 86400))
             except ValueError:
                 duel_cooldown = 60
 
@@ -202,11 +220,13 @@ class Duels(commands.Cog):
 
 
     def record_cooldown(self, guild_id, channel_id):
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO cooldowns (guild_id, channel_id, last_duel) VALUES (?, ?, ?)", (guild_id, channel_id, int(time.time())))
-        conn.commit()
-        conn.close()
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR REPLACE INTO cooldowns (guild_id, channel_id, last_duel) VALUES (?, ?, ?)", (guild_id, channel_id, int(time.time())))
+                conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error recording cooldown: {e}")
 
     def generate_victory_message(self, winner_mention, loser_mention):
         actions = "! ".join(random.choices(self.action_verbs, k=3))
@@ -231,7 +251,8 @@ class Duels(commands.Cog):
 
         await ctx.send(f"ATTENTION EVERYONE....{ctx.author.mention} has challenged {member.mention} to a duel... let the battle commence, best 2/3")
 
-        time.sleep(5)
+        # Security: Use asyncio.sleep instead of blocking time.sleep
+        await asyncio.sleep(5)
 
         score = {ctx.author: 0, member: 0}
 
@@ -239,7 +260,8 @@ class Duels(commands.Cog):
             await ctx.send(f"ROUND {round_num}")
             await ctx.send(random.choice(self.round_announcements))
             await ctx.send(random.choice(self.combat_quips))
-            time.sleep(2)
+            # Security: Use asyncio.sleep instead of blocking time.sleep
+            await asyncio.sleep(2)
 
             round_victor = random.choice([ctx.author, member])
             score[round_victor] += 1

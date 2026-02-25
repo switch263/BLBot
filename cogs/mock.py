@@ -14,6 +14,11 @@ class mock(commands.Cog):
     @commands.command(aliases=['Mock'])
     async def mock(self, ctx, *, mockstring: str):
         """ Automatic spongebob-mocking-text """
+        # Security: Limit input length to prevent abuse
+        if len(mockstring) > 2000:
+            await ctx.send("Message too long! Maximum 2000 characters.")
+            return
+            
         lowerString = mockstring.lower()
         output_text = ""
         counter = 0
