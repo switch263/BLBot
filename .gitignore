@@ -1,4 +1,33 @@
+# Configuration files with secrets
 config.py*
+.env
+
+# Python
 *.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database files
 quotes.db
+duel.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker (if you want to keep docker-compose.yml local)
 docker-compose.yml
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

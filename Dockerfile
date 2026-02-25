@@ -1,9 +1,12 @@
 FROM python:3.12-slim
-ENV OPENWEATHER_API_KEY=1234
-ENV DISCORD_TOKEN=1234
 
-COPY . /app
 WORKDIR /app
 
+# Copy and install dependencies first for better layer caching
+COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
-CMD python3 ./bot.py
+
+# Copy application code after dependencies are installed
+COPY . .
+
+CMD ["python3", "./bot.py"]
