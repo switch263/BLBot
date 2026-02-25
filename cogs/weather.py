@@ -98,6 +98,10 @@ class WeatherCog(commands.Cog):
                 
                 return await response.json()
 
+    def fahrenheit_to_celsius(self, fahrenheit: float) -> float:
+        """Convert Fahrenheit to Celsius"""
+        return round((fahrenheit - 32) * 5 / 9, 1)
+
     def create_weather_embed(self, data: dict) -> discord.Embed:
         """
         Create a rich embed from weather data
@@ -128,9 +132,11 @@ class WeatherCog(commands.Cog):
         
         # Current conditions
         current = data["current"]
+        temp_c = self.fahrenheit_to_celsius(current['temperature'])
+        feels_c = self.fahrenheit_to_celsius(current['feels_like'])
         embed.add_field(
             name="🌡️ Temperature",
-            value=f"**{current['temperature']}°F**\nFeels like {current['feels_like']}°F",
+            value=f"**{current['temperature']}°F ({temp_c}°C)**\nFeels like {current['feels_like']}°F ({feels_c}°C)",
             inline=True
         )
         
@@ -148,9 +154,11 @@ class WeatherCog(commands.Cog):
         
         # Today's forecast
         today = data["forecast"][0]
+        high_c = self.fahrenheit_to_celsius(today['temp_max'])
+        low_c = self.fahrenheit_to_celsius(today['temp_min'])
         embed.add_field(
             name="📅 Today's Forecast",
-            value=f"High: {today['temp_max']}°F | Low: {today['temp_min']}°F",
+            value=f"High: {today['temp_max']}°F ({high_c}°C) | Low: {today['temp_min']}°F ({low_c}°C)",
             inline=False
         )
         
@@ -185,7 +193,9 @@ class WeatherCog(commands.Cog):
         forecast_text = ""
         for day in data["forecast"][1:4]:  # Next 3 days
             date = datetime.strptime(day["date"], "%Y-%m-%d").strftime("%a")
-            forecast_text += f"**{date}**: {day['temp_min']}°F - {day['temp_max']}°F, {day['weather_description']}\n"
+            min_c = self.fahrenheit_to_celsius(day['temp_min'])
+            max_c = self.fahrenheit_to_celsius(day['temp_max'])
+            forecast_text += f"**{date}**: {day['temp_min']}°F ({min_c}°C) - {day['temp_max']}°F ({max_c}°C), {day['weather_description']}\n"
         
         if forecast_text:
             embed.add_field(
