@@ -9,7 +9,7 @@ import random
 import sys
 import asyncio
 # Load configuration from a separate file
-from config import *
+from config import dbtype, dbfile
 
 # Configure logging
 log_level_str = os.environ.get('LOG_LEVEL', "DEBUG")
@@ -34,12 +34,25 @@ if not token:
 # Set intents and description
 intents = discord.Intents.all()
 description = """A very basic discord bot, originally written for my group of gaming idiots called the Bored Lunatics. Hence the name blbot! Find the source code at https://github.com/switch263/BLBot"""
-bot = commands.Bot(command_prefix='!', description=description, intents=intents)
+bot = commands.Bot(command_prefix='!', description=description, intents=intents, help_command=None)
 
 cwd = str(Path(__file__).parents[0])
 
 @bot.event
 async def on_ready():
+    try:
+        # Sync globally
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} slash commands globally.")
+        # Also sync to specific guild for instant availability
+        guild_id = os.environ.get('DISCORD_GUILD_ID')
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            bot.tree.copy_global_to(guild=guild)
+            guild_synced = await bot.tree.sync(guild=guild)
+            logger.info(f"Synced {len(guild_synced)} slash commands to guild {guild_id} (instant).")
+    except Exception as e:
+        logger.error(f"Failed to sync slash commands: {e}")
     logger.info(f"Logged in as {bot.user.name} with user id of {bot.user.id}.")
 
 @bot.event

@@ -61,7 +61,7 @@ class WeatherCog(commands.Cog):
     
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Weather module has been loaded\n-----")
+        logger.info("Weather module has been loaded")
 
     async def fetch_weather(self, location: str) -> dict:
         """

@@ -9,14 +9,12 @@ __pycache__/
 *$py.class
 
 # Database files
-quotes.db
-duel.db
+data/
 *.db
 *.sqlite
 *.sqlite3
 
-# Docker (if you want to keep docker-compose.yml local)
-docker-compose.yml
+# Docker
 docker-compose.override.yml
 
 # IDE

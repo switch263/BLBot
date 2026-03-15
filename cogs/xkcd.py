@@ -3,7 +3,10 @@ from discord.ext import commands
 from discord import app_commands
 import aiohttp
 import random
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class XKCD(commands.Cog):
@@ -32,7 +35,7 @@ class XKCD(commands.Cog):
     
     @commands.Cog.listener()
     async def on_ready(self):
-        print("XKCD module has been loaded\n-----")
+        logger.info("XKCD module has been loaded")
     
     async def update_latest_comic(self):
         """Update the cached latest comic number"""

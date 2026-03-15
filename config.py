@@ -1,2 +1,6 @@
+import os
+
 dbtype = 'sqlite'
-dbfile = 'quotes.db'
+DATA_DIR = os.environ.get('BOT_DATA_DIR', os.path.join(os.path.dirname(__file__), 'data'))
+os.makedirs(DATA_DIR, exist_ok=True)
+dbfile = os.path.join(DATA_DIR, 'quotes.db')
