@@ -1,11 +1,10 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
 import random
 import sqlite3
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -43,84 +42,10 @@ DAILY_REWARDS = [
 class Slots(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
-        self._create_tables()
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Slots module has been loaded")
-
-    def _create_tables(self):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS wallets (
-                        guild_id INTEGER,
-                        user_id INTEGER,
-                        coins INTEGER DEFAULT 100,
-                        total_won INTEGER DEFAULT 0,
-                        total_lost INTEGER DEFAULT 0,
-                        spins INTEGER DEFAULT 0,
-                        jackpots INTEGER DEFAULT 0,
-                        last_daily TEXT DEFAULT '',
-                        PRIMARY KEY (guild_id, user_id)
-                    )
-                ''')
-                # Migration: add last_daily column if missing
-                try:
-                    conn.execute("ALTER TABLE wallets ADD COLUMN last_daily TEXT DEFAULT ''")
-                except sqlite3.OperationalError:
-                    pass  # column already exists
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error creating slots tables: {e}")
-
-    def _get_wallet(self, guild_id: int, user_id: int) -> dict:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
-                    (guild_id, user_id, STARTING_COINS)
-                )
-                conn.commit()
-                cursor = conn.execute(
-                    "SELECT coins, total_won, total_lost, spins, jackpots FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                row = cursor.fetchone()
-                return {"coins": row[0], "total_won": row[1], "total_lost": row[2], "spins": row[3], "jackpots": row[4]}
-        except sqlite3.Error as e:
-            logger.error(f"Database error getting wallet: {e}")
-            return {"coins": 0, "total_won": 0, "total_lost": 0, "spins": 0, "jackpots": 0}
-
-    def _update_wallet(self, guild_id: int, user_id: int, delta: int, is_jackpot: bool = False):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                if delta > 0:
-                    conn.execute(
-                        "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, spins = spins + 1, jackpots = jackpots + ? WHERE guild_id = ? AND user_id = ?",
-                        (delta, delta, 1 if is_jackpot else 0, guild_id, user_id)
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE wallets SET coins = coins + ?, total_lost = total_lost + ?, spins = spins + 1 WHERE guild_id = ? AND user_id = ?",
-                        (delta, abs(delta), guild_id, user_id)
-                    )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error updating wallet: {e}")
-
-    def _get_leaderboard(self, guild_id: int) -> list:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                cursor = conn.execute(
-                    "SELECT user_id, coins, jackpots FROM wallets WHERE guild_id = ? ORDER BY coins DESC LIMIT 5",
-                    (guild_id,)
-                )
-                return cursor.fetchall()
-        except sqlite3.Error as e:
-            logger.error(f"Database error getting leaderboard: {e}")
-            return []
 
     def _spin(self) -> list:
         """Spin the reels and return 3 symbols."""
@@ -162,7 +87,7 @@ class Slots(commands.Cog):
 
     async def _play_slots(self, guild_id: int, user_id: int, bet: int) -> discord.Embed:
         """Core slots logic. Returns embed."""
-        wallet = self._get_wallet(guild_id, user_id)
+        wallet = economy.get_wallet(guild_id, user_id)
 
         if bet < MIN_BET or bet > MAX_BET:
             return discord.Embed(
@@ -187,7 +112,7 @@ class Slots(commands.Cog):
         else:
             net = -bet
 
-        self._update_wallet(guild_id, user_id, net, is_jackpot)
+        economy.update_wallet(guild_id, user_id, net, is_jackpot)
 
         return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
 
@@ -210,9 +135,9 @@ class Slots(commands.Cog):
         from datetime import date
         today = date.today().isoformat()
 
-        self._get_wallet(guild_id, user_id)  # ensure wallet exists
+        economy.get_wallet(guild_id, user_id)  # ensure wallet exists
         try:
-            with sqlite3.connect(self.db_file) as conn:
+            with sqlite3.connect(economy.DB_FILE) as conn:
                 cursor = conn.execute(
                     "SELECT last_daily FROM wallets WHERE guild_id = ? AND user_id = ?",
                     (guild_id, user_id)
@@ -248,7 +173,9 @@ class Slots(commands.Cog):
             return None
         desc = ""
         medals = ["🥇", "🥈", "🥉", "4.", "5."]
-        for i, (uid, coins, jackpots) in enumerate(rows):
+        for i, row in enumerate(rows):
+            uid, coins = row[0], row[1]
+            jackpots = row[5] if len(row) > 5 else 0
             member = guild.get_member(uid)
             name = member.display_name if member else f"User {uid}"
             desc += f"{medals[i]} **{name}** - {coins} coins ({jackpots} jackpots)\n"
@@ -269,10 +196,10 @@ class Slots(commands.Cog):
             else:
                 await ctx.send("You already claimed your daily bonus today! Come back tomorrow.")
         elif action.lower() in ("balance", "bal"):
-            wallet = self._get_wallet(ctx.guild.id, ctx.author.id)
+            wallet = economy.get_wallet(ctx.guild.id, ctx.author.id)
             await ctx.send(embed=self._build_balance_embed(ctx.author, wallet))
         elif action.lower() in ("leaderboard", "lb", "top"):
-            rows = self._get_leaderboard(ctx.guild.id)
+            rows = economy.get_leaderboard(ctx.guild.id, limit=5)
             embed = self._build_leaderboard_embed(ctx.guild, rows)
             if embed:
                 await ctx.send(embed=embed)
@@ -310,12 +237,12 @@ class Slots(commands.Cog):
     @app_commands.describe(member="User to check (defaults to you)")
     async def slots_balance_slash(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
-        wallet = self._get_wallet(interaction.guild_id, target.id)
+        wallet = economy.get_wallet(interaction.guild_id, target.id)
         await interaction.response.send_message(embed=self._build_balance_embed(target, wallet))
 
     @app_commands.command(name="slots_leaderboard", description="See the slots leaderboard")
     async def slots_leaderboard_slash(self, interaction: discord.Interaction):
-        rows = self._get_leaderboard(interaction.guild_id)
+        rows = economy.get_leaderboard(interaction.guild_id, limit=5)
         embed = self._build_leaderboard_embed(interaction.guild, rows)
         if embed:
             await interaction.response.send_message(embed=embed)

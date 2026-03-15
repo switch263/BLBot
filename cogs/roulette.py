@@ -1,12 +1,10 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
 import random
-import sqlite3
 import asyncio
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -46,51 +44,11 @@ VICTORY_MESSAGES = [
 class RussianRoulette(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
         self.active_games = {}  # channel_id -> game state
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Russian Roulette module has been loaded")
-
-    def _get_coins(self, guild_id: int, user_id: int) -> int:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 100)",
-                    (guild_id, user_id)
-                )
-                conn.commit()
-                cursor = conn.execute(
-                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
-            return 0
-
-    def _deduct_coins(self, guild_id: int, user_id: int, amount: int):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "UPDATE wallets SET coins = coins - ?, total_lost = total_lost + ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, amount, guild_id, user_id)
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
-
-    def _award_coins(self, guild_id: int, user_id: int, amount: int):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, amount, guild_id, user_id)
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
 
     @commands.command(aliases=['rr'])
     async def roulette(self, ctx):
@@ -107,10 +65,10 @@ class RussianRoulette(commands.Cog):
                     await ctx.send(f"{author.mention}, you're already in the game!")
                     return
                 # Check coins
-                if self._get_coins(guild_id, author.id) < BUY_IN:
+                if economy.get_coins(guild_id, author.id) < BUY_IN:
                     await ctx.send(f"{author.mention}, you need at least **{BUY_IN}** coins to play!")
                     return
-                self._deduct_coins(guild_id, author.id, BUY_IN)
+                economy.deduct_coins(guild_id, author.id, BUY_IN)
                 game["players"].append(author)
                 game["pot"] += BUY_IN
                 await ctx.send(f"{author.mention} joins the roulette! ({len(game['players'])} players, pot: **{game['pot']}** coins)\nType `!roulette` to join. Starter: type `!pull` when ready to begin.")
@@ -120,11 +78,11 @@ class RussianRoulette(commands.Cog):
                 return
 
         # Check coins
-        if self._get_coins(guild_id, author.id) < BUY_IN:
+        if economy.get_coins(guild_id, author.id) < BUY_IN:
             await ctx.send(f"You need at least **{BUY_IN}** coins to play! (Buy-in: **{BUY_IN}**)")
             return
 
-        self._deduct_coins(guild_id, author.id, BUY_IN)
+        economy.deduct_coins(guild_id, author.id, BUY_IN)
 
         # Start new game
         self.active_games[channel.id] = {
@@ -210,7 +168,7 @@ class RussianRoulette(commands.Cog):
 
         # Winner!
         winner = players[0]
-        self._award_coins(guild_id, winner.id, pot)
+        economy.award_coins(guild_id, winner.id, pot)
         await ctx.send(random.choice(VICTORY_MESSAGES).format(winner=winner.mention, pot=pot))
 
         del self.active_games[channel.id]
@@ -228,10 +186,10 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await interaction.response.send_message("You're already in the game!", ephemeral=True)
                     return
-                if self._get_coins(guild_id, author.id) < BUY_IN:
+                if economy.get_coins(guild_id, author.id) < BUY_IN:
                     await interaction.response.send_message(f"You need at least **{BUY_IN}** coins to play!", ephemeral=True)
                     return
-                self._deduct_coins(guild_id, author.id, BUY_IN)
+                economy.deduct_coins(guild_id, author.id, BUY_IN)
                 game["players"].append(author)
                 game["pot"] += BUY_IN
                 await interaction.response.send_message(
@@ -243,11 +201,11 @@ class RussianRoulette(commands.Cog):
                 await interaction.response.send_message("A game is already in progress!", ephemeral=True)
                 return
 
-        if self._get_coins(guild_id, author.id) < BUY_IN:
+        if economy.get_coins(guild_id, author.id) < BUY_IN:
             await interaction.response.send_message(f"You need at least **{BUY_IN}** coins to play! (Buy-in: **{BUY_IN}**)", ephemeral=True)
             return
 
-        self._deduct_coins(guild_id, author.id, BUY_IN)
+        economy.deduct_coins(guild_id, author.id, BUY_IN)
 
         self.active_games[channel.id] = {
             "phase": "joining",

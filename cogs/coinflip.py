@@ -1,11 +1,9 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
 import random
-import sqlite3
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -37,45 +35,10 @@ LOSE_MESSAGES = [
 class CoinFlip(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("CoinFlip module has been loaded")
-
-    def _get_coins(self, guild_id: int, user_id: int) -> int:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 100)",
-                    (guild_id, user_id)
-                )
-                conn.commit()
-                cursor = conn.execute(
-                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
-            return 0
-
-    def _update_coins(self, guild_id: int, user_id: int, delta: int):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                if delta > 0:
-                    conn.execute(
-                        "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? WHERE guild_id = ? AND user_id = ?",
-                        (delta, delta, guild_id, user_id)
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE wallets SET coins = coins + ?, total_lost = total_lost + ? WHERE guild_id = ? AND user_id = ?",
-                        (delta, abs(delta), guild_id, user_id)
-                    )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
 
     async def _flip(self, guild_id: int, user_id: int, bet: int, call: str) -> discord.Embed:
         call = call.lower()
@@ -85,7 +48,7 @@ class CoinFlip(commands.Cog):
         if bet < MIN_BET or bet > MAX_BET:
             return discord.Embed(description=f"Bet must be between **{MIN_BET}** and **{MAX_BET}** coins.", color=discord.Color.red())
 
-        balance = self._get_coins(guild_id, user_id)
+        balance = economy.get_coins(guild_id, user_id)
         if balance < bet:
             return discord.Embed(description=f"You only have **{balance}** coins!", color=discord.Color.red())
 
@@ -97,7 +60,7 @@ class CoinFlip(commands.Cog):
         result_emoji = random.choice(HEADS_EMOJIS) if result == "heads" else random.choice(TAILS_EMOJIS)
 
         if won:
-            self._update_coins(guild_id, user_id, bet)
+            economy.update_wallet(guild_id, user_id, bet)
             new_bal = balance + bet
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
@@ -105,7 +68,7 @@ class CoinFlip(commands.Cog):
                 color=discord.Color.green()
             )
         else:
-            self._update_coins(guild_id, user_id, -bet)
+            economy.update_wallet(guild_id, user_id, -bet)
             new_bal = balance - bet
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",

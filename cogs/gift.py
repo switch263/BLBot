@@ -1,10 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
-import sqlite3
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -12,52 +10,10 @@ logger = logging.getLogger(__name__)
 class Gift(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Gift module has been loaded")
-
-    def _get_coins(self, guild_id: int, user_id: int) -> int:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 100)",
-                    (guild_id, user_id)
-                )
-                conn.commit()
-                cursor = conn.execute(
-                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
-            return 0
-
-    def _transfer(self, guild_id: int, from_id: int, to_id: int, amount: int) -> tuple[int, int]:
-        """Transfer coins. Returns (sender_balance, receiver_balance)."""
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 100)",
-                    (guild_id, to_id)
-                )
-                conn.execute(
-                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, guild_id, from_id)
-                )
-                conn.execute(
-                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, guild_id, to_id)
-                )
-                conn.commit()
-                c1 = conn.execute("SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?", (guild_id, from_id)).fetchone()[0]
-                c2 = conn.execute("SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?", (guild_id, to_id)).fetchone()[0]
-                return c1, c2
-        except sqlite3.Error as e:
-            logger.error(f"Database error transferring: {e}")
-            return 0, 0
 
     async def _do_gift(self, guild_id: int, sender: discord.Member, recipient: discord.Member, amount: int) -> discord.Embed:
         if sender.id == recipient.id:
@@ -69,11 +25,11 @@ class Gift(commands.Cog):
         if amount > 1000000:
             return discord.Embed(description="That's too generous! Max gift is **1,000,000** coins.", color=discord.Color.red())
 
-        balance = self._get_coins(guild_id, sender.id)
+        balance = economy.get_coins(guild_id, sender.id)
         if balance < amount:
             return discord.Embed(description=f"You only have **{balance}** coins!", color=discord.Color.red())
 
-        sender_bal, recv_bal = self._transfer(guild_id, sender.id, recipient.id, amount)
+        sender_bal, recv_bal = economy.transfer_coins(guild_id, sender.id, recipient.id, amount)
 
         embed = discord.Embed(
             title="Gift Sent!",

@@ -1,12 +1,11 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
 import random
 import sqlite3
 from datetime import date
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -65,33 +64,16 @@ FLAVOR_TEXT = [
 class LootDrop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
-        self._ensure_table()
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Loot Drop module has been loaded")
 
-    def _ensure_table(self):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS loot_cooldowns (
-                        guild_id INTEGER,
-                        user_id INTEGER,
-                        last_loot TEXT DEFAULT '',
-                        PRIMARY KEY (guild_id, user_id)
-                    )
-                ''')
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error creating loot table: {e}")
-
     def _check_and_set_cooldown(self, guild_id: int, user_id: int) -> bool:
         """Returns True if the user can loot, False if on cooldown. Sets cooldown if allowed."""
         today = date.today().isoformat()
         try:
-            with sqlite3.connect(self.db_file) as conn:
+            with sqlite3.connect(economy.DB_FILE) as conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO loot_cooldowns (guild_id, user_id) VALUES (?, ?)",
                     (guild_id, user_id)
@@ -112,21 +94,6 @@ class LootDrop(commands.Cog):
         except sqlite3.Error as e:
             logger.error(f"Database error checking loot cooldown: {e}")
             return False
-
-    def _add_coins(self, guild_id: int, user_id: int, amount: int):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 100)",
-                    (guild_id, user_id)
-                )
-                conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, amount, guild_id, user_id)
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error adding loot coins: {e}")
 
     def _generate_loot(self) -> tuple[str, str, int, discord.Color, str]:
         """Generate a random loot item. Returns (rarity_name, item_name, coins, color, emoji)."""
@@ -151,7 +118,7 @@ class LootDrop(commands.Cog):
             )
 
         rarity_name, item_name, coins, color, emoji = self._generate_loot()
-        self._add_coins(guild_id, user.id, coins)
+        economy.add_coins(guild_id, user.id, coins)
 
         flavor = random.choice(FLAVOR_TEXT)
 

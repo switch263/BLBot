@@ -1,10 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
-import sqlite3
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -12,47 +10,14 @@ logger = logging.getLogger(__name__)
 class Richest(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Richest module has been loaded")
 
-    def _get_leaderboard(self, guild_id: int) -> list:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                cursor = conn.execute(
-                    "SELECT user_id, coins, total_won, total_lost, spins, jackpots FROM wallets WHERE guild_id = ? ORDER BY coins DESC LIMIT 10",
-                    (guild_id,)
-                )
-                return cursor.fetchall()
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
-            return []
-
-    def _get_server_stats(self, guild_id: int) -> dict:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                cursor = conn.execute(
-                    "SELECT COUNT(*), SUM(coins), SUM(total_won), SUM(total_lost), SUM(spins), SUM(jackpots) FROM wallets WHERE guild_id = ?",
-                    (guild_id,)
-                )
-                row = cursor.fetchone()
-                return {
-                    "players": row[0] or 0,
-                    "total_coins": row[1] or 0,
-                    "total_won": row[2] or 0,
-                    "total_lost": row[3] or 0,
-                    "total_spins": row[4] or 0,
-                    "total_jackpots": row[5] or 0,
-                }
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
-            return {"players": 0, "total_coins": 0, "total_won": 0, "total_lost": 0, "total_spins": 0, "total_jackpots": 0}
-
     def _build_embed(self, guild: discord.Guild) -> discord.Embed:
-        rows = self._get_leaderboard(guild.id)
-        stats = self._get_server_stats(guild.id)
+        rows = economy.get_leaderboard(guild.id)
+        stats = economy.get_server_stats(guild.id)
 
         if not rows:
             return discord.Embed(title="Leaderboard", description="No one has any coins yet!", color=discord.Color.gold())

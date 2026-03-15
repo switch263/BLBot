@@ -1,11 +1,9 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import DATA_DIR
-import os
 import random
-import sqlite3
 import logging
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -79,55 +77,11 @@ HEIST_COOLDOWN = 300  # 5 minutes
 class Heist(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_file = os.path.join(DATA_DIR, "slots.db")
         self._cooldowns = {}  # (guild_id, user_id) -> timestamp
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Heist module has been loaded")
-
-    def _get_coins(self, guild_id: int, user_id: int) -> int:
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 100)",
-                    (guild_id, user_id)
-                )
-                conn.commit()
-                cursor = conn.execute(
-                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            logger.error(f"Database error getting coins: {e}")
-            return 0
-
-    def _transfer_coins(self, guild_id: int, from_id: int, to_id: int, amount: int):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, guild_id, from_id)
-                )
-                conn.execute(
-                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, guild_id, to_id)
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error transferring coins: {e}")
-
-    def _fine_user(self, guild_id: int, user_id: int, amount: int):
-        try:
-            with sqlite3.connect(self.db_file) as conn:
-                conn.execute(
-                    "UPDATE wallets SET coins = MAX(0, coins - ?) WHERE guild_id = ? AND user_id = ?",
-                    (amount, guild_id, user_id)
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error fining user: {e}")
 
     def _check_cooldown(self, guild_id: int, user_id: int) -> int | None:
         """Returns seconds remaining if on cooldown, None if ready."""
@@ -173,8 +127,8 @@ class Heist(commands.Cog):
                 return discord.Embed(description=f"{accomplice.display_name} is laying low after their last heist. Try again in **{minutes}m {seconds}s**.", color=discord.Color.red())
 
         # Check balances
-        victim_coins = self._get_coins(guild_id, victim.id)
-        thief_coins = self._get_coins(guild_id, thief.id)
+        victim_coins = economy.get_coins(guild_id, victim.id)
+        thief_coins = economy.get_coins(guild_id, thief.id)
 
         if victim_coins < MIN_VICTIM_COINS:
             return discord.Embed(description=f"{victim.display_name} only has **{victim_coins}** coins. Not worth the risk!", color=discord.Color.red())
@@ -188,13 +142,13 @@ class Heist(commands.Cog):
             steal_pct = random.uniform(STEAL_MIN_PCT, STEAL_MAX_PCT)
             stolen = max(1, int(victim_coins * steal_pct))
 
-            self._transfer_coins(guild_id, victim.id, thief.id, stolen)
+            economy.transfer_coins(guild_id, victim.id, thief.id, stolen)
 
             if is_duo:
                 # Accomplice gets a cut
                 cut_pct = random.uniform(ACCOMPLICE_CUT_MIN, ACCOMPLICE_CUT_MAX)
                 cut = max(1, int(stolen * cut_pct))
-                self._transfer_coins(guild_id, thief.id, accomplice.id, cut)
+                economy.transfer_coins(guild_id, thief.id, accomplice.id, cut)
                 thief_take = stolen - cut
 
                 msg_template = random.choice(DUO_SUCCESS_MESSAGES)
@@ -211,12 +165,12 @@ class Heist(commands.Cog):
             fine_pct = random.uniform(FINE_MIN_PCT, FINE_MAX_PCT)
             fine = max(1, int(thief_coins * fine_pct))
 
-            self._fine_user(guild_id, thief.id, fine)
+            economy.fine_user(guild_id, thief.id, fine)
 
             if is_duo:
-                accomplice_coins = self._get_coins(guild_id, accomplice.id)
+                accomplice_coins = economy.get_coins(guild_id, accomplice.id)
                 accomplice_fine = max(1, int(accomplice_coins * fine_pct))
-                self._fine_user(guild_id, accomplice.id, accomplice_fine)
+                economy.fine_user(guild_id, accomplice.id, accomplice_fine)
 
                 msg_template = random.choice(DUO_FAIL_MESSAGES)
                 msg = msg_template.format(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, fine=fine)
