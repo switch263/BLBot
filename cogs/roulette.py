@@ -140,6 +140,13 @@ class RussianRoulette(commands.Cog):
             current = players[turn % len(players)]
             current_shot += 1
 
+            # Safety: if we've gone through all 6 chambers, spin again
+            if current_shot > CHAMBER_SIZE:
+                await ctx.send("*The cylinder empties and spins again...*")
+                await asyncio.sleep(2)
+                bullet_chamber = random.randint(1, CHAMBER_SIZE)
+                current_shot = 1
+
             await ctx.send(f"{current.mention} raises the gun... and pulls the trigger...")
             await asyncio.sleep(2)
 
@@ -161,6 +168,9 @@ class RussianRoulette(commands.Cog):
                     remaining = ", ".join(p.display_name for p in players)
                     await ctx.send(f"**{len(players)} players remain:** {remaining}")
                     await asyncio.sleep(2)
+                    # New round, new cylinder spin
+                    bullet_chamber = random.randint(1, CHAMBER_SIZE)
+                    current_shot = 0
                 # Keep turn at same index (points to next player after removal)
                 # Ensure it's within bounds
                 turn = turn % len(players) if len(players) > 0 else 0
