@@ -34,7 +34,7 @@ if not token:
 # Set intents and description
 intents = discord.Intents.all()
 description = """A very basic discord bot, originally written for my group of gaming idiots called the Bored Lunatics. Hence the name blbot! Find the source code at https://github.com/switch263/BLBot"""
-bot = commands.Bot(command_prefix='!', description=description, intents=intents, help_command=None)
+bot = commands.Bot(command_prefix='!', description=description, intents=intents)
 
 cwd = str(Path(__file__).parents[0])
 
