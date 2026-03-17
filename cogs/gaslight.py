@@ -115,8 +115,8 @@ class Gaslight(commands.Cog):
 
         roll = random.random()
 
-        # 2% - Classic bait-and-switch
-        if roll < 0.02:
+        # 0.3% - Classic bait-and-switch
+        if roll < 0.003:
             pair = random.choice(self.pairs)
             sent_msg = await message.channel.send(pair[0])
             await asyncio.sleep(random.uniform(4, 8))
@@ -125,8 +125,8 @@ class Gaslight(commands.Cog):
             except discord.NotFound:
                 pass
 
-        # 1% - Slow burn: looks like a casual reply, edits after 15-45 seconds
-        elif roll < 0.03:
+        # 0.3% - Slow burn: looks like a casual reply, edits after 15-45 seconds
+        elif roll < 0.006:
             pair = random.choice(self.slow_burns)
             sent_msg = await message.channel.send(pair[0])
             await asyncio.sleep(random.uniform(15, 45))
@@ -135,14 +135,14 @@ class Gaslight(commands.Cog):
             except discord.NotFound:
                 pass
 
-        # 0.5% - Fake misquote: attributes a fake quote to the user
-        elif roll < 0.035 and message.content and len(message.content) > 5:
+        # 0.2% - Fake misquote: attributes a fake quote to the user
+        elif roll < 0.008 and message.content and len(message.content) > 5:
             template = random.choice(self.misquote_templates)
             fake = random.choice(self.fake_quotes)
             await message.channel.send(template.format(user=message.author.display_name, fake=fake))
 
-        # 0.5% - Echo gaslight: references what they said then denies it
-        elif roll < 0.04 and message.content and len(message.content) < 100:
+        # 0.2% - Echo gaslight: references what they said then denies it
+        elif roll < 0.010 and message.content and len(message.content) < 100:
             template = random.choice(self.echo_templates)
             truncated = message.content[:50]
             original = template[0].format(user=message.author.display_name, msg=truncated)
@@ -154,8 +154,8 @@ class Gaslight(commands.Cog):
             except discord.NotFound:
                 pass
 
-        # 1% - Suspicious react: adds a 👀 or 🤨, then removes it after a few seconds
-        elif roll < 0.05:
+        # 0.3% - Suspicious react: adds a 👀 or 🤨, then removes it after a few seconds
+        elif roll < 0.013:
             emoji = random.choice(self.sus_reacts)
             try:
                 await message.add_reaction(emoji)
@@ -164,8 +164,8 @@ class Gaslight(commands.Cog):
             except (discord.NotFound, discord.Forbidden):
                 pass
 
-        # 0.5% - Phantom ping: bot says "@username" as plain text (not a real ping) then edits to something innocent
-        elif roll < 0.055 and message.content:
+        # 0.2% - Phantom ping: bot says "@username" as plain text (not a real ping) then edits to something innocent
+        elif roll < 0.015 and message.content:
             sent_msg = await message.channel.send(f"Hey {message.author.display_name}, what did you mean by that?")
             await asyncio.sleep(random.uniform(8, 15))
             try:
@@ -173,8 +173,8 @@ class Gaslight(commands.Cog):
             except discord.NotFound:
                 pass
 
-        # 0.3% - Attribute someone else's old message to this user
-        elif roll < 0.058:
+        # 0.2% - Attribute someone else's old message to this user
+        elif roll < 0.017:
             history = self.message_history.get(ch, [])
             # Find a message from someone else
             others = [(name, msg) for name, msg in history if name != message.author.display_name and len(msg) < 100]
