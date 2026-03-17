@@ -133,14 +133,17 @@ class RussianRoulette(commands.Cog):
 
         # Game loop
         turn = 0
+        bullet_chamber = random.randint(1, CHAMBER_SIZE)  # Randomly place the bullet at start
+        current_shot = 0
+        
         while len(players) > 1:
             current = players[turn % len(players)]
-            bullet_chamber = random.randint(1, CHAMBER_SIZE)
+            current_shot += 1
 
             await ctx.send(f"{current.mention} raises the gun... and pulls the trigger...")
             await asyncio.sleep(2)
 
-            if bullet_chamber == 1:
+            if current_shot == bullet_chamber:
                 # BANG
                 await ctx.send(random.choice(BANG_MESSAGES).format(user=current.mention))
 
@@ -156,15 +159,16 @@ class RussianRoulette(commands.Cog):
 
                 if len(players) > 1:
                     remaining = ", ".join(p.display_name for p in players)
-                    await ctx.send(f"**{len(players)} players remain:** {remaining}\n*The cylinder spins again...*")
+                    await ctx.send(f"**{len(players)} players remain:** {remaining}")
                     await asyncio.sleep(2)
-                    turn = turn % len(players)
-                continue
+                # Keep turn at same index (points to next player after removal)
+                # Ensure it's within bounds
+                turn = turn % len(players) if len(players) > 0 else 0
             else:
                 await ctx.send(random.choice(CLICK_MESSAGES).format(user=current.mention))
                 await asyncio.sleep(1)
-
-            turn += 1
+                # Only increment turn when player survives
+                turn += 1
 
         # Winner!
         winner = players[0]
