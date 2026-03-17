@@ -166,14 +166,12 @@ class RussianRoulette(commands.Cog):
 
                 if len(players) > 1:
                     remaining = ", ".join(p.display_name for p in players)
-                    await ctx.send(f"**{len(players)} players remain:** {remaining}")
+                    await ctx.send(f"**{len(players)} players remain:** {remaining}\n*The cylinder spins again...*")
                     await asyncio.sleep(2)
-                    # New round, new cylinder spin
+                    # New round - completely restart
                     bullet_chamber = random.randint(1, CHAMBER_SIZE)
                     current_shot = 0
-                # Keep turn at same index (points to next player after removal)
-                # Ensure it's within bounds
-                turn = turn % len(players) if len(players) > 0 else 0
+                    turn = 0  # Start from first remaining player
             else:
                 await ctx.send(random.choice(CLICK_MESSAGES).format(user=current.mention))
                 await asyncio.sleep(1)
