@@ -12,7 +12,7 @@ BULLET_EMOJI = "💀"
 SAFE_EMOJI = "😅"
 CHAMBER_SIZE = 6
 TIMEOUT_DURATION = 60  # seconds to timeout the loser
-BUY_IN = 25  # coins per player
+BUY_IN = 150  # coins per player
 
 CLICK_MESSAGES = [
     "*Click.* {user} survives... for now.",
@@ -51,7 +51,7 @@ class RussianRoulette(commands.Cog):
         logger.info("Russian Roulette module has been loaded")
 
     @commands.command(aliases=['rr'])
-    async def roulette(self, ctx):
+    async def roulette(self, ctx, bet: int = None):
         """Start or join a Russian Roulette game! Players take turns pulling the trigger."""
         channel = ctx.channel
         guild_id = ctx.guild.id
@@ -64,31 +64,43 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await ctx.send(f"{author.mention}, you're already in the game!")
                     return
-                # Check coins
-                if economy.get_coins(guild_id, author.id) < BUY_IN:
-                    await ctx.send(f"{author.mention}, you need at least **{BUY_IN}** coins to play!")
+                # Check coins against game's bet amount
+                game_bet = game["bet"]
+                if economy.get_coins(guild_id, author.id) < game_bet:
+                    await ctx.send(f"{author.mention}, you need at least **{game_bet}** coins to play!")
                     return
-                economy.deduct_coins(guild_id, author.id, BUY_IN)
+                economy.deduct_coins(guild_id, author.id, game_bet)
                 game["players"].append(author)
-                game["pot"] += BUY_IN
+                game["pot"] += game_bet
                 await ctx.send(f"{author.mention} joins the roulette! ({len(game['players'])} players, pot: **{game['pot']}** coins)\nType `!roulette` to join. Starter: type `!pull` when ready to begin.")
                 return
             else:
                 await ctx.send("A game is already in progress in this channel!")
                 return
 
-        # Check coins
-        if economy.get_coins(guild_id, author.id) < BUY_IN:
-            await ctx.send(f"You need at least **{BUY_IN}** coins to play! (Buy-in: **{BUY_IN}**)")
+        # Set bet amount (default or custom)
+        if bet is None:
+            bet = BUY_IN
+        elif bet < 10:
+            await ctx.send("Minimum bet is **10** coins!")
+            return
+        elif bet > 10000:
+            await ctx.send("Maximum bet is **10,000** coins!")
             return
 
-        economy.deduct_coins(guild_id, author.id, BUY_IN)
+        # Check coins
+        if economy.get_coins(guild_id, author.id) < bet:
+            await ctx.send(f"You need at least **{bet}** coins to play!")
+            return
+
+        economy.deduct_coins(guild_id, author.id, bet)
 
         # Start new game
         self.active_games[channel.id] = {
             "phase": "joining",
             "players": [author],
-            "pot": BUY_IN,
+            "pot": bet,
+            "bet": bet,
             "guild_id": guild_id,
             "starter": author.id,
         }
@@ -97,7 +109,7 @@ class RussianRoulette(commands.Cog):
             title="Russian Roulette",
             description=(
                 f"{author.mention} has started a game of Russian Roulette!\n\n"
-                f"Buy-in: **{BUY_IN}** coins per player\n"
+                f"Buy-in: **{bet}** coins per player\n"
                 f"Type `!roulette` to join!\n"
                 f"{author.display_name}: type `!pull` when everyone is in."
             ),
@@ -186,7 +198,8 @@ class RussianRoulette(commands.Cog):
         del self.active_games[channel.id]
 
     @app_commands.command(name="roulette", description="Start or join a Russian Roulette game!")
-    async def roulette_slash(self, interaction: discord.Interaction):
+    @app_commands.describe(bet="Bet amount in coins (default: 250)")
+    async def roulette_slash(self, interaction: discord.Interaction, bet: int = None):
         """Slash command entry point - creates or joins game, then uses prefix flow."""
         channel = interaction.channel
         guild_id = interaction.guild_id
@@ -198,12 +211,14 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await interaction.response.send_message("You're already in the game!", ephemeral=True)
                     return
-                if economy.get_coins(guild_id, author.id) < BUY_IN:
-                    await interaction.response.send_message(f"You need at least **{BUY_IN}** coins to play!", ephemeral=True)
+                # Check coins against game's bet amount
+                game_bet = game["bet"]
+                if economy.get_coins(guild_id, author.id) < game_bet:
+                    await interaction.response.send_message(f"You need at least **{game_bet}** coins to play!", ephemeral=True)
                     return
-                economy.deduct_coins(guild_id, author.id, BUY_IN)
+                economy.deduct_coins(guild_id, author.id, game_bet)
                 game["players"].append(author)
-                game["pot"] += BUY_IN
+                game["pot"] += game_bet
                 await interaction.response.send_message(
                     f"{author.mention} joins the roulette! ({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
                     f"Use `/roulette` to join. Starter: type `!pull` when ready."
@@ -213,16 +228,27 @@ class RussianRoulette(commands.Cog):
                 await interaction.response.send_message("A game is already in progress!", ephemeral=True)
                 return
 
-        if economy.get_coins(guild_id, author.id) < BUY_IN:
-            await interaction.response.send_message(f"You need at least **{BUY_IN}** coins to play! (Buy-in: **{BUY_IN}**)", ephemeral=True)
+        # Set bet amount (default or custom)
+        if bet is None:
+            bet = BUY_IN
+        elif bet < 10:
+            await interaction.response.send_message("Minimum bet is **10** coins!", ephemeral=True)
+            return
+        elif bet > 10000:
+            await interaction.response.send_message("Maximum bet is **10,000** coins!", ephemeral=True)
             return
 
-        economy.deduct_coins(guild_id, author.id, BUY_IN)
+        if economy.get_coins(guild_id, author.id) < bet:
+            await interaction.response.send_message(f"You need at least **{bet}** coins to play!", ephemeral=True)
+            return
+
+        economy.deduct_coins(guild_id, author.id, bet)
 
         self.active_games[channel.id] = {
             "phase": "joining",
             "players": [author],
-            "pot": BUY_IN,
+            "pot": bet,
+            "bet": bet,
             "guild_id": guild_id,
             "starter": author.id,
         }
@@ -231,7 +257,7 @@ class RussianRoulette(commands.Cog):
             title="Russian Roulette",
             description=(
                 f"{author.mention} has started a game of Russian Roulette!\n\n"
-                f"Buy-in: **{BUY_IN}** coins per player\n"
+                f"Buy-in: **{bet}** coins per player\n"
                 f"Use `!roulette` or `/roulette` to join!\n"
                 f"{author.display_name}: type `!pull` when everyone is in."
             ),
