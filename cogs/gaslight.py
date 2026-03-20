@@ -155,14 +155,15 @@ class Gaslight(commands.Cog):
                 pass
 
         # 0.01% - Suspicious react: adds a 👀 or 🤨, then removes it after a few seconds
-        elif roll < 0.0005:
-            emoji = random.choice(self.sus_reacts)
-            try:
-                await message.add_reaction(emoji)
-                await asyncio.sleep(random.uniform(2, 5))
-                await message.remove_reaction(emoji, self.bot.user)
-            except (discord.NotFound, discord.Forbidden):
-                pass
+        # DISABLED
+        # elif roll < 0.0005:
+        #     emoji = random.choice(self.sus_reacts)
+        #     try:
+        #         await message.add_reaction(emoji)
+        #         await asyncio.sleep(random.uniform(2, 5))
+        #         await message.remove_reaction(emoji, self.bot.user)
+        #     except (discord.NotFound, discord.Forbidden):
+        #         pass
 
         # 0.01% - Phantom ping: bot says "@username" as plain text (not a real ping) then edits to something innocent
         elif roll < 0.0006 and message.content:
