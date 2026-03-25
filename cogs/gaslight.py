@@ -238,4 +238,5 @@ class Gaslight(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(Gaslight(bot))
+    #await bot.add_cog(Gaslight(bot))
+    pass
