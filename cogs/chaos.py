@@ -393,4 +393,5 @@ class Chaos(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(Chaos(bot))
+    #await bot.add_cog(Chaos(bot))
+    pass
