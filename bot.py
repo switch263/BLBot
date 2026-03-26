@@ -63,15 +63,29 @@ async def on_command_error(ctx, error):
         logger.error(f"Unexpected error occurred: {error}")
 
 # Load cogs from the cogs directory
+# Cogs disabled by default (can be loaded manually with !load command if admin cog is enabled)
+DISABLED_COGS = [
+    "faketyping",
+    "lurkercallout",
+    "villain",
+    "unhinged",
+    "typopolice",
+    "selectivememory",
+]
+
 async def load_extensions():
     """Load all cog extensions asynchronously (required for discord.py 2.0+/py-cord 2.0+)"""
     for file in os.listdir(os.path.join(cwd, "cogs")):
         if file.endswith(".py") and not file.startswith("_"):
+            cog_name = file[:-3]
+            if cog_name in DISABLED_COGS:
+                logger.info(f"Skipping disabled extension: cogs.{cog_name}")
+                continue
             try:
-                await bot.load_extension(f"cogs.{file[:-3]}")
-                logger.info(f"Loaded extension: cogs.{file[:-3]}")
+                await bot.load_extension(f"cogs.{cog_name}")
+                logger.info(f"Loaded extension: cogs.{cog_name}")
             except Exception as e:
-                logger.error(f"Failed to load extension cogs.{file[:-3]}: {e}")
+                logger.error(f"Failed to load extension cogs.{cog_name}: {e}")
 
 async def main():
     """Main function to load extensions and start the bot"""
