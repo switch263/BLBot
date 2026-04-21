@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import random
 import asyncio
 import sys
@@ -15,37 +16,51 @@ class CasinoRoulette(commands.Cog):
         self.bot = bot
         self.red_numbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
         self.black_numbers = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35]
-        # Use 0 as a reserved ID for the house jackpot fund
         self.JACKPOT_ID = 0
 
-    @commands.command(name="bet")
-    async def play_roulette(self, ctx, bet_type: str, amount: int):
-        guild_id = ctx.guild.id
-        user_id = ctx.author.id
+    # Logic shared by both command types to keep code clean
+    async def run_bet(self, ctx_or_interaction, bet_type: str, amount: int):
+        # Determine if this is a Prefix context or a Slash interaction
+        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         
-        balance = get_coins(guild_id, user_id)
+        guild = ctx_or_interaction.guild if not is_slash else ctx_or_interaction.guild
+        user = ctx_or_interaction.author if not is_slash else ctx_or_interaction.user
+
+        if not guild:
+            msg = "This command can only be used in a server."
+            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
+
+        balance = get_coins(guild.id, user.id)
 
         if amount <= 0:
-            return await ctx.send("You can't bet nothing. Stop being weird.")
+            msg = "Bet more than 0, you cheapskate."
+            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
         
         if balance < amount:
-            return await ctx.send(f"You're too broke. Balance: **{balance}**")
+            msg = f"You're too broke. Balance: **{balance}**"
+            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
 
-        # Deduct upfront using your economy utility
-        deduct_coins(guild_id, user_id, amount)
-        
+        # Start the game
+        deduct_coins(guild.id, user.id, amount)
         bet_type = bet_type.lower()
         winning_number = random.randint(0, 36)
         color = "🟢 GREEN" if winning_number == 0 else ("🔴 RED" if winning_number in self.red_numbers else "⚫ BLACK")
         
-        msg = await ctx.send(f"🎰 **{ctx.author.display_name}** bets **{amount}** on **{bet_type}**... Spinning!")
+        start_msg = f"🎰 **{user.display_name}** bets **{amount}** on **{bet_type}**... Spinning!"
+        
+        if is_slash:
+            await ctx_or_interaction.response.send_message(start_msg)
+            # Fetch the message object so we can edit it later
+            msg = await ctx_or_interaction.original_response()
+        else:
+            msg = await ctx_or_interaction.send(start_msg)
+
         await asyncio.sleep(3)
         
         won = False
         multiplier = 0
         hit_jackpot_shot = False
 
-        # Winning Logic
         if winning_number == 0:
             if bet_type in ["0", "green"]:
                 won, multiplier = True, 35
@@ -65,31 +80,34 @@ class CasinoRoulette(commands.Cog):
         
         if won:
             winnings = amount * multiplier
-            # update_wallet handles coins + stats (spins, total won)
-            update_wallet(guild_id, user_id, winnings, is_jackpot=hit_jackpot_shot)
-            
+            update_wallet(guild.id, user.id, winnings, is_jackpot=hit_jackpot_shot)
             final_text = f"{result_msg}\n🎉 **WINNER!** You won **{winnings}** coins!"
             
             if hit_jackpot_shot:
-                pot_total = get_coins(guild_id, self.JACKPOT_ID)
+                pot_total = get_coins(guild.id, self.JACKPOT_ID)
                 if pot_total > 0:
-                    add_coins(guild_id, user_id, pot_total)
-                    deduct_coins(guild_id, self.JACKPOT_ID, pot_total)
+                    add_coins(guild.id, user.id, pot_total)
+                    deduct_coins(guild.id, self.JACKPOT_ID, pot_total)
                     final_text += f"\n💰 **JACKPOT!!** You also claimed the house pot of **{pot_total}**!"
-            
-            await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild_id, user_id)}**")
         else:
-            # 10% tax goes to jackpot fund
             tax = int(amount * 0.10)
-            add_coins(guild_id, self.JACKPOT_ID, tax)
-            # update_wallet with negative delta to track the loss in stats
-            update_wallet(guild_id, user_id, 0) # Just to increment the 'spins' stat
-            await msg.edit(content=f"{result_msg}\n💀 **L.** {tax} added to the !pot.\nBalance: **{get_coins(guild_id, user_id)}**")
+            add_coins(guild.id, self.JACKPOT_ID, tax)
+            update_wallet(guild.id, user.id, 0)
+            final_text = f"{result_msg}\n💀 **L.** {tax} added to the !pot."
 
-    @commands.command(name="pot")
-    async def check_pot(self, ctx):
-        pot = get_coins(ctx.guild.id, self.JACKPOT_ID)
-        await ctx.send(f"💰 Current Jackpot: **{pot}** coins. Bet on **0** or **green** to win it!")
+        await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild.id, user.id)}**")
+
+    # --- PREFIX COMMAND ---
+    @commands.command(name="bet")
+    @commands.guild_only()
+    async def bet_prefix(self, ctx, bet_type: str, amount: int):
+        await self.run_bet(ctx, bet_type, amount)
+
+    # --- SLASH COMMAND ---
+    @app_commands.command(name="bet", description="Bet your hard-earned coins on the roulette wheel")
+    @app_commands.describe(bet_type="red, black, even, odd, or a number 0-36", amount="How much you're willing to lose")
+    async def bet_slash(self, interaction: discord.Interaction, bet_type: str, amount: int):
+        await self.run_bet(interaction, bet_type, amount)
 
 async def setup(bot):
     await bot.add_cog(CasinoRoulette(bot))
