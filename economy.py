@@ -25,6 +25,12 @@ def _init_db():
                     spins INTEGER DEFAULT 0,
                     jackpots INTEGER DEFAULT 0,
                     last_daily TEXT DEFAULT '',
+                    roulette_plays INTEGER DEFAULT 0,
+                    roulette_wins INTEGER DEFAULT 0,
+                    rr_plays INTEGER DEFAULT 0,
+                    rr_wins INTEGER DEFAULT 0,
+                    heists_attempted INTEGER DEFAULT 0,
+                    heists_succeeded INTEGER DEFAULT 0,
                     PRIMARY KEY (guild_id, user_id)
                 )
             ''')
@@ -36,18 +42,35 @@ def _init_db():
                     PRIMARY KEY (guild_id, user_id)
                 )
             ''')
-            # Migration: add last_daily column if missing
-            try:
-                conn.execute("ALTER TABLE wallets ADD COLUMN last_daily TEXT DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass
+            # Migrations: add columns if missing (safe on existing DBs)
+            for col, decl in [
+                ("last_daily", "TEXT DEFAULT ''"),
+                ("roulette_plays", "INTEGER DEFAULT 0"),
+                ("roulette_wins", "INTEGER DEFAULT 0"),
+                ("rr_plays", "INTEGER DEFAULT 0"),
+                ("rr_wins", "INTEGER DEFAULT 0"),
+                ("heists_attempted", "INTEGER DEFAULT 0"),
+                ("heists_succeeded", "INTEGER DEFAULT 0"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE wallets ADD COLUMN {col} {decl}")
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error initializing economy: {e}")
 
 
+_EMPTY_WALLET = {
+    "coins": 0, "total_won": 0, "total_lost": 0, "spins": 0, "jackpots": 0,
+    "roulette_plays": 0, "roulette_wins": 0,
+    "rr_plays": 0, "rr_wins": 0,
+    "heists_attempted": 0, "heists_succeeded": 0,
+}
+
+
 def get_wallet(guild_id: int, user_id: int) -> dict:
-    """Get or create a wallet. Returns dict with coins, total_won, total_lost, spins, jackpots."""
+    """Get or create a wallet. Returns dict with all stat fields."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
@@ -56,14 +79,23 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
             )
             conn.commit()
             cursor = conn.execute(
-                "SELECT coins, total_won, total_lost, spins, jackpots FROM wallets WHERE guild_id = ? AND user_id = ?",
+                "SELECT coins, total_won, total_lost, spins, jackpots, "
+                "roulette_plays, roulette_wins, rr_plays, rr_wins, "
+                "heists_attempted, heists_succeeded "
+                "FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id)
             )
             row = cursor.fetchone()
-            return {"coins": row[0], "total_won": row[1], "total_lost": row[2], "spins": row[3], "jackpots": row[4]}
+            return {
+                "coins": row[0], "total_won": row[1], "total_lost": row[2],
+                "spins": row[3], "jackpots": row[4],
+                "roulette_plays": row[5], "roulette_wins": row[6],
+                "rr_plays": row[7], "rr_wins": row[8],
+                "heists_attempted": row[9], "heists_succeeded": row[10],
+            }
     except sqlite3.Error as e:
         logger.error(f"Database error getting wallet: {e}")
-        return {"coins": 0, "total_won": 0, "total_lost": 0, "spins": 0, "jackpots": 0}
+        return dict(_EMPTY_WALLET)
 
 
 def get_coins(guild_id: int, user_id: int) -> int:
@@ -200,6 +232,51 @@ def get_server_stats(guild_id: int) -> dict:
     except sqlite3.Error as e:
         logger.error(f"Database error getting server stats: {e}")
         return {"players": 0, "total_coins": 0, "total_won": 0, "total_lost": 0, "total_spins": 0, "total_jackpots": 0}
+
+
+def record_roulette(guild_id: int, user_id: int, won: bool):
+    """Record a casino roulette play and win (if applicable)."""
+    get_wallet(guild_id, user_id)
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                "UPDATE wallets SET roulette_plays = roulette_plays + 1, "
+                "roulette_wins = roulette_wins + ? WHERE guild_id = ? AND user_id = ?",
+                (1 if won else 0, guild_id, user_id)
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error recording roulette play: {e}")
+
+
+def record_rr(guild_id: int, user_id: int, won: bool):
+    """Record a Russian Roulette play and win (if applicable)."""
+    get_wallet(guild_id, user_id)
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                "UPDATE wallets SET rr_plays = rr_plays + 1, "
+                "rr_wins = rr_wins + ? WHERE guild_id = ? AND user_id = ?",
+                (1 if won else 0, guild_id, user_id)
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error recording Russian Roulette play: {e}")
+
+
+def record_heist(guild_id: int, user_id: int, succeeded: bool):
+    """Record a heist attempt and success (if applicable)."""
+    get_wallet(guild_id, user_id)
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                "UPDATE wallets SET heists_attempted = heists_attempted + 1, "
+                "heists_succeeded = heists_succeeded + ? WHERE guild_id = ? AND user_id = ?",
+                (1 if succeeded else 0, guild_id, user_id)
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error recording heist: {e}")
 
 
 # Initialize DB on import

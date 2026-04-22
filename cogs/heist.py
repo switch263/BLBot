@@ -186,6 +186,11 @@ class Heist(commands.Cog):
         if is_duo:
             self._set_cooldown(guild_id, accomplice.id)
 
+        # Track stats
+        economy.record_heist(guild_id, thief.id, success)
+        if is_duo:
+            economy.record_heist(guild_id, accomplice.id, success)
+
         return embed
 
     @commands.command(aliases=['rob', 'steal'])

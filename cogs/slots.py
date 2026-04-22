@@ -124,10 +124,29 @@ class Slots(commands.Cog):
         embed.add_field(name="Balance", value=f"**{wallet['coins']}** coins", inline=True)
         embed.add_field(name="Total Won", value=f"{wallet['total_won']} coins", inline=True)
         embed.add_field(name="Total Lost", value=f"{wallet['total_lost']} coins", inline=True)
-        embed.add_field(name="Spins", value=str(wallet['spins']), inline=True)
-        embed.add_field(name="Jackpots", value=str(wallet['jackpots']), inline=True)
         net = wallet['total_won'] - wallet['total_lost']
         embed.add_field(name="Net Profit", value=f"{'+'if net >= 0 else ''}{net} coins", inline=True)
+
+        embed.add_field(
+            name="🎰 Slots",
+            value=f"Spins: **{wallet['spins']}**\nJackpots: **{wallet['jackpots']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🎡 Roulette",
+            value=f"Plays: **{wallet['roulette_plays']}**\nWins: **{wallet['roulette_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🔫 Russian Roulette",
+            value=f"Games: **{wallet['rr_plays']}**\nWins: **{wallet['rr_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🥷 Heists",
+            value=f"Attempts: **{wallet['heists_attempted']}**\nSuccesses: **{wallet['heists_succeeded']}**",
+            inline=True,
+        )
         return embed
 
     def _give_daily(self, guild_id: int, user_id: int) -> tuple[bool, int, int]:
@@ -233,9 +252,16 @@ class Slots(commands.Cog):
         else:
             await interaction.response.send_message("You already claimed your daily bonus today! Come back tomorrow.")
 
-    @app_commands.command(name="slots_balance", description="Check your slot machine balance and stats")
+    @commands.command(aliases=['slots_balance'])
+    async def wallet(self, ctx, member: discord.Member = None):
+        """Check your wallet: balance and stats across all games."""
+        target = member or ctx.author
+        wallet = economy.get_wallet(ctx.guild.id, target.id)
+        await ctx.send(embed=self._build_balance_embed(target, wallet))
+
+    @app_commands.command(name="wallet", description="Check wallet balance and stats across all games")
     @app_commands.describe(member="User to check (defaults to you)")
-    async def slots_balance_slash(self, interaction: discord.Interaction, member: discord.Member = None):
+    async def wallet_slash(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         wallet = economy.get_wallet(interaction.guild_id, target.id)
         await interaction.response.send_message(embed=self._build_balance_embed(target, wallet))

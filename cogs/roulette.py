@@ -193,6 +193,11 @@ class RussianRoulette(commands.Cog):
         # Winner!
         winner = players[0]
         economy.award_coins(guild_id, winner.id, pot)
+        economy.record_rr(guild_id, winner.id, True)
+        # Record losses for everyone else who joined
+        for p in game["players"]:
+            if p.id != winner.id:
+                economy.record_rr(guild_id, p.id, False)
         await ctx.send(random.choice(VICTORY_MESSAGES).format(winner=winner.mention, pot=pot))
 
         del self.active_games[channel.id]

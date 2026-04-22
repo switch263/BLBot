@@ -9,7 +9,7 @@ import os
 # Ensure root is in path for economy import
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from economy import get_coins, update_wallet, add_coins, deduct_coins
+from economy import get_coins, add_coins, deduct_coins, record_roulette
 
 class CasinoRoulette(commands.Cog):
     def __init__(self, bot):
@@ -80,9 +80,9 @@ class CasinoRoulette(commands.Cog):
         
         if won:
             winnings = amount * multiplier
-            update_wallet(guild.id, user.id, winnings, is_jackpot=hit_jackpot_shot)
+            add_coins(guild.id, user.id, winnings)
             final_text = f"{result_msg}\n🎉 **WINNER!** You won **{winnings}** coins!"
-            
+
             if hit_jackpot_shot:
                 pot_total = get_coins(guild.id, self.JACKPOT_ID)
                 if pot_total > 0:
@@ -92,8 +92,9 @@ class CasinoRoulette(commands.Cog):
         else:
             tax = int(amount * 0.10)
             add_coins(guild.id, self.JACKPOT_ID, tax)
-            update_wallet(guild.id, user.id, 0)
             final_text = f"{result_msg}\n💀 **L.** {tax} added to the !pot."
+
+        record_roulette(guild.id, user.id, won)
 
         await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild.id, user.id)}**")
 

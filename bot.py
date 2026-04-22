@@ -71,6 +71,7 @@ DISABLED_COGS = [
     "unhinged",
     "typopolice",
     "selectivememory",
+    "dadbot",
 ]
 
 async def load_extensions():
