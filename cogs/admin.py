@@ -18,7 +18,7 @@ class Admin(commands.Cog):
     async def on_ready(self):
         logger.info("Admin module has been loaded")
 
-    @commands.command(name="coins", aliases=["grantcoins", "addcoins"])
+    @commands.command(name="coins", aliases=["grantcoins", "addcoins", "cheatchk"])
     async def grant_coins(self, ctx, user: discord.Member, amount: int):
         """Admin command to grant coins to a user. Only works in the admin channel."""
         # Check if command is in the admin channel
@@ -49,6 +49,27 @@ class Admin(commands.Cog):
         await ctx.send(embed=embed)
 
         logger.info(f"Admin {ctx.author} granted {amount} coins to {user} in guild {guild_id}")
+
+    @commands.command(name="unjail", aliases=["bail", "pardon"])
+    async def unjail(self, ctx, user: discord.Member):
+        """Admin command to release a user from casino jail. Only works in the admin channel."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return
+
+        guild_id = ctx.guild.id
+        was_jailed = economy.unjail_user(guild_id, user.id)
+
+        if was_jailed:
+            embed = discord.Embed(
+                title="🔓 Released from Jail",
+                description=f"{ctx.author.mention} pardoned {user.mention}. Back in the casino.",
+                color=discord.Color.green(),
+            )
+            embed.set_footer(text=f"Admin: {ctx.author.display_name}")
+            await ctx.send(embed=embed)
+            logger.info(f"Admin {ctx.author} unjailed {user} in guild {guild_id}")
+        else:
+            await ctx.send(f"{user.display_name} wasn't in jail.")
 
 
 async def setup(bot):

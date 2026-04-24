@@ -57,6 +57,11 @@ class RussianRoulette(commands.Cog):
         guild_id = ctx.guild.id
         author = ctx.author
 
+        jmsg = economy.jail_message(guild_id, author.id)
+        if jmsg:
+            await ctx.send(jmsg)
+            return
+
         # If there's already a game in join phase
         if channel.id in self.active_games:
             game = self.active_games[channel.id]
@@ -206,6 +211,11 @@ class RussianRoulette(commands.Cog):
         channel = interaction.channel
         guild_id = interaction.guild_id
         author = interaction.user
+
+        jmsg = economy.jail_message(guild_id, author.id)
+        if jmsg:
+            await interaction.response.send_message(jmsg, ephemeral=True)
+            return
 
         if channel.id in self.active_games:
             game = self.active_games[channel.id]

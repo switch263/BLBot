@@ -9,7 +9,7 @@ import asyncio
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins
+from economy import get_coins, add_coins, deduct_coins, jail_message
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,10 @@ class LobbyView(discord.ui.View):
             return
         if len(r.players) >= MAX_PLAYERS:
             await interaction.response.send_message(f"Table's full ({MAX_PLAYERS} players).", ephemeral=True)
+            return
+        jmsg = jail_message(r.guild_id, interaction.user.id)
+        if jmsg:
+            await interaction.response.send_message(jmsg, ephemeral=True)
             return
         balance = get_coins(r.guild_id, interaction.user.id)
         if balance < r.buy_in:
@@ -408,6 +412,10 @@ class Blackjack(commands.Cog):
 
         if not guild:
             await reply("Can only play in a server.")
+            return
+        jmsg = jail_message(guild.id, user.id)
+        if jmsg:
+            await reply(jmsg)
             return
         if bet <= 0:
             await reply("Buy-in needs to be greater than 0.")

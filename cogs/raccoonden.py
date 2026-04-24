@@ -7,7 +7,7 @@ import os
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins
+from economy import get_coins, add_coins, deduct_coins, record_den, jail_message
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class BinButton(discord.ui.Button):
                     child.label = "🦝"
                     child.style = discord.ButtonStyle.danger
                 child.disabled = True
+            record_den(g.guild_id, g.user_id, won=False)
             scream = random.choice(RACCOON_SCREAMS)
             content = view.cog._render(g, f"🦝 **BITTEN!** {scream}\nYou lose **{g.bet}** coins.")
             await interaction.response.edit_message(content=content, view=view)
@@ -99,6 +100,7 @@ class BinButton(discord.ui.Button):
             mult = current_multiplier(len(g.revealed))
             payout = int(g.bet * mult)
             add_coins(g.guild_id, g.user_id, payout)
+            record_den(g.guild_id, g.user_id, won=True)
             for child in view.children:
                 if isinstance(child, BinButton) and child.idx in g.raccoons:
                     child.label = "🦝"
@@ -138,6 +140,7 @@ class CashOutButton(discord.ui.Button):
         mult = current_multiplier(len(g.revealed))
         payout = int(g.bet * mult)
         add_coins(g.guild_id, g.user_id, payout)
+        record_den(g.guild_id, g.user_id, won=True)
         for child in view.children:
             if isinstance(child, BinButton) and child.idx in g.raccoons:
                 child.label = "🦝"
@@ -175,6 +178,9 @@ class DenView(discord.ui.View):
             if g.revealed:
                 mult = current_multiplier(len(g.revealed))
                 add_coins(g.guild_id, g.user_id, int(g.bet * mult))
+                record_den(g.guild_id, g.user_id, won=True)
+            else:
+                record_den(g.guild_id, g.user_id, won=False)
             g.ended = True
 
 
@@ -215,6 +221,10 @@ class RaccoonDen(commands.Cog):
 
         if not guild:
             await reply("Can only dig in a server.")
+            return
+        jmsg = jail_message(guild.id, user.id)
+        if jmsg:
+            await reply(jmsg)
             return
         if bet <= 0:
             await reply("You gotta risk something, cheapskate.")

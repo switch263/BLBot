@@ -10,6 +10,7 @@ import sys
 import asyncio
 # Load configuration from a separate file
 from config import dbtype, dbfile
+import economy
 
 # Configure logging
 log_level_str = os.environ.get('LOG_LEVEL', "DEBUG")
@@ -40,6 +41,9 @@ cwd = str(Path(__file__).parents[0])
 
 @bot.event
 async def on_ready():
+    # Register the bot as the house wallet — migrates any legacy user_id=0 pot over.
+    if bot.user:
+        economy.set_house_id(bot.user.id)
     try:
         # Sync globally
         synced = await bot.tree.sync()

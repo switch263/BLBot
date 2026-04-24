@@ -8,7 +8,7 @@ import logging
 import asyncio
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins
+from economy import get_coins, add_coins, deduct_coins, jail_message
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,10 @@ class WheelOfMisfortune(commands.Cog):
 
         if not guild:
             await reply("Can only spin in a server.")
+            return
+        jmsg = jail_message(guild.id, user.id)
+        if jmsg:
+            await reply(jmsg)
             return
         if bet <= 0:
             await reply("Bet more than 0, cheapskate.")

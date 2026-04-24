@@ -40,6 +40,10 @@ class CoinFlip(commands.Cog):
         logger.info("CoinFlip module has been loaded")
 
     async def _flip(self, guild_id: int, user_id: int, bet: int, call: str) -> discord.Embed:
+        jmsg = economy.jail_message(guild_id, user_id)
+        if jmsg:
+            return discord.Embed(title="🚔 Jailed", description=jmsg, color=discord.Color.red())
+
         call = call.lower()
         if call not in ("heads", "tails", "h", "t"):
             return discord.Embed(description="Pick **heads** or **tails**!", color=discord.Color.red())

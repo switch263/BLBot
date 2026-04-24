@@ -86,6 +86,10 @@ class Slots(commands.Cog):
 
     async def _play_slots(self, guild_id: int, user_id: int, bet: int) -> discord.Embed:
         """Core slots logic. Returns embed."""
+        jmsg = economy.jail_message(guild_id, user_id)
+        if jmsg:
+            return discord.Embed(title="🚔 Jailed", description=jmsg, color=discord.Color.red())
+
         wallet = economy.get_wallet(guild_id, user_id)
 
         if bet < MIN_BET:
@@ -144,6 +148,11 @@ class Slots(commands.Cog):
         embed.add_field(
             name="🥷 Heists",
             value=f"Attempts: **{wallet['heists_attempted']}**\nSuccesses: **{wallet['heists_succeeded']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🦝 Raccoon Den",
+            value=f"Digs: **{wallet['den_plays']}**\nSurvived: **{wallet['den_wins']}**",
             inline=True,
         )
         return embed

@@ -73,6 +73,23 @@ MIN_VICTIM_COINS = 50
 # Cooldown in seconds (per user per guild)
 HEIST_COOLDOWN = 300  # 5 minutes
 
+# Rob-the-bot odds and punishment
+BOT_HEIST_SUCCESS_RATE = 0.00001  # 0.001% — effectively a lottery ticket
+BOT_HEIST_JAIL_SECONDS = 24 * 60 * 60  # 24 hours
+
+BOT_SUCCESS_MESSAGES = [
+    "**{thief} ROBBED THE HOUSE.** They cracked the bot's vault and walked off with the **entire pot of {amount} coins**. The casino is in ruins.",
+    "**{thief} SOMEHOW DID IT.** The bot's wallet has been cleaned out. **{amount} coins.** Nobody saw this coming. Including the bot.",
+    "**{thief} PULLED OFF A MIRACLE HEIST.** The bot stared blankly as **{amount} coins** walked out the door.",
+]
+
+BOT_FAIL_MESSAGES = [
+    "🚨 **{thief} tried to rob the casino.** The bot saw it coming from a mile away. Security dragged them off to **24-hour casino jail**.",
+    "🚨 **{thief} got caught robbing the HOUSE.** Every bouncer in the casino stomped them flat. **Jailed for 24 hours.** No bets, no gambling.",
+    "🚨 **{thief} thought they could out-bot the bot.** They could not. Straight to **casino jail, 24 hours.**",
+    "🚨 **The bot's security mainframe flagged {thief} mid-heist.** Trapped by a thousand dancing emojis. **Jailed for 24 hours.**",
+]
+
 
 class Heist(commands.Cog):
     def __init__(self, bot):
@@ -111,8 +128,20 @@ class Heist(commands.Cog):
         if accomplice and accomplice.id == thief.id:
             return discord.Embed(description="You can't be your own accomplice!", color=discord.Color.red())
 
-        if victim.bot:
-            return discord.Embed(description="You can't rob a bot! They have no coins.", color=discord.Color.red())
+        # Rob-the-bot is allowed (victim.bot == True with victim == this bot).
+        # Other bots are still off-limits — they don't have wallets you can touch.
+        targeting_house = victim.id == self.bot.user.id if self.bot.user else False
+        if victim.bot and not targeting_house:
+            return discord.Embed(description="You can't rob that bot. No wallet, no dice.", color=discord.Color.red())
+
+        # Jail check (can't rob while jailed)
+        jmsg = economy.jail_message(guild_id, thief.id)
+        if jmsg:
+            return discord.Embed(description=jmsg, color=discord.Color.red())
+        if accomplice:
+            jmsg = economy.jail_message(guild_id, accomplice.id)
+            if jmsg:
+                return discord.Embed(description=f"{accomplice.display_name} is in jail: {jmsg}", color=discord.Color.red())
 
         # Cooldown check
         remaining = self._check_cooldown(guild_id, thief.id)
@@ -132,6 +161,33 @@ class Heist(commands.Cog):
 
         if victim_coins < MIN_VICTIM_COINS:
             return discord.Embed(description=f"{victim.display_name} only has **{victim_coins}** coins. Not worth the risk!", color=discord.Color.red())
+
+        # --- Robbing the house (the bot itself) ---
+        if targeting_house:
+            success = random.random() < BOT_HEIST_SUCCESS_RATE
+            self._set_cooldown(guild_id, thief.id)
+            if accomplice:
+                self._set_cooldown(guild_id, accomplice.id)
+            economy.record_heist(guild_id, thief.id, success)
+            if accomplice:
+                economy.record_heist(guild_id, accomplice.id, success)
+
+            if success:
+                loot = victim_coins  # take the whole vault
+                economy.transfer_coins(guild_id, victim.id, thief.id, loot)
+                msg = random.choice(BOT_SUCCESS_MESSAGES).format(
+                    thief=thief.mention, amount=loot,
+                )
+                return discord.Embed(title="🏦 HOUSE ROBBED", description=msg, color=discord.Color.gold())
+
+            # Failure: straight to jail
+            economy.jail_user(guild_id, thief.id, BOT_HEIST_JAIL_SECONDS, reason="Attempted to rob the house")
+            if accomplice:
+                economy.jail_user(guild_id, accomplice.id, BOT_HEIST_JAIL_SECONDS, reason="Accomplice in house robbery")
+            msg = random.choice(BOT_FAIL_MESSAGES).format(thief=thief.mention)
+            if accomplice:
+                msg += f"\n\n{accomplice.mention} was also dragged to jail for 24 hours."
+            return discord.Embed(title="🚔 CAUGHT ROBBING THE HOUSE", description=msg, color=discord.Color.dark_red())
 
         is_duo = accomplice is not None
         success_rate = DUO_SUCCESS_RATE if is_duo else SOLO_SUCCESS_RATE
@@ -210,6 +266,33 @@ class Heist(commands.Cog):
     async def heist_slash(self, interaction: discord.Interaction, victim: discord.Member, accomplice: discord.Member = None):
         embed = await self._run_heist(interaction.guild_id, interaction.user, victim, accomplice)
         await interaction.response.send_message(embed=embed)
+
+    def _format_jail_status(self, member: discord.Member) -> str:
+        remaining = economy.jail_remaining(member.guild.id, member.id)
+        if remaining <= 0:
+            return f"✅ **{member.display_name}** is not in jail. Free to gamble."
+        h, rem = divmod(remaining, 3600)
+        m, s = divmod(rem, 60)
+        parts = []
+        if h:
+            parts.append(f"{h}h")
+        if m:
+            parts.append(f"{m}m")
+        parts.append(f"{s}s")
+        return f"🚔 **{member.display_name}** is in casino jail for **{' '.join(parts)}**."
+
+    @commands.command(name="jail")
+    @commands.guild_only()
+    async def jail_prefix(self, ctx, member: discord.Member = None):
+        """Check whether you (or someone else) is in casino jail."""
+        target = member or ctx.author
+        await ctx.send(self._format_jail_status(target))
+
+    @app_commands.command(name="jail", description="Check casino jail status")
+    @app_commands.describe(member="User to check (defaults to you)")
+    async def jail_slash(self, interaction: discord.Interaction, member: discord.Member = None):
+        target = member or interaction.user
+        await interaction.response.send_message(self._format_jail_status(target))
 
 
 async def setup(bot):
