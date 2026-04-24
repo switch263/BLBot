@@ -1,0 +1,35 @@
+🌭 A hot dog vendor runs onto the track. **{A}** swerves and clips a barrier. **{dmg}**.
+🎆 Fireworks go off at concessions. **{A}** is distracted. **{dmg}**.
+🧃 A child in the stands throws a Capri Sun at **{A}**. Windshield shatters. **{dmg}**.
+🐄 A cow is on the track. **{A}** does not see the cow. **{dmg}** (cow is fine).
+🐥 Geese cross the track. **{A}** panics. **{dmg}**.
+🚁 News chopper flies too low. **{A}** loses the radio and swerves. **{dmg}**.
+🍗 A fan throws a whole chicken wing. Lodges in **{A}**'s grille. **{dmg}**.
+🛒 A loose shopping cart rolls across the track. **{A}** hits it at speed. **{dmg}**.
+🐶 A dog runs through. **{A}** swerves to miss (correct call). **{dmg}**.
+🧓 A grandma waves at **{A}**. **{A}** waves back. **{A}** was driving. **{dmg}**.
+📢 The PA suddenly plays 'Mambo No. 5.' **{A}** loses composure. **{dmg}**.
+🦆 A duck lands on **{A}**'s hood and stays there for 30 seconds. Confusion ensues. **{dmg}**.
+🎤 An announcer mispronounces **{A}**'s name. **{A}**'s driver gets so mad they miss the turn. **{dmg}**.
+🎊 Confetti cannon detonates in the infield. Blinds **{A}**. **{dmg}**.
+🎈 A hot-air balloon drifts low over the track. **{A}**'s driver looks up. **{dmg}**.
+🚑 An ambulance crosses the track early. **{A}** has to swerve. **{dmg}**.
+🎡 A nearby Ferris wheel breaks down mid-ride. **{A}**'s driver is weirdly invested, misses a wall. **{dmg}**.
+🍕 Pizza delivery drone drops its cargo. **{A}** drives through it. **{dmg}**.
+🎷 A street musician starts playing 'Careless Whisper' loud enough to hear on track. **{A}** emotionally compromised. **{dmg}**.
+🧑‍⚖️ A referee runs across the track at the worst possible moment. **{A}** clips a cone. **{dmg}**.
+🛹 A teenager on a skateboard dares the track. **{A}** swerves successfully but hits a barrier. **{dmg}**.
+🚲 A kid on a bike is on the track. That's a parent's problem. **{A}** swerves. **{dmg}**.
+🎪 The halftime act starts early. **{A}** is confused. **{dmg}**.
+🐕‍🦺 A service dog in training runs onto the track. **{A}** absolutely swerves. **{dmg}**.
+📸 A paparazzo gets too close. **{A}** is blinded by a flash. **{dmg}**.
+🏐 A beach ball from the stands bounces into **{A}**'s path. Traction: lost. **{dmg}**.
+🪁 A kid's kite crash-lands on **{A}**'s windshield. **{dmg}**.
+🎸 A rogue band fires up 'Eye of the Tiger' for **{A}**. It's too motivating. **{dmg}**.
+🍔 The concession stand's mascot runs across the track waving. **{A}** panics. **{dmg}**.
+🎠 A horse from the nearby carousel escapes. Somehow. **{A}** witnesses this and loses focus. **{dmg}**.
+🤹 A juggler wanders onto the track. Drops everything. **{A}** drives through the falling objects. **{dmg}**.
+🪇 A mariachi band mistakenly plays at the wrong time. **{A}**'s driver starts dancing. **{dmg}**.
+🛴 Someone's electric scooter dies on the track. **{A}** swerves. **{dmg}**.
+🎟️ A ticket-taker is accidentally on the track. **{A}** absolutely does not hit them. But swerves. **{dmg}**.
+🥁 A drum solo starts in the stands. **{A}**'s driver nods along, forgets to steer. **{dmg}**.
