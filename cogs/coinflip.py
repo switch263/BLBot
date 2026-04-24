@@ -8,7 +8,6 @@ import economy
 logger = logging.getLogger(__name__)
 
 MIN_BET = 1
-MAX_BET = 5000
 
 HEADS_EMOJIS = ["🪙", "👑", "🦅"]
 TAILS_EMOJIS = ["🪙", "🏛️", "🔢"]
@@ -45,8 +44,8 @@ class CoinFlip(commands.Cog):
         if call not in ("heads", "tails", "h", "t"):
             return discord.Embed(description="Pick **heads** or **tails**!", color=discord.Color.red())
 
-        if bet < MIN_BET or bet > MAX_BET:
-            return discord.Embed(description=f"Bet must be between **{MIN_BET}** and **{MAX_BET}** coins.", color=discord.Color.red())
+        if bet < MIN_BET:
+            return discord.Embed(description=f"Bet must be at least **{MIN_BET}** coin.", color=discord.Color.red())
 
         balance = economy.get_coins(guild_id, user_id)
         if balance < bet:

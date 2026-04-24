@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  blbot:
+    build: .
+    container_name: blbot
+    restart: unless-stopped
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID:-}
+      - BOT_DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+      - ./data_files:/app/data_files:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

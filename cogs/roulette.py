@@ -84,9 +84,6 @@ class RussianRoulette(commands.Cog):
         elif bet < 10:
             await ctx.send("Minimum bet is **10** coins!")
             return
-        elif bet > 10000:
-            await ctx.send("Maximum bet is **10,000** coins!")
-            return
 
         # Check coins
         if economy.get_coins(guild_id, author.id) < bet:
@@ -238,9 +235,6 @@ class RussianRoulette(commands.Cog):
             bet = BUY_IN
         elif bet < 10:
             await interaction.response.send_message("Minimum bet is **10** coins!", ephemeral=True)
-            return
-        elif bet > 10000:
-            await interaction.response.send_message("Maximum bet is **10,000** coins!", ephemeral=True)
             return
 
         if economy.get_coins(guild_id, author.id) < bet:

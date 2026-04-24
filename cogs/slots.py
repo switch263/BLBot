@@ -27,7 +27,6 @@ WEIGHTS = [25, 20, 18, 15, 10, 6, 4, 2]
 
 DEFAULT_BET = 10
 MIN_BET = 1
-MAX_BET = 1000
 STARTING_COINS = 100
 
 # Daily bonus: (weight, amount)
@@ -89,10 +88,10 @@ class Slots(commands.Cog):
         """Core slots logic. Returns embed."""
         wallet = economy.get_wallet(guild_id, user_id)
 
-        if bet < MIN_BET or bet > MAX_BET:
+        if bet < MIN_BET:
             return discord.Embed(
                 title="🎰 Invalid Bet",
-                description=f"Bet must be between **{MIN_BET}** and **{MAX_BET}** coins.",
+                description=f"Bet must be at least **{MIN_BET}** coin.",
                 color=discord.Color.red()
             )
 
@@ -236,7 +235,7 @@ class Slots(commands.Cog):
     # --- Slash Commands ---
 
     @app_commands.command(name="slots", description="Pull the slot machine lever!")
-    @app_commands.describe(bet=f"Amount to bet ({MIN_BET}-{MAX_BET}, default {DEFAULT_BET})")
+    @app_commands.describe(bet=f"Amount to bet (min {MIN_BET}, default {DEFAULT_BET}) — go all in if you dare")
     async def slots_slash(self, interaction: discord.Interaction, bet: int = DEFAULT_BET):
         embed = await self._play_slots(interaction.guild_id, interaction.user.id, bet)
         await interaction.response.send_message(embed=embed)
