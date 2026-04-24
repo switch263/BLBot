@@ -1,0 +1,76 @@
+-0.18|The 'new tires' are painted. With housepaint. You can see brush strokes.
+-0.20|Check engine light is taped over. Under that tape: more tape.
+-0.25|Transmission makes sounds resembling Morse code for 'HELP.'
+-0.10|Cigarette burn holes in the driver seat spell a common swear.
+-0.15|AC blows hot. Heat blows cold. Radio plays mariachi exclusively.
+-0.30|Flood damage. Multiple floods. The door handles are kelp.
+-0.25|Odometer is a sticker. You can peel it. The real mileage is grim.
+-0.35|VIN has been filed down. Police whistle when they see it.
+-0.12|Backseat aggressively smells of {smell_source} and {smell_source}.
+-0.30|Airbags have been replaced with bags of packing peanuts. Shaped like airbags.
+-0.20|Contains a family of raccoons. They are not leaving. They pay rent.
+-0.18|Gas tank holds precisely 2 gallons. It is not meant to.
+-0.22|Steering wheel is an orange Home Depot bucket handle. Zip-tied on.
+-0.12|Hood won't stay closed without bungee cords. Plural.
+-0.15|Every window is stuck permanently in the UP position. Even the moonroof.
+-0.28|Brakes work. Just not every single time. It is a surprise.
+-0.15|Starts only if you say 'pretty please' out loud. Non-negotiable.
+-0.10|Repainted with spray paint. You can still see the old bumper stickers underneath.
+-0.18|The 'leather seats' are a tarp. The tarp is stapled to the foam.
+-0.20|There is a bullet hole in the passenger door. And only ONE.
+-0.15|Exhaust pipe is duct-taped to a length of backyard PVC.
+-0.22|The trunk is welded shut. For reasons. Don't ask.
+-0.10|Driver's side mirror is a compact. Like, a makeup compact.
+-0.25|Rust holes in the floorboard large enough to Flintstone it.
+-0.18|Has 'been in a couple small fires.' 'Small.'
+-0.25|Title says 'SALVAGE — NOVELTY USE ONLY' in red sharpie.
+-0.30|Engine is from a different car. Possibly from a lawnmower.
+-0.20|Seatbelts are yarn. Yellow yarn. Someone's grandma contributed.
+-0.22|Entire dashboard has been replaced with cardboard and three googly eyes.
+-0.20|The gear shifter is a broom handle jammed into the hole.
+-0.15|Has a lingering mystery stain on the ceiling that looks suspiciously like {stain_object}. It is spreading.
+-0.22|Water drips out of one of the headlights. Continuously.
+-0.18|The key is a butter knife. Previous owner swears it always was.
+-0.28|The 'new battery' is four D-cells duct-taped together in a tidy bundle.
+-0.25|The driver seat is held upright by a 2x4 wedged against the rear seat.
+-0.20|Sunroof is a clear plastic tarp stapled to the roof. Surprisingly, it holds.
+-0.15|{smell_source} fumes waft from the vents when you crank the AC.
+-0.32|The 'clean Carfax' is just a Carfax for a completely different car with the same color.
+-0.18|You can open the driver's door from the outside with a magnet. Why?
+-0.25|Cruise control works, but only in kilometers. This is a US car.
+-0.30|The passenger airbag has been replaced with a pillow from a hotel.
+-0.22|Coolant reservoir is a Mountain Dew bottle. Zip-tied in.
+-0.18|Glove box falls open every 90 seconds. It cannot be trusted.
+-0.15|The 'CD changer' is a shoebox of loose CDs in the trunk. With a handwritten label.
+-0.20|Hood ornament is a kewpie doll with its head removed and re-attached upside down.
+-0.28|Rear bumper is attached with ONE bolt. The bolt is from IKEA.
+-0.25|Power windows work but only in descending order. Rear first, then passenger, then driver.
+-0.18|The tow hitch is a piece of rebar welded to the frame. Welded poorly.
+-0.35|Both rear tires are different sizes. Nobody acknowledges this.
+-0.20|The rearview mirror is a hand mirror from a 1980s beauty kit.
+-0.15|Starts easier if you tap the dashboard in a specific rhythm. Previous owner wrote it on a napkin in the glove box.
+-0.25|Someone carved their initials into the steering column. With a key. And their whole name.
+-0.22|The horn plays the first six notes of 'La Cucaracha.' It cannot be disabled.
+-0.12|Floor mats are just pizza boxes. Flattened. Still greasy.
+-0.28|Radiator has been patched with what appears to be chewing gum and hope.
+-0.20|The 'custom paint job' was applied with a garden sprayer. You can see the overspray on the headlights.
+-0.18|There is a full {random_object} in the trunk that the seller insists is 'not part of the sale.'
+-0.30|Engine oil is grey. That is not a color oil is supposed to be.
+-0.22|Windshield has a crack shaped exactly like Florida. Including the panhandle.
+-0.15|The wiper blades are wooden spatulas. Someone drilled holes.
+-0.25|The rear seat folds down. It does not fold back up. Ever.
+-0.20|Previous owner tried to 'soundproof' the doors with expanding foam. It expanded.
+-0.28|The 'new brake pads' are yoga mat offcuts. Someone got creative.
+-0.18|The fuel gauge only shows 'F' or 'E.' Nothing in between. It is always lying.
+-0.22|Previous owner named every dent. The dents have nametags taped inside.
+-0.15|Driver-side door panel has been replaced with a slab of plywood and cup holders drilled in.
+-0.25|Has a sticker that reads 'THIS CAR BELONGS TO JESUS' that is somehow impossible to remove.
+-0.20|The gas pedal is an old boot. Nailed to the original pedal. Laces and all.
+-0.30|Undercarriage has been undercoated with what appears to be tar and cat hair.
+-0.15|You can hear pennies rolling around behind the dashboard. Every turn. For miles.
+-0.22|The 'sound system' is a Bluetooth speaker zip-tied to the rearview mirror.
+-0.18|Back seat armrest is held in place with a bungee cord. The bungee is NOT long enough.
+-0.28|Engine block has been painted with Plasti-Dip. It is peeling like sunburn.
+-0.12|{stain_object} smeared on the headliner in what might be a pattern. Don't stare.
+-0.25|The cigarette lighter is a real one. The car doesn't have a cigarette lighter socket. Previous owner installed a separate one.
+-0.20|Owner's manual has been annotated extensively. Some passages are highlighted. One is crossed out with 'HA.'

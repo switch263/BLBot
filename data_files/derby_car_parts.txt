@@ -1,0 +1,40 @@
+bumper
+hood
+driver-side mirror
+passenger-side mirror
+rear quarter panel
+grille
+front axle
+headlight
+tail light
+exhaust
+muffler
+windshield
+rear window
+tire
+hubcap
+fender
+door
+trunk lid
+license plate
+radiator
+fuel tank
+spoiler
+rocker panel
+steering column
+driver seat
+antenna
+wheel well
+rocker arm
+engine block
+transmission
+oil pan
+brake caliper
+drive shaft
+shock absorber
+sway bar
+cassette deck
+door handle
+catalytic converter
+tie rod
+glove box
