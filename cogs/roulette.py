@@ -12,7 +12,7 @@ BULLET_EMOJI = "💀"
 SAFE_EMOJI = "😅"
 CHAMBER_SIZE = 6
 TIMEOUT_DURATION = 60  # seconds to timeout the loser
-BUY_IN = 150  # coins per player
+# No buy-in. Everyone goes ALL-IN — you risk your entire wallet, winner takes the pot.
 
 CLICK_MESSAGES = [
     "*Click.* {user} survives... for now.",
@@ -51,8 +51,8 @@ class RussianRoulette(commands.Cog):
         logger.info("Russian Roulette module has been loaded")
 
     @commands.command(aliases=['rr'])
-    async def roulette(self, ctx, bet: int = None):
-        """Start or join a Russian Roulette game! Players take turns pulling the trigger."""
+    async def roulette(self, ctx):
+        """Start or join Russian Roulette. Everyone goes ALL IN — winner takes the pot."""
         channel = ctx.channel
         guild_id = ctx.guild.id
         author = ctx.author
@@ -69,51 +69,47 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await ctx.send(f"{author.mention}, you're already in the game!")
                     return
-                # Check coins against game's bet amount
-                game_bet = game["bet"]
-                if economy.get_coins(guild_id, author.id) < game_bet:
-                    await ctx.send(f"{author.mention}, you need at least **{game_bet}** coins to play!")
+                stake = economy.get_coins(guild_id, author.id)
+                if stake <= 0:
+                    await ctx.send(f"{author.mention}, you're dead broke — nothing to ante up.")
                     return
-                economy.deduct_coins(guild_id, author.id, game_bet)
+                economy.deduct_coins(guild_id, author.id, stake)
                 game["players"].append(author)
-                game["pot"] += game_bet
-                await ctx.send(f"{author.mention} joins the roulette! ({len(game['players'])} players, pot: **{game['pot']}** coins)\nType `!roulette` to join. Starter: type `!pull` when ready to begin.")
+                game["stakes"][author.id] = stake
+                game["pot"] += stake
+                await ctx.send(
+                    f"{author.mention} throws in their **entire {stake}** coins. "
+                    f"({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
+                    f"Type `!roulette` to join. Starter: `!pull` when ready."
+                )
                 return
             else:
                 await ctx.send("A game is already in progress in this channel!")
                 return
 
-        # Set bet amount (default or custom)
-        if bet is None:
-            bet = BUY_IN
-        elif bet < 10:
-            await ctx.send("Minimum bet is **10** coins!")
+        stake = economy.get_coins(guild_id, author.id)
+        if stake <= 0:
+            await ctx.send("You're dead broke — nothing to ante up.")
             return
 
-        # Check coins
-        if economy.get_coins(guild_id, author.id) < bet:
-            await ctx.send(f"You need at least **{bet}** coins to play!")
-            return
+        economy.deduct_coins(guild_id, author.id, stake)
 
-        economy.deduct_coins(guild_id, author.id, bet)
-
-        # Start new game
         self.active_games[channel.id] = {
             "phase": "joining",
             "players": [author],
-            "pot": bet,
-            "bet": bet,
+            "pot": stake,
+            "stakes": {author.id: stake},
             "guild_id": guild_id,
             "starter": author.id,
         }
 
         embed = discord.Embed(
-            title="Russian Roulette",
+            title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} has started a game of Russian Roulette!\n\n"
-                f"Buy-in: **{bet}** coins per player\n"
-                f"Type `!roulette` to join!\n"
-                f"{author.display_name}: type `!pull` when everyone is in."
+                f"{author.mention} anted up their **entire {stake}** coins.\n\n"
+                f"**No buy-in. Everyone goes all-in.** Join with `!roulette` — your entire wallet goes into the pot.\n"
+                f"Winner takes everything.\n\n"
+                f"{author.display_name}: type `!pull` when the table's full."
             ),
             color=discord.Color.dark_red()
         )
@@ -204,10 +200,8 @@ class RussianRoulette(commands.Cog):
 
         del self.active_games[channel.id]
 
-    @app_commands.command(name="roulette", description="Start or join a Russian Roulette game!")
-    @app_commands.describe(bet="Bet amount in coins (default: 250)")
-    async def roulette_slash(self, interaction: discord.Interaction, bet: int = None):
-        """Slash command entry point - creates or joins game, then uses prefix flow."""
+    @app_commands.command(name="roulette", description="Start or join Russian Roulette — ALL IN, winner takes the pot")
+    async def roulette_slash(self, interaction: discord.Interaction):
         channel = interaction.channel
         guild_id = interaction.guild_id
         author = interaction.user
@@ -223,52 +217,47 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await interaction.response.send_message("You're already in the game!", ephemeral=True)
                     return
-                # Check coins against game's bet amount
-                game_bet = game["bet"]
-                if economy.get_coins(guild_id, author.id) < game_bet:
-                    await interaction.response.send_message(f"You need at least **{game_bet}** coins to play!", ephemeral=True)
+                stake = economy.get_coins(guild_id, author.id)
+                if stake <= 0:
+                    await interaction.response.send_message("You're dead broke — nothing to ante up.", ephemeral=True)
                     return
-                economy.deduct_coins(guild_id, author.id, game_bet)
+                economy.deduct_coins(guild_id, author.id, stake)
                 game["players"].append(author)
-                game["pot"] += game_bet
+                game["stakes"][author.id] = stake
+                game["pot"] += stake
                 await interaction.response.send_message(
-                    f"{author.mention} joins the roulette! ({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
-                    f"Use `/roulette` to join. Starter: type `!pull` when ready."
+                    f"{author.mention} throws in their **entire {stake}** coins. "
+                    f"({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
+                    f"Use `/roulette` to join. Starter: `!pull` when ready."
                 )
                 return
             else:
                 await interaction.response.send_message("A game is already in progress!", ephemeral=True)
                 return
 
-        # Set bet amount (default or custom)
-        if bet is None:
-            bet = BUY_IN
-        elif bet < 10:
-            await interaction.response.send_message("Minimum bet is **10** coins!", ephemeral=True)
+        stake = economy.get_coins(guild_id, author.id)
+        if stake <= 0:
+            await interaction.response.send_message("You're dead broke — nothing to ante up.", ephemeral=True)
             return
 
-        if economy.get_coins(guild_id, author.id) < bet:
-            await interaction.response.send_message(f"You need at least **{bet}** coins to play!", ephemeral=True)
-            return
-
-        economy.deduct_coins(guild_id, author.id, bet)
+        economy.deduct_coins(guild_id, author.id, stake)
 
         self.active_games[channel.id] = {
             "phase": "joining",
             "players": [author],
-            "pot": bet,
-            "bet": bet,
+            "pot": stake,
+            "stakes": {author.id: stake},
             "guild_id": guild_id,
             "starter": author.id,
         }
 
         embed = discord.Embed(
-            title="Russian Roulette",
+            title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} has started a game of Russian Roulette!\n\n"
-                f"Buy-in: **{bet}** coins per player\n"
-                f"Use `!roulette` or `/roulette` to join!\n"
-                f"{author.display_name}: type `!pull` when everyone is in."
+                f"{author.mention} anted up their **entire {stake}** coins.\n\n"
+                f"**No buy-in. Everyone goes all-in.** Join with `!roulette` or `/roulette` — your entire wallet goes in.\n"
+                f"Winner takes everything.\n\n"
+                f"{author.display_name}: type `!pull` when the table's full."
             ),
             color=discord.Color.dark_red()
         )

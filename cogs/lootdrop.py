@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 # Rarity tiers: (name, color, coin_range, weight, emoji)
 RARITIES = [
-    ("Common",    discord.Color.light_grey(), (5, 25),      40, "⬜"),
-    ("Uncommon",  discord.Color.green(),      (25, 75),     30, "🟩"),
-    ("Rare",      discord.Color.blue(),       (75, 200),    18, "🟦"),
-    ("Epic",      discord.Color.purple(),     (200, 500),    9, "🟪"),
-    ("Legendary", discord.Color.gold(),       (500, 2000),   3, "🟨"),
+    ("Common",    discord.Color.light_grey(), (500, 2500),       40, "⬜"),
+    ("Uncommon",  discord.Color.green(),      (2500, 7500),      30, "🟩"),
+    ("Rare",      discord.Color.blue(),       (7500, 20000),     18, "🟦"),
+    ("Epic",      discord.Color.purple(),     (20000, 50000),     9, "🟪"),
+    ("Legendary", discord.Color.gold(),       (50000, 200000),    3, "🟨"),
 ]
 
 ITEM_PREFIXES = [
