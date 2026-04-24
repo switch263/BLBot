@@ -5,18 +5,53 @@ A chaotic Discord bot for the Bored Lunatics gaming server. Built on [discord.py
 ## Features
 
 ### Economy System
-Shared coin wallet across all games. Start with 100 coins.
+Shared coin wallet across all games. Start with 100 coins. The bot itself is the house — its wallet collects the roulette pot. `/heist @bot` is allowed but has a **0.001%** success rate; failure = **24h casino jail**, blocking every gambling command. Admins can `!unjail @user` (or `!bail` / `!pardon`) in the admin channel.
 
+#### 🎲 Classic Casino
 | Command | Description |
 |---------|-------------|
-| `!slots [bet]` | Slot machine with 8 weighted symbols (bet 1-1000) |
+| `!slots [bet]` | 8-symbol weighted slots (min bet 1, no cap) |
 | `!coinflip <bet> <heads/tails>` | Double or nothing |
-| `!heist @victim [@accomplice]` | Rob someone's coins (solo 35% / duo 55% success) |
-| `!loot` | Daily loot drop with 5 rarity tiers |
+| `!blackjack <bet>` | Multi-player blackjack with 60s buy-in lobby |
+| `!highlow <bet>` | Predict next card higher/lower; streak builds multiplier |
+| `!vault <bet>` | Mastermind-style 4-digit safecrack, 6 attempts |
+| `!bet <red/black/even/odd/N> <amount>` | Casino roulette (hit green = claim the pot) |
+| `!pot` | Show the current house pot |
+
+#### 🃏 Solo Chaos / Push-Your-Luck
+| Command | Description |
+|---------|-------------|
+| `!dig <bet>` | Raccoon's Den — 4×4 grid of bins, 3 raccoons bite |
+| `!bigfoot <bet>` | Hunt Bigfoot — 3 bears + 1 Bigfoot jackpot tile |
+| `!dogs <bet>` | Hot Dog Eating Contest — each dog raises mult + hurl risk |
+| `!pawn <bet>` | Pawn Shop negotiation — 3 widening offer rounds |
+| `!wheel <bet>` | Wheel of Misfortune — 12 chaotic outcomes |
+| `!vend <bet>` | The Vending Machine From Hell — 6 cursed sodas |
+| `!sushi <bet>` | Gas Station Sushi — wide variance, food-poisoning fines |
+| `!methgator <bet>` | You are a gator on meth. Pick one of 8 rampages. |
+| `!sunnyvale <bet>` | A day in Sunnyvale Trailer Park (TPB-themed events) |
+| `!mayor <bet>` | Run for Trailer Park Mayor — 3 rounds vs 3 absurd opponents |
+| `!dui <bet>` | DUI reflex simulator — tap gas on cue, 5 rounds |
+| `!troll <bet>` | Troll Bridge — correct answer to a nonsense riddle = ×3 |
+
+#### 👥 Multiplayer & PvP
+| Command | Description |
+|---------|-------------|
+| `!roulette` | Russian Roulette — ALL IN your entire wallet, winner takes all |
+| `!pigderby <bet>` | 5-pig race with fixed-odds betting (2×–15× payouts) |
+| `!auction <bid>` | Clown Auction for a mystery box; timer extends on bids |
+| `!roach @user <bet>` | Cockroach Fight Club — 1v1 duel, winner takes pot |
+| `!heist @victim [@accomplice]` | Rob someone (or the bot at 0.001% odds) |
+
+#### 💰 Earning & Economy
+| Command | Description |
+|---------|-------------|
+| `!loot` | Daily loot drop with 5 rarity tiers (500–200000 coins) |
 | `!slots daily` | Daily coin bonus (random: 50/100/200/5000) |
+| `!wallet` | Balance + stats across all games |
 | `!gift @user <amount>` | Send coins to another user |
-| `!roulette` | Multiplayer Russian Roulette, winner takes the pot |
-| `!richest` | Leaderboard and server economy stats |
+| `!richest` | Leaderboard & server economy stats |
+| `!jail [@user]` | Check casino jail status |
 
 ### Humor & Generators
 | Command | Description |

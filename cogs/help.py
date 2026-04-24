@@ -10,7 +10,9 @@ def _build_pages() -> list[discord.Embed]:
     """Build the help page embeds."""
     pages = []
 
-    e1 = discord.Embed(title="BLBot Help (1/6) - Basics & Utility", description="Use `/command` or `!command`", color=discord.Color.blurple())
+    e1 = discord.Embed(title="BLBot Help (1/8) - Basics & Utility",
+                       description="Use `/command` or `!command`",
+                       color=discord.Color.blurple())
     e1.add_field(name="Basics", value=(
         "`/ping` - Check if the bot is alive\n"
         "`/roll` - Roll dice in NdN format (e.g. 2d6)\n"
@@ -29,7 +31,8 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     pages.append(e1)
 
-    e2 = discord.Embed(title="BLBot Help (2/6) - Humor & Memes", color=discord.Color.green())
+    e2 = discord.Embed(title="BLBot Help (2/8) - Humor & Memes",
+                       color=discord.Color.green())
     e2.add_field(name="Humor", value=(
         "`/8ball` - Ask the magic 8-ball\n"
         "`/mock` - SpOnGeBoB mOcKiNg tExT\n"
@@ -46,7 +49,8 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     pages.append(e2)
 
-    e3 = discord.Embed(title="BLBot Help (3/6) - Text & Formatting", color=discord.Color.teal())
+    e3 = discord.Embed(title="BLBot Help (3/8) - Text & Formatting",
+                       color=discord.Color.teal())
     e3.add_field(name="Text Tools", value=(
         "`/clap` - Put 👏 between 👏 every 👏 word\n"
         "`/vaporwave` - Ｆｕｌｌｗｉｄｔｈ ａｅｓｔｈｅｔｉｃ\n"
@@ -64,7 +68,8 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     pages.append(e3)
 
-    e4 = discord.Embed(title="BLBot Help (4/6) - Social & Interactive", color=discord.Color.orange())
+    e4 = discord.Embed(title="BLBot Help (4/8) - Social & Interactive",
+                       color=discord.Color.orange())
     e4.add_field(name="Social", value=(
         "`/fight` - Start a fight between two people\n"
         "`/slap` - Slap someone\n"
@@ -82,39 +87,82 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     pages.append(e4)
 
-    e5 = discord.Embed(title="BLBot Help (5/6) - Economy", color=discord.Color.gold())
-    e5.add_field(name="Gambling", value=(
-        "`/slots` - Slot machine (optional bet amount)\n"
-        "`/coinflip` - Double or nothing coin flip\n"
-        "`/roulette` - Russian Roulette (multiplayer)\n"
-        "`/loot` - Daily loot drop for random coins\n"
+    e5 = discord.Embed(title="BLBot Help (5/8) - Casino: Classic",
+                       description="Classic gambling games. Lose responsibly.",
+                       color=discord.Color.gold())
+    e5.add_field(name="Card & Chance", value=(
+        "`/blackjack` - Multi-player blackjack with buy-in lobby\n"
+        "`/highlow` - Predict the next card, build streak multiplier\n"
+        "`/vault` - Crack a 4-digit code, Mastermind-style deduction\n"
+        "`/slots` - Slot machine with weighted reels\n"
+        "`/coinflip` - Heads or tails, double or nothing\n"
     ), inline=False)
-    e5.add_field(name="Economy", value=(
-        "`/slots_daily` - Claim daily bonus coins\n"
-        "`/slots_balance` - Check your wallet\n"
-        "`/gift` - Send coins to another user\n"
-        "`/heist` - Rob another user's coins\n"
-        "`/richest` - Leaderboard & economy stats\n"
-        "`/slots_leaderboard` - Top slot players\n"
+    e5.add_field(name="Roulette", value=(
+        "`/bet` - Casino roulette: red/black/even/odd/number\n"
+        "`/pot` - Show the house pot (hit 🟢 green to claim it all)\n"
     ), inline=False)
     pages.append(e5)
 
-    e6 = discord.Embed(title="BLBot Help (6/6) - Quick Reference", color=discord.Color.dark_grey())
-    e6.add_field(name="Prefix Commands", value=(
-        "All commands work with both `/slash` and `!prefix`.\n"
-        "Some have aliases: `!cf` = `!coinflip`, `!ud` = `!urban`,\n"
-        "`!rob` = `!heist`, `!rr` = `!roulette`, etc."
+    e6 = discord.Embed(title="BLBot Help (6/8) - Casino: Solo Chaos",
+                       description="Single-player push-your-luck and chaos games.",
+                       color=discord.Color.purple())
+    e6.add_field(name="Push Your Luck", value=(
+        "`/dig` - Raccoon Den: dig bins, avoid feral raccoons\n"
+        "`/bigfoot` - Hunt Bigfoot, dodge bears, rare ×10 jackpot\n"
+        "`/dogs` - Hot Dog Eating Contest — stack multiplier, don't hurl\n"
+        "`/vault` - Mastermind-style 4-digit safecrack\n"
+        "`/pawn` - 3-round pawn shop negotiation\n"
     ), inline=False)
-    e6.add_field(name="Economy Tips", value=(
-        "Start with **100** coins. Earn more via:\n"
-        "• `/slots_daily` - Daily bonus (once per day)\n"
-        "• `/loot` - Daily loot drop (once per day)\n"
-        "• `/slots`, `/coinflip` - Gambling\n"
-        "• `/heist` - Rob other players (risky!)\n"
-        "• `/roulette` - Multiplayer, winner takes pot"
+    e6.add_field(name="Pure Chaos", value=(
+        "`/wheel` - Wheel of Misfortune — spin for cursed outcomes\n"
+        "`/vend` - The Vending Machine From Hell — pick a cursed soda\n"
+        "`/sushi` - Gas Station Sushi — wide variance on absurd rolls\n"
+        "`/methgator` - You are a gator on meth. Pick a rampage.\n"
+        "`/sunnyvale` - A day in Sunnyvale Trailer Park (TPB-themed)\n"
+        "`/mayor` - Run for Trailer Park Mayor — 3 rounds of strategy\n"
+        "`/dui` - DUI reflex simulator — tap gas on cue, don't crash\n"
+        "`/troll` - Troll Bridge — answer the nonsense riddle\n"
     ), inline=False)
-    e6.set_footer(text="BLBot | https://github.com/switch263/BLBot")
     pages.append(e6)
+
+    e7 = discord.Embed(title="BLBot Help (7/8) - Casino: Multiplayer & PvP",
+                       description="Games where you bring friends (or eat them).",
+                       color=discord.Color.red())
+    e7.add_field(name="Lobby Games", value=(
+        "`/blackjack` - 60s buy-in lobby, up to 8 players\n"
+        "`/roulette` - Russian Roulette — **ALL IN**, winner takes all\n"
+        "`/pigderby` - 5-pig race with odds-based payouts\n"
+        "`/auction` - Clown Auction for a mystery box (extending timer)\n"
+    ), inline=False)
+    e7.add_field(name="PvP & Confrontation", value=(
+        "`/heist` - Rob another user (or the bot — 24h jail if caught)\n"
+        "`/roach` - Cockroach Fight Club — 1v1 challenge, winner takes pot\n"
+        "`/jail` - Check casino jail status (blocks all gambling 24h)\n"
+    ), inline=False)
+    pages.append(e7)
+
+    e8 = discord.Embed(title="BLBot Help (8/8) - Economy & Quick Reference",
+                       color=discord.Color.dark_grey())
+    e8.add_field(name="Earn Coins", value=(
+        "`/slots_daily` - Daily bonus (once per day)\n"
+        "`/loot` - Daily loot drop with rarity tiers\n"
+        "Win at any of the casino games\n"
+    ), inline=False)
+    e8.add_field(name="Manage Coins", value=(
+        "`/wallet` - Balance + stats across games\n"
+        "`/gift` - Send coins to another user\n"
+        "`/richest` - Leaderboard & economy stats\n"
+        "`/slots_leaderboard` - Top slot players\n"
+    ), inline=False)
+    e8.add_field(name="Tips", value=(
+        "All commands work as `/slash` or `!prefix`.\n"
+        "Aliases: `!cf` = coinflip, `!ud` = urban, `!rob` = heist,\n"
+        "`!rr` = roulette (Russian), `!tpb` = sunnyvale, `!gator` = methgator,\n"
+        "`!bj` = blackjack, `!dive`/`!raccoon` = dig, `!hilo` = highlow.\n"
+        "**The bot itself is the house.** Try `/heist @bot` if you feel lucky."
+    ), inline=False)
+    e8.set_footer(text="BLBot | https://github.com/switch263/BLBot")
+    pages.append(e8)
 
     return pages
 

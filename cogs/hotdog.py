@@ -28,6 +28,24 @@ DOG_NAMES = [
     "a corn dog in the Texas style (big, aggressive)",
     "a Chicago dog that SCREAMED at you for the ketchup",
     "a Wal-Mart brand 'Franken-Frank' — allegedly meat",
+    "a vegan hot dog made of sadness and lentils",
+    "a coney dog with a thin layer of 'driveway sauce'",
+    "a stadium dog that is somehow still warm from 1997",
+    "the 'Mystery Dog' — ingredients listed in LATIN",
+    "a deep-fried Twinkie-wrapped frankfurter-zuki",
+    "a 'Japadog' — filled entirely with mayonnaise and shame",
+    "a 100% beef hot dog (the beef was an emotion)",
+    "a carnival dog that has SEEN things",
+    "an elevated brunch dog with a poached egg on top, somehow",
+    "a Danish 'rød pølse' — neon red and legally questionable",
+    "a Sonoran dog wrapped in bacon wrapped in guilt",
+    "a frankfurter the bun did not consent to",
+    "a truck-stop dog glazed with a film you cannot identify",
+    "a ballpark dog delivered by a child on rollerblades",
+    "a regrettable 'Chicago-style' attempt made in Arizona",
+    "a Polish sausage reheated at a casino gift shop",
+    "a 3 AM bodega dog that is still somehow vibrating",
+    "a footlong that demands to be called 'sir'",
 ]
 
 HURL_MESSAGES = [
@@ -36,6 +54,16 @@ HURL_MESSAGES = [
     "**GAME OVER.** The chili took a look around, said 'nah', and left.",
     "**Tactical emesis.** The judges weep. You lose your bet.",
     "**The dam breaks.** Your shirt is ruined. So are your finances.",
+    "**Your soul leaves your body.** Also your lunch. Lose it all.",
+    "**You achieve projectile velocity.** Somewhere a physicist cries. Lose bet.",
+    "**You make a sound no human should.** The front row is evacuated. Lose bet.",
+    "**Your gag reflex activates with the force of a thousand suns.** Lose bet.",
+    "**The mustard was a LIE.** Entire stomach reversal. Lose bet.",
+    "**You splash the mascot.** The mascot goes home. Lose bet.",
+    "**Something hits the judge.** The judge was pregnant. Lose bet. Lose dignity.",
+    "**The chili dog screams on its way back out.** Lose bet. Lose sleep.",
+    "**You try to 'just eat through it.'** You do not. Lose bet.",
+    "**You aim for a bucket. You miss the bucket by 12 feet.** Lose bet.",
 ]
 
 BANK_MESSAGES = [
@@ -43,6 +71,23 @@ BANK_MESSAGES = [
     "You wipe the mustard from your chin and walk away with your dignity.",
     "You tap out before disaster. Wisdom.",
     "Your stomach thanks you later. For now, take your winnings.",
+    "You quietly set the bun down. The crowd understands.",
+    "You bow out gracefully. An old man in the audience claps once.",
+    "You cash out. Somewhere, a nutritionist sleeps easier.",
+    "You tap the table like a poker pro. Done. Out. Paid.",
+    "You leave on top. Hot dogs will remember you.",
+    "The judges give you a standing ovation. They were already standing but still.",
+    "You decline the next dog with a single raised eyebrow. Iconic.",
+    "You walk out into the sun and it's almost beautiful. Bank secured.",
+]
+
+GOLDEN_DOG_CHANCE = 0.05  # per eat, adds a large multiplier bump
+
+GOLDEN_MESSAGES = [
+    "✨ **GOLDEN DOG.** A lone mustard-yellow frank in a glowing bun. You weep. Huge bonus!",
+    "✨ **LEGENDARY FRANK.** The announcer faints. Multiplier bump!",
+    "✨ **THE DOG OF PROPHECY** appears in your hand. Everyone goes quiet. Bonus!",
+    "✨ **GODDOG.** It hums in an angelic register. You eat it. You are blessed.",
 ]
 
 
@@ -84,6 +129,7 @@ class HotDogView(discord.ui.View):
         g.eaten += 1
         hurl_chance = HURL_START + HURL_INCREMENT * (g.eaten - 1)
         dog = random.choice(DOG_NAMES)
+        golden = random.random() < GOLDEN_DOG_CHANCE
 
         if random.random() < hurl_chance:
             g.ended = True
@@ -95,8 +141,12 @@ class HotDogView(discord.ui.View):
             await interaction.response.edit_message(content=self.cog._render(g, final=True), view=self)
             return
 
-        g.multiplier += MULT_PER_DOG
-        g.log.append(f"#{g.eaten}: {dog} — *kept down.* (×{g.multiplier:.2f})")
+        if golden:
+            g.multiplier += MULT_PER_DOG + 1.0
+            g.log.append(f"#{g.eaten}: {random.choice(GOLDEN_MESSAGES)} (×{g.multiplier:.2f})")
+        else:
+            g.multiplier += MULT_PER_DOG
+            g.log.append(f"#{g.eaten}: {dog} — *kept down.* (×{g.multiplier:.2f})")
         if g.eaten >= MAX_DOGS:
             g.ended = True
             payout = int(g.bet * g.multiplier)

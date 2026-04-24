@@ -15,23 +15,35 @@ logger = logging.getLogger(__name__)
 # Multiplier is total payout multiplier on the bet (1.0 = break even, 0 = total loss).
 SUSHI_MENU = [
     # Catastrophic (rare) — food poisoning loses bet + extra
-    (4,  -1.0, "🍣 **Convenience Store Uni** — tasted like it crawled out of a tide pool. You are in the bathroom for 3 hours. Lose bet + fine."),
-    (3,  -0.5, "🐟 **Bait Shop Nigiri** — it WAS bait two hours ago. Your stomach files a lawsuit. Lose bet + fine."),
+    (3,  -1.0, "🍣 **Convenience Store Uni** — tasted like it crawled out of a tide pool. You are in the bathroom for 3 hours. Lose bet + fine."),
+    (2,  -0.5, "🐟 **Bait Shop Nigiri** — it WAS bait two hours ago. Your stomach files a lawsuit. Lose bet + fine."),
+    (2,  -0.75, "🦑 **Mystery Ikura (Neon Yellow Variant)** — wasn't roe. Was probably soap. Hospital is annoyed."),
+    (2,  -0.5, "🐢 **'Turtle Roll' (legally not turtle)** — it WAS turtle. Lose bet + ethics fine."),
     # Plain losses (common)
-    (15, 0.0,  "🍱 **Gas Station 'Sushi' Boat** — you took one bite and your tongue went numb. You waste the rest."),
-    (12, 0.0,  "🍣 **Mystery Roll (Day 4)** — the rice is crunchy. Rice should not be crunchy. You pay and leave."),
-    (10, 0.0,  "🥡 **Scotch-Taped Temaki** — it falls apart in your hand. You eat the seaweed dry."),
+    (12, 0.0,  "🍱 **Gas Station 'Sushi' Boat** — you took one bite and your tongue went numb. You waste the rest."),
+    (10, 0.0,  "🍣 **Mystery Roll (Day 4)** — the rice is crunchy. Rice should not be crunchy. You pay and leave."),
+    (8,  0.0,  "🥡 **Scotch-Taped Temaki** — it falls apart in your hand. You eat the seaweed dry."),
+    (6,  0.0,  "🍢 **Dashboard-Aged Sashimi** — the Toyota was warm. The fish was warmer. You decline."),
+    (5,  0.0,  "🧊 **Still-Partially-Frozen Hand Roll** — you chipped a tooth. No refund."),
+    (5,  0.0,  "🍣 **Kirby's Cousin's 'Spicy' Tuna** — it's ketchup. It's just ketchup."),
     # Break-even
-    (10, 1.0,  "🍙 **Forecourt Onigiri** — surprisingly edible. You neither won nor lost. Call that a win, actually."),
+    (8,  1.0,  "🍙 **Forecourt Onigiri** — surprisingly edible. You neither won nor lost. Call that a win, actually."),
+    (4,  1.0,  "🧋 **'Sushi Smoothie'** — an aberration. You paid. You lived. Break even."),
     # Small wins
-    (12, 1.5,  "🍣 **Expired-Yesterday Tuna Roll** — lived dangerously, got away with it. +50%."),
-    (10, 2.0,  "🍥 **Chef's Special (the chef is 17)** — somehow this slaps. ×2."),
+    (10, 1.5,  "🍣 **Expired-Yesterday Tuna Roll** — lived dangerously, got away with it. +50%."),
+    (8,  2.0,  "🍥 **Chef's Special (the chef is 17)** — somehow this slaps. ×2."),
+    (5,  1.8,  "🌭 **Spam Musubi from the Register Heater** — unexpectedly delicious. ×1.8."),
+    (5,  1.5,  "🐠 **'Salmon' (It's Tilapia)** — the price was right. ×1.5."),
     # Nice wins
-    (6,  3.0,  "🍤 **Deep-Fried Everything Roll** — no notes. ×3."),
+    (5,  3.0,  "🍤 **Deep-Fried Everything Roll** — no notes. ×3."),
     (4,  4.0,  "🍱 **The 7-Eleven Omakase Experience™** — you'll remember this. ×4."),
+    (3,  3.5,  "🍣 **The 'CEO Roll'** — somehow loaded with real wagyu and real caviar. ×3.5."),
+    (3,  5.0,  "🥢 **The Broken-English Menu Special** — you pointed. The chef wept with pride. ×5."),
     # Big wins (rare)
     (2,  7.0,  "🌟 **A REAL SUSHI CHEF was stranded here** — you lucked into a ×7 meal."),
+    (1,  9.0,  "👑 **Truffle-Foie Gras Nigiri (stolen from a cruise ship)** — quality is illegal. ×9."),
     (1,  15.0, "🏆 **LEGENDARY GAS STATION OMAKASE** — 15-star. The chef cries. You cry. ×15."),
+    (1,  25.0, "💎 **THE JIRO DREAMS OF GAS STATION SUSHI ENCOUNTER** — a myth. You were chosen. ×25."),
 ]
 
 

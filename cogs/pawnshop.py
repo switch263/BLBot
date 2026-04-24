@@ -17,12 +17,24 @@ ITEM_PREFIXES = [
     "Cursed", "Bootleg", "Autographed (forged)", "Slightly Haunted",
     "Mostly Functional", "Suspiciously Mint", "Vaguely Radioactive",
     "Pre-owned by a Clown", "Goodwill-Tier", "Deep-Fried", "Factory Sealed (probably)",
+    "Soaked", "Discount", "Expired", "Quantum-Entangled", "Locally-Sourced",
+    "Mall Santa's Personal", "'NOT FOR RESALE' Stamped", "Burnt", "Sticky",
+    "'Lightly Used' (covered in lipstick)", "Estate Sale", "Stolen (allegedly)",
+    "Formerly Beloved", "Off-Brand", "Museum-Adjacent", "Eldritch",
 ]
 ITEM_OBJECTS = [
     "Gamecube", "Claw Machine Plushie", "Signed Hockey Puck", "Bag of Rocks",
     "Taxidermied Possum", "VHS Copy of Shrek 2", "Broken Katana", "Ouija Board",
     "Neon Beer Sign", "Laminated Dolphin Poster", "Rusted Frying Pan",
     "Jar of Teeth", "1987 Tax Return", "Discount Santa Suit",
+    "Furby (eyes follow you)", "Waffle Iron Shaped Like Elvis",
+    "Coors Light Mirror", "Taxidermied Cat (posed as lawyer)",
+    "Nokia 3310 (still alive)", "Hot Wheels Set Missing 2 Wheels",
+    "Framed Bill Paxton Photo", "Harmonica (tooth included)",
+    "Shoebox Labeled 'DOCUMENTS' (contains a single sock)",
+    "Vintage Porn VHS (the case is worth more)", "Bucket of Loose Buttons",
+    "Expired Viagra", "Lawn Gnome (sentient)", "Life-Size Cardboard Terry Crews",
+    "Jarred Ship-in-a-Bottle (but it's a minivan)",
 ]
 
 BROKER_OFFERS = [
@@ -34,6 +46,16 @@ BROKER_OFFERS = [
     "puts on reading glasses that are clearly prop glasses.",
     "calls his cousin. The cousin also doesn't know.",
     "consults a pricing guide from 1994.",
+    "consults the Farmer's Almanac. The almanac agrees with whatever he wants.",
+    "photographs it. Deletes the photo. Photographs it again.",
+    "weighs it on a bathroom scale. Writes a number on a napkin.",
+    "holds it to his ear. Nods. 'Still ticking.'",
+    "tastes it. Not recommends you do this at home.",
+    "haggles with himself for 4 full minutes.",
+    "glances at the security camera. Shakes his head no. Glances again. Nods.",
+    "asks his parrot. The parrot says 'SQUAWK — SIX HUNDRED.'",
+    "consults a Magic 8-Ball. 'Outlook good.' He sighs.",
+    "does mental math visibly. His lips move. He writes in the air.",
 ]
 
 WALK_AWAY_FLAVOR = [
@@ -41,6 +63,10 @@ WALK_AWAY_FLAVOR = [
     "'Don't let the door hit ya.' You walk out into the rain. The item dissolves. Lose everything.",
     "Broker laughs. 'Gonna be a YouTube short.' He was right. Lose everything.",
     "You storm out, item in hand. Fifteen feet later you realize your item was just a brick painted gold. Lose everything.",
+    "The broker locks the door behind you. You hear him crying, then laughing. You lose everything.",
+    "You try to pawn it at another store. They throw rocks at you. You lose everything.",
+    "You try to sell it online. Your listing gets flagged. Your account gets banned. You lose everything.",
+    "A raccoon steals it on the way home. You watch. You accept. You lose everything.",
 ]
 
 

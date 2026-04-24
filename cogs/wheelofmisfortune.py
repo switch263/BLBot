@@ -17,6 +17,12 @@ SILLY_NICKNAMES = [
     "Ambient Moron", "Uncle Crypto", "Lord Lossington", "Tax Goblin",
     "Mr. Brokelord", "Discount Degen", "Wheel Wrecker", "Certified L",
     "The Cursed One", "Lil Refund", "Bankruptcy Boy", "Wheel Widow",
+    "Sir Payeth-a-Lot", "Nickel Nephew", "Casino Crustacean", "Wallet Wraith",
+    "Dame Debt", "Professor Paycut", "The Malf", "Slot Cousin",
+    "Count Chargeback", "Doctor Deficit", "Baron Bankrupt", "The Wager Weasel",
+    "His Majesty King Lossington III", "Sir Clicks-a-Lot", "Premium Peasant",
+    "The Tiltmaster", "Lil Evaporator", "Big Mistake Energy", "Financial Gremlin",
+    "The Inverse Midas", "Couponless", "Scholarship Loser", "Subprime Sam",
 ]
 
 FLORIDA_MAN_HEADLINES = [
@@ -28,6 +34,22 @@ FLORIDA_MAN_HEADLINES = [
     "licked a toad and claimed enlightenment, then 50 coins",
     "attempted to deposit a live iguana at the coin ATM",
     "swore at a pelican for 40 minutes with no provocation",
+    "declared war on the concept of 'pineapple' in the Publix parking lot",
+    "drove a riding mower through a Chick-fil-A drive-thru demanding waffle fries",
+    "stole 11 garden gnomes and allegedly 'made them into a council'",
+    "was arrested trying to 'exorcise' a Waffle House at 3 AM",
+    "wrestled an emu at a quinceañera for reasons unclear to all parties",
+    "attempted to marry a pontoon boat in a civil ceremony",
+    "claimed to be the rightful heir to the Gulf of Mexico",
+    "threw a frozen turkey at a weather reporter live on air",
+    "was mistaken for a DeSantis staffer and given $40 anyway",
+    "hot-wired a pontoon and joined a flotilla without permission",
+    "was found asleep inside a Build-A-Bear holding a crossbow",
+    "tried to file a restraining order against a specific cloud",
+    "attempted to register an armadillo to vote in the primary",
+    "was caught painting 'SEX COINS' on the side of a church in period-accurate Comic Sans",
+    "attempted to sell a timeshare of the moon at a Cracker Barrel",
+    "was tasered while arguing with a jukebox about Jimmy Buffett royalties",
 ]
 
 # (weight, key)

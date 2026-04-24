@@ -22,6 +22,23 @@ SODAS = [
     ("F6", "🍺 Expired Busch Light"),
 ]
 
+# Which soda got picked doesn't bias outcomes, but the name is rotated in randomly
+# to add variety. These expand the named-drink flavor pool.
+EXTRA_SODAS = [
+    "💀 Boney Fanta",
+    "🦷 Dentist's Choice Kombucha",
+    "🐛 Tennessee Yard Tea",
+    "🌶️ Arizona Punk Rock Cactus Blast",
+    "🔋 Discount Liquid Battery",
+    "🧃 Off-Brand Sunny D (store brand: 'Cloudy A-')",
+    "🫧 Gentleman's Seltzer",
+    "💉 Cough Syrup & Cream",
+    "🧻 3-Ply Ginger Beer",
+    "🚬 Smoker's Root Beer",
+    "🐡 Pufferfish Pepsi",
+    "👢 Bootleg Dr. Pepper (labeled 'DR. PAPPER')",
+]
+
 # (weight, key)
 OUTCOMES = [
     (2,  "jackpot"),       # 10x
@@ -41,6 +58,11 @@ CURSED_NICKS = [
     "Machine Simp", "Soda Goblin", "Vending Victim", "Flavor Fiend",
     "Carbonation Casualty", "The Sticky One", "Dispenser Dependent",
     "Certified L (soda edition)", "Lil Fizz Regret", "Dr. Pepper's Intern",
+    "Mountain Don't", "Sprite Goblin", "The Carbonated Disappointment",
+    "Dented Can", "The Jammed One", "Gatorade's Least Favorite Flavor",
+    "Dasani Defender", "Off-Brand Enthusiast", "Sir Jams-a-Lot",
+    "Shaken (Not Stirred)", "Vending Crimes", "Sticky Fingers Jr.",
+    "Concession Stand Caleb", "Your Honor's Least Favorite",
 ]
 
 INSULTS = [
@@ -49,6 +71,14 @@ INSULTS = [
     "somewhere, a vending machine in a hospital is doing real work, and you are here",
     "the can laughed at you on the way down",
     "even the spiders in here are disappointed",
+    "the receipt paper shivered when it printed your name",
+    "you have the aura of a break room at a regional bank",
+    "you are technically a Ponzi scheme of one",
+    "every machine in a 3-mile radius filed a complaint about you",
+    "the soda was trying to escape YOU",
+    "someone at corporate is getting fired because of you, and they deserve it",
+    "the machine has a LinkedIn. You do not. Figure that out",
+    "a crow just flew past. it was better than you at this",
 ]
 
 FLAVOR_PULL = [
@@ -58,6 +88,16 @@ FLAVOR_PULL = [
     "The coin slot makes a noise it definitely shouldn't.",
     "You can hear the machine breathing.",
     "A tiny sign reads: ALL SALES FINAL. NO EXCEPTIONS. NO GOD.",
+    "The reflection in the glass is not yours.",
+    "You feel a small tug at your ankle. You do not look down.",
+    "The machine smells faintly of barbecue. And sulfur.",
+    "A moth circles inside the machine. It's been there for years.",
+    "The LED display flickers between '$1.25' and 'REPENT'.",
+    "A low hum. Not electrical. Something else.",
+    "The keypad is warm. Like. Body temperature warm.",
+    "A tiny child's handprint is smudged on the coin return.",
+    "There's a single M&M wedged in the coin slot. Don't touch it.",
+    "The machine accepts your coin. It also accepts your regret.",
 ]
 
 
@@ -194,8 +234,14 @@ class VendingMachine(commands.Cog):
             outcome, view.bet, interaction.user, interaction.guild, interaction.channel,
         )
         flavor = random.choice(FLAVOR_PULL)
+        # 30% of the time, the machine gives you something you did NOT ask for.
+        if random.random() < 0.3:
+            wrong = random.choice(EXTRA_SODAS)
+            pick_line = f"picks **{slot_id}: {soda_name}**, receives **{wrong}** instead"
+        else:
+            pick_line = f"picks **{slot_id}: {soda_name}**"
         text = (
-            f"🎛️ **{interaction.user.display_name}** picks **{slot_id}: {soda_name}**.\n"
+            f"🎛️ **{interaction.user.display_name}** {pick_line}.\n"
             f"_{flavor}_\n"
             f"{result}\n"
             f"Balance: **{get_coins(interaction.guild.id, interaction.user.id)}**"
