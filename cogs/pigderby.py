@@ -18,15 +18,110 @@ TRACK_LENGTH = 20
 TICK_SECONDS = 1.5
 MAX_TICKS = 40  # safety cap
 
-# Each pig: (emoji, name, step_weights[0..3], payout_multiplier)
+# Each pig "slot" has fixed emoji, speed weights, and payout — the NAME is rolled fresh per derby.
 # step_weights bias how fast they move each tick; payout is inversely related.
-PIGS = [
-    ("🐖", "Bacon Supreme",       [0, 1, 3, 6],  2),   # fastest, lowest payout
-    ("🐷", "Little Miss Sausage", [0, 2, 4, 4],  3),
-    ("🐽", "Sir Oinks-a-lot",     [1, 3, 4, 2],  5),
-    ("🥓", "Porky Von Trapp",     [3, 4, 2, 1],  8),
-    ("🧻", "Slop Bucket Jr.",     [5, 3, 2, 0], 15),   # slowest, biggest payout
+PIG_SLOTS = [
+    ("🐖", [0, 1, 3, 6],  2),   # fastest, lowest payout
+    ("🐷", [0, 2, 4, 4],  3),
+    ("🐽", [1, 3, 4, 2],  5),
+    ("🥓", [3, 4, 2, 1],  8),
+    ("🧻", [5, 3, 2, 0], 15),   # slowest, biggest payout
 ]
+
+# Pig-name generator components. Combine any two/three of these for absurd uniqueness.
+PIG_TITLES = [
+    "Sir", "Lady", "Lord", "Dame", "Captain", "Baron", "Duchess", "Pastor",
+    "Professor", "Admiral", "Sergeant", "Mister", "Señor", "Grandma",
+    "His Grace", "Honorable Judge", "The Right Reverend",
+]
+
+PIG_ADJECTIVES = [
+    "Hefty", "Lil", "Swift", "Sticky", "Cheap", "Lucky", "Savage", "Greasy",
+    "Stinky", "Tactical", "Regional", "Deluxe", "Artisanal", "Rapid",
+    "Deep-Fried", "Autographed", "Budget", "Discount", "Feral", "Haunted",
+    "Electric", "Unbothered", "Barbecue", "Menacing", "Juicy", "Premium",
+    "Overcooked", "Drippy", "Corn-Fed", "Sun-Dried", "Angry", "Smoked",
+    "Limited Edition", "Radioactive", "Presidential", "Off-Brand",
+]
+
+PIG_NOUNS = [
+    "Bacon", "Oinks", "Pork", "Snoutson", "Hamstrong", "Sausage", "Gristle",
+    "Slop", "Trotter", "Chop", "Rasher", "Link", "Ham Hock", "Bratwurst",
+    "Kielbasa", "Crackling", "Chorizo", "Prosciutto", "Pancetta",
+    "Mudwallow", "Wiggles", "Squealer", "Snorts", "Hambone", "Chubs",
+    "Bacon Bits", "Hogwash", "Oinker McGee", "Truffles", "Spam", "Jowls",
+    "Salami", "Pepperoni", "Loin", "Pork Chop", "Chitterlings", "Guanciale",
+]
+
+PIG_SUFFIXES = [
+    "Jr.", "III", "the Third", "Supreme", "Deluxe", "Esq.",
+    "PhD", "Sr.", "VI", "MK-II", "of the Valley", "the Unready",
+    "McFluffington", "Von Trapp", "of House Oinkton", "the Magnificent",
+    "Prime", "Classic", "'97 Vintage", "the Undefeated (citation needed)",
+    "the Merely Adequate", "of Lot 3", "with a Dream",
+]
+
+PIG_FIRST_NAMES = [
+    "Reginald", "Mortimer", "Beatrice", "Cornelius", "Trixie", "Agnes",
+    "Biff", "Chad", "Karen", "Gertrude", "Phil", "Eugene", "Lucille",
+    "Bubba", "Tyler", "Brenda", "Dwayne", "Harold", "Barbara", "Greg",
+    "Deb", "Lorraine", "Earl", "Tammy", "Donnie", "Francine", "Terry",
+]
+
+
+def generate_pig_name() -> str:
+    """Roll an absurd pig name from the component pools. Format picked at random."""
+    pattern = random.choice([
+        "adj_noun",
+        "title_noun",
+        "title_first_noun",
+        "first_noun_suffix",
+        "adj_noun_suffix",
+        "the_adj_noun",
+        "first_the_adj",
+        "title_first",
+        "noun_suffix",
+        "adj_first_noun",
+    ])
+    if pattern == "adj_noun":
+        return f"{random.choice(PIG_ADJECTIVES)} {random.choice(PIG_NOUNS)}"
+    if pattern == "title_noun":
+        return f"{random.choice(PIG_TITLES)} {random.choice(PIG_NOUNS)}"
+    if pattern == "title_first_noun":
+        return f"{random.choice(PIG_TITLES)} {random.choice(PIG_FIRST_NAMES)} {random.choice(PIG_NOUNS)}"
+    if pattern == "first_noun_suffix":
+        return f"{random.choice(PIG_FIRST_NAMES)} {random.choice(PIG_NOUNS)} {random.choice(PIG_SUFFIXES)}"
+    if pattern == "adj_noun_suffix":
+        return f"{random.choice(PIG_ADJECTIVES)} {random.choice(PIG_NOUNS)} {random.choice(PIG_SUFFIXES)}"
+    if pattern == "the_adj_noun":
+        return f"The {random.choice(PIG_ADJECTIVES)} {random.choice(PIG_NOUNS)}"
+    if pattern == "first_the_adj":
+        return f"{random.choice(PIG_FIRST_NAMES)} '{random.choice(PIG_ADJECTIVES)}' {random.choice(PIG_NOUNS)}"
+    if pattern == "title_first":
+        return f"{random.choice(PIG_TITLES)} {random.choice(PIG_FIRST_NAMES)}"
+    if pattern == "noun_suffix":
+        return f"{random.choice(PIG_NOUNS)} {random.choice(PIG_SUFFIXES)}"
+    if pattern == "adj_first_noun":
+        return f"{random.choice(PIG_ADJECTIVES)} {random.choice(PIG_FIRST_NAMES)} {random.choice(PIG_NOUNS)}"
+    return f"{random.choice(PIG_ADJECTIVES)} {random.choice(PIG_NOUNS)}"
+
+
+def roll_pigs() -> list[tuple[str, str, list[int], int]]:
+    """Produce a fresh 5-pig roster: (emoji, name, weights, payout). Unique names per derby."""
+    names = set()
+    result = []
+    for emoji, weights, payout in PIG_SLOTS:
+        # Ensure uniqueness within this derby
+        for _ in range(20):
+            n = generate_pig_name()
+            if n not in names:
+                names.add(n)
+                result.append((emoji, n, weights, payout))
+                break
+        else:
+            # Fallback if we somehow collide 20 times
+            result.append((emoji, f"{generate_pig_name()} {random.randint(1, 99)}", weights, payout))
+    return result
 
 RACE_START_QUIPS = [
     "The gate creaks open. The pigs look confused.",
@@ -68,12 +163,13 @@ class Derby:
         self.lobby_deadline = 0.0
         self.message: discord.Message | None = None
         self.timer_task: asyncio.Task | None = None
-        self.positions = [0] * len(PIGS)
+        # Roll a fresh roster of 5 absurd pig names for THIS derby.
+        self.pigs: list[tuple[str, str, list[int], int]] = roll_pigs()
+        self.positions = [0] * len(self.pigs)
 
 
 class PigButton(discord.ui.Button):
-    def __init__(self, idx: int, row: int):
-        emoji, name, _, payout = PIGS[idx]
+    def __init__(self, idx: int, emoji: str, name: str, payout: int, row: int):
         super().__init__(
             style=discord.ButtonStyle.secondary,
             label=f"{name} ({payout}×)",
@@ -158,8 +254,8 @@ class LobbyView(discord.ui.View):
         super().__init__(timeout=LOBBY_SECONDS + 10)
         self.cog = cog
         self.derby = derby
-        for i in range(len(PIGS)):
-            self.add_item(PigButton(i, row=i // 3))  # rows 0 and 1
+        for i, (emoji, name, _weights, payout) in enumerate(derby.pigs):
+            self.add_item(PigButton(i, emoji, name, payout, row=i // 3))  # rows 0 and 1
         self.add_item(StartButton())
         self.add_item(CancelButton())
 
@@ -184,7 +280,7 @@ class PigDerby(commands.Cog):
         by_pig: dict[int, list[Bet]] = {}
         for b in d.bets:
             by_pig.setdefault(b.pig_idx, []).append(b)
-        for i, (emoji, name, _, payout) in enumerate(PIGS):
+        for i, (emoji, name, _, payout) in enumerate(d.pigs):
             backers = by_pig.get(i, [])
             if backers:
                 names = ", ".join(b.user.display_name for b in backers)
@@ -197,16 +293,18 @@ class PigDerby(commands.Cog):
 
     def _render_track(self, d: Derby, header: str = "🏁 **The race is on!**") -> str:
         lines = [header, ""]
-        for i, (emoji, name, _, payout) in enumerate(PIGS):
+        # Longest name width for alignment
+        width = max((len(p[1]) for p in d.pigs), default=22)
+        for i, (emoji, name, _, payout) in enumerate(d.pigs):
             pos = min(d.positions[i], TRACK_LENGTH)
             before = "━" * pos
             after = "━" * (TRACK_LENGTH - pos)
             finish = "🏁" if pos >= TRACK_LENGTH else ""
-            lines.append(f"{emoji} {name:<22} │{before}{emoji}{after}│{finish}  ({pos}/{TRACK_LENGTH})")
+            lines.append(f"{emoji} {name:<{width}} │{before}{emoji}{after}│{finish}  ({pos}/{TRACK_LENGTH})")
         return "```\n" + "\n".join(lines) + "\n```"
 
     def _render_final(self, d: Derby, winner_idx: int, payouts: list[tuple[Bet, int]]) -> str:
-        emoji, name, _, payout = PIGS[winner_idx]
+        emoji, name, _, payout = d.pigs[winner_idx]
         quip = random.choice(WIN_QUIPS)
         lines = [
             f"🏆 **{emoji} {name}** wins at **{payout}×**! ({quip})",
@@ -294,7 +392,7 @@ class PigDerby(commands.Cog):
         winner_idx = None
         for _ in range(MAX_TICKS):
             # step each pig
-            for i, (_, _, weights, _) in enumerate(PIGS):
+            for i, (_, _, weights, _) in enumerate(d.pigs):
                 step = random.choices([0, 1, 2, 3], weights=weights, k=1)[0]
                 d.positions[i] += step
 
@@ -322,7 +420,7 @@ class PigDerby(commands.Cog):
         payouts: list[tuple[Bet, int]] = []
         for b in d.bets:
             if b.pig_idx == winner_idx:
-                payout = b.amount * PIGS[winner_idx][3]
+                payout = b.amount * d.pigs[winner_idx][3]
                 add_coins(d.guild_id, b.user.id, payout)
                 payouts.append((b, payout))
             else:
