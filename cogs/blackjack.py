@@ -66,7 +66,6 @@ class PlayerState:
         self.hand_bets: list[int] = []
         self.current_hand_idx = 0
         self.done = False
-        self.revealed = False
         self.result_text: str | None = None
         self.payout = 0  # coins added at settlement
 
@@ -311,16 +310,6 @@ class PlayingView(discord.ui.View):
         p.hand_bets.append(p.bet)
         await self.cog._after_action(interaction, self, auto_advance=hand_total(p.current_hand) >= 21)
 
-    @discord.ui.button(label="Peek", style=discord.ButtonStyle.secondary, emoji="🔒", row=1)
-    async def peek_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        r = self.round
-        p = r.find_player(interaction.user.id)
-        if not p:
-            await interaction.response.send_message("You're not in this round.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            self.cog._render_private(r, p), ephemeral=True)
-
     async def on_timeout(self):
         r = self.round
         if r.phase != Round.PLAYING:
@@ -380,9 +369,8 @@ class Blackjack(commands.Cog):
                     tag = " **BUST**"
                 elif is_blackjack(h):
                     tag = " **BLACKJACK**"
-                cards = format_hand(h) if p.revealed else f"{len(h)} cards"
                 status = p.result_text if r.phase == Round.DONE and p.result_text else ""
-                lines.append(f"**{p.user_name}**{turn_marker}: {cards} — total **{total}**{tag} _(bet {p.hand_bets[0]})_ {status}")
+                lines.append(f"**{p.user_name}**{turn_marker}: {format_hand(h)} — total **{total}**{tag} _(bet {p.hand_bets[0]})_ {status}")
             else:
                 lines.append(f"**{p.user_name}**{turn_marker}:")
                 for hi, h in enumerate(p.hands):
@@ -395,24 +383,13 @@ class Blackjack(commands.Cog):
                         tag = " **BUST**"
                     elif is_blackjack(h):
                         tag = " **BLACKJACK**"
-                    cards = format_hand(h) if p.revealed else f"{len(h)} cards"
-                    lines.append(f"  Hand {hi+1}{hand_marker}: {cards} — total **{total}**{tag} _(bet {p.hand_bets[hi]})_")
+                    lines.append(f"  Hand {hi+1}{hand_marker}: {format_hand(h)} — total **{total}**{tag} _(bet {p.hand_bets[hi]})_")
                 if r.phase == Round.DONE and p.result_text:
                     lines.append(f"  _{p.result_text}_")
 
         if header_note:
             lines.append("")
             lines.append(header_note)
-        return "\n".join(lines)
-
-    def _render_private(self, r: Round, p: PlayerState) -> str:
-        lines = [f"🔒 **Your hand** (only you see this)"]
-        for i, h in enumerate(p.hands):
-            prefix = f"Hand {i+1}: " if len(p.hands) > 1 else ""
-            marker = ""
-            if r.phase == Round.PLAYING and r.current_player.user_id == p.user_id and i == p.current_hand_idx and not p.done:
-                marker = " 👉"
-            lines.append(f"{prefix}{format_hand(h)} — total **{hand_total(h)}**{marker}")
         return "\n".join(lines)
 
     # -------- Flow --------
@@ -477,13 +454,6 @@ class Blackjack(commands.Cog):
 
         r.deal()
 
-        for p in r.players:
-            try:
-                user = self.bot.get_user(p.user_id) or await self.bot.fetch_user(p.user_id)
-                await user.send(self._render_private(r, p))
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-
         dealer_bj = is_blackjack(r.dealer_hand)
         for p in r.players:
             if is_blackjack(p.hands[0]):
@@ -506,7 +476,6 @@ class Blackjack(commands.Cog):
     async def _after_action(self, interaction: discord.Interaction, view: PlayingView, auto_advance: bool):
         r = view.round
         p = r.current_player
-        p.revealed = True
 
         if auto_advance:
             if p.current_hand_idx < len(p.hands) - 1:
@@ -530,15 +499,9 @@ class Blackjack(commands.Cog):
 
         view._refresh_buttons()
         await interaction.response.edit_message(content=self._render_playing(r), view=view)
-        # Private update for whoever's turn it is now
-        next_p = r.current_player
-        if next_p.user_id == interaction.user.id:
-            await interaction.followup.send(self._render_private(r, next_p), ephemeral=True)
 
     async def _finish_round(self, r: Round, interaction: discord.Interaction | None = None):
         r.phase = Round.DONE
-        for p in r.players:
-            p.revealed = True
 
         if any(any(hand_total(h) <= 21 for h in p.hands) for p in r.players):
             r.dealer_play()
