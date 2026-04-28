@@ -66,17 +66,10 @@ async def on_command_error(ctx, error):
     else:
         logger.error(f"Unexpected error occurred: {error}")
 
-# Load cogs from the cogs directory
-# Cogs disabled by default (can be loaded manually with !load command if admin cog is enabled)
-DISABLED_COGS = [
-    "faketyping",
-    "lurkercallout",
-    "villain",
-    "unhinged",
-    "typopolice",
-    "selectivememory",
-    "dadbot",
-]
+# Load cogs from the cogs directory.
+# Permanently shelved cogs live under disabled/cogs/ — out of the loader's reach.
+# This list is for cogs that should stay in cogs/ but be skipped on boot.
+DISABLED_COGS: list[str] = []
 
 async def load_extensions():
     """Load all cog extensions asynchronously (required for discord.py 2.0+/py-cord 2.0+)"""

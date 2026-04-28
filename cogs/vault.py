@@ -65,8 +65,8 @@ class VaultGame:
 
 
 class DigitButton(discord.ui.Button):
-    def __init__(self, digit: int):
-        super().__init__(style=discord.ButtonStyle.secondary, label=str(digit), row=0)
+    def __init__(self, digit: int, row: int):
+        super().__init__(style=discord.ButtonStyle.secondary, label=str(digit), row=row)
         self.digit = digit
 
     async def callback(self, interaction: discord.Interaction):
@@ -91,7 +91,7 @@ class DigitButton(discord.ui.Button):
 
 class UndoButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(style=discord.ButtonStyle.secondary, label="Undo", emoji="↩️", row=1)
+        super().__init__(style=discord.ButtonStyle.secondary, label="Undo", emoji="↩️", row=2)
 
     async def callback(self, interaction: discord.Interaction):
         view: "VaultView" = self.view  # type: ignore
@@ -110,7 +110,7 @@ class UndoButton(discord.ui.Button):
 
 class SubmitButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(style=discord.ButtonStyle.success, label="Submit", emoji="🔒", row=1)
+        super().__init__(style=discord.ButtonStyle.success, label="Submit", emoji="🔒", row=2)
 
     async def callback(self, interaction: discord.Interaction):
         view: "VaultView" = self.view  # type: ignore
@@ -165,8 +165,12 @@ class VaultView(discord.ui.View):
         super().__init__(timeout=300)
         self.cog = cog
         self.game = game
-        for d in DIGITS:
-            self.add_item(DigitButton(d))
+        # Discord caps action rows at 5 buttons each; with 6 digits we split 3+3.
+        half = len(DIGITS) // 2
+        for d in DIGITS[:half]:
+            self.add_item(DigitButton(d, row=0))
+        for d in DIGITS[half:]:
+            self.add_item(DigitButton(d, row=1))
         self.undo = UndoButton()
         self.submit = SubmitButton()
         self.add_item(self.undo)

@@ -16,6 +16,53 @@ GRID_COLS = 4
 GRID_SIZE = GRID_ROWS * GRID_COLS
 NUM_RACCOONS = 3
 HOUSE_EDGE = 0.97
+BONUS_CHANCE = 0.25
+
+# Weighted pool of bonuses. When the bonus tile is dug, one of these resolves.
+# Effects: "mult" multiplies cashout; "kick" removes N raccoons (turns those
+# tiles into safe revealed tiles).
+BONUS_TYPES = [
+    {
+        "key": "double",
+        "weight": 30,
+        "label": "✨",
+        "effect": "mult",
+        "value": 2.0,
+        "flavor": "✨ A tinfoil ball wrapped around something REAL. Multiplier **doubled**!",
+    },
+    {
+        "key": "mega",
+        "weight": 8,
+        "label": "💎",
+        "effect": "mult",
+        "value": 10.0,
+        "flavor": "💎 You unearthed the Holy Grail of trash. Multiplier **×10**!",
+    },
+    {
+        "key": "exodus",
+        "weight": 7,
+        "label": "🚨",
+        "effect": "kick",
+        "value": NUM_RACCOONS,
+        "flavor": "🚨 The trash truck rolls in. **Every raccoon flees the den.**",
+    },
+    {
+        "key": "plague",
+        "weight": 25,
+        "label": "🤒",
+        "effect": "kick",
+        "value": 2,
+        "flavor": "🤒 The raccoons caught the trash flu. **Two collapse** harmlessly.",
+    },
+    {
+        "key": "kangaroo",
+        "weight": 30,
+        "label": "🦘",
+        "effect": "kick",
+        "value": 1,
+        "flavor": "🦘 SURPRISE — it's a kangaroo. It **bodyslams a raccoon** and bounces off.",
+    },
+]
 
 RACCOON_SCREAMS = [
     "A feral raccoon launches at your face.",
@@ -35,14 +82,20 @@ WIN_FLAVOR = [
     "Your mom will never know.",
 ]
 
-
 def current_multiplier(revealed_safe: int) -> float:
+    # Cap so kick-bonuses (which mark raccoon tiles as revealed) can't push
+    # past the safe-tile count and divide by zero.
+    revealed_safe = min(revealed_safe, GRID_SIZE - NUM_RACCOONS)
     if revealed_safe <= 0:
         return 1.0
     p_survive = 1.0
     for i in range(revealed_safe):
         p_survive *= (GRID_SIZE - NUM_RACCOONS - i) / (GRID_SIZE - i)
     return HOUSE_EDGE / p_survive
+
+
+def pick_bonus_type() -> dict:
+    return random.choices(BONUS_TYPES, weights=[b["weight"] for b in BONUS_TYPES])[0]
 
 
 class DenGame:
@@ -55,6 +108,20 @@ class DenGame:
         self.revealed: set[int] = set()
         self.ended = False
         self.won = False
+        self.bonus_tile: int | None = None
+        self.bonus_type: dict | None = None
+        self.bonus_multiplier: float = 1.0
+        if random.random() < BONUS_CHANCE:
+            safe_tiles = [i for i in range(GRID_SIZE) if i not in self.raccoons]
+            self.bonus_tile = random.choice(safe_tiles)
+            self.bonus_type = pick_bonus_type()
+
+    @property
+    def bonus_triggered(self) -> bool:
+        return self.bonus_tile is not None and self.bonus_tile in self.revealed
+
+    def get_multiplier(self) -> float:
+        return current_multiplier(len(self.revealed)) * self.bonus_multiplier
 
 
 class BinButton(discord.ui.Button):
@@ -90,14 +157,22 @@ class BinButton(discord.ui.Button):
             await interaction.response.edit_message(content=content, view=view)
             return
 
-        self.label = "💎"
-        self.style = discord.ButtonStyle.success
+        bonus_msg = None
+        if self.idx == g.bonus_tile and g.bonus_type:
+            bt = g.bonus_type
+            self.label = bt["label"]
+            self.style = discord.ButtonStyle.success
+            bonus_msg = bt["flavor"]
+            view._apply_bonus_effect()
+        else:
+            self.label = "💎"
+            self.style = discord.ButtonStyle.success
         view._refresh_cashout()
-        if len(g.revealed) == GRID_SIZE - NUM_RACCOONS:
+        if len(g.revealed) >= GRID_SIZE - NUM_RACCOONS:
             # Cleared the board — max payout, auto cashout
             g.ended = True
             g.won = True
-            mult = current_multiplier(len(g.revealed))
+            mult = g.get_multiplier()
             payout = int(g.bet * mult)
             add_coins(g.guild_id, g.user_id, payout)
             record_den(g.guild_id, g.user_id, won=True)
@@ -116,7 +191,7 @@ class BinButton(discord.ui.Button):
             await interaction.response.edit_message(content=content, view=view)
             return
 
-        await interaction.response.edit_message(content=view.cog._render(g), view=view)
+        await interaction.response.edit_message(content=view.cog._render(g, bonus_msg), view=view)
 
 
 class CashOutButton(discord.ui.Button):
@@ -137,7 +212,7 @@ class CashOutButton(discord.ui.Button):
             return
         g.ended = True
         g.won = True
-        mult = current_multiplier(len(g.revealed))
+        mult = g.get_multiplier()
         payout = int(g.bet * mult)
         add_coins(g.guild_id, g.user_id, payout)
         record_den(g.guild_id, g.user_id, won=True)
@@ -166,17 +241,40 @@ class DenView(discord.ui.View):
         self.add_item(self.cashout)
 
     def _refresh_cashout(self):
-        mult = current_multiplier(len(self.game.revealed))
+        mult = self.game.get_multiplier()
         payout = int(self.game.bet * mult)
         net = payout - self.game.bet
         self.cashout.label = f"Climb Out ({mult:.2f}×, +{net})"
+
+    def _apply_bonus_effect(self):
+        g = self.game
+        bt = g.bonus_type
+        if not bt:
+            return
+        effect = bt["effect"]
+        if effect == "mult":
+            g.bonus_multiplier = bt["value"]
+        elif effect == "kick":
+            count = min(bt["value"], len(g.raccoons))
+            for victim in random.sample(list(g.raccoons), count):
+                self._kick_out_raccoon(victim, bt["label"])
+
+    def _kick_out_raccoon(self, idx: int, label: str):
+        g = self.game
+        g.raccoons.discard(idx)
+        g.revealed.add(idx)
+        for child in self.children:
+            if isinstance(child, BinButton) and child.idx == idx:
+                child.label = label
+                child.style = discord.ButtonStyle.success
+                child.disabled = True
 
     async def on_timeout(self):
         if not self.game.ended:
             # Cashout for the user at whatever they've got
             g = self.game
             if g.revealed:
-                mult = current_multiplier(len(g.revealed))
+                mult = g.get_multiplier()
                 add_coins(g.guild_id, g.user_id, int(g.bet * mult))
                 record_den(g.guild_id, g.user_id, won=True)
             else:
@@ -193,12 +291,15 @@ class RaccoonDen(commands.Cog):
         logger.info("Raccoon's Den loaded.")
 
     def _render(self, g: DenGame, footer: str | None = None) -> str:
-        mult = current_multiplier(len(g.revealed))
+        mult = g.get_multiplier()
         safe_possible = GRID_SIZE - NUM_RACCOONS
+        mult_label = f"**{mult:.2f}×**"
+        if g.bonus_triggered and g.bonus_type:
+            mult_label += f" {g.bonus_type['label']}"
         lines = [
             f"🦝 **{g.user_name}'s Raccoon Den** — bet **{g.bet}** coins",
             f"{NUM_RACCOONS} feral raccoons hide in {GRID_SIZE} bins. "
-            f"Revealed: **{len(g.revealed)}/{safe_possible}** | Multiplier: **{mult:.2f}×**",
+            f"Revealed: **{len(g.revealed)}/{safe_possible}** | Multiplier: {mult_label}",
         ]
         if not g.ended:
             lines.append(f"Click bins to dig. Climb Out any time to bank **{int(g.bet * mult)}** coins.")
