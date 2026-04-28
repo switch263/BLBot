@@ -87,6 +87,8 @@ def _init_db():
                     guild_id INTEGER,
                     user_id INTEGER,
                     last_loot TEXT DEFAULT '',
+                    last_loot_am TEXT DEFAULT '',
+                    last_loot_pm TEXT DEFAULT '',
                     PRIMARY KEY (guild_id, user_id)
                 )
             ''')
@@ -113,6 +115,22 @@ def _init_db():
             ]:
                 try:
                     conn.execute(f"ALTER TABLE wallets ADD COLUMN {col} {decl}")
+                except sqlite3.OperationalError:
+                    pass
+            # loot_cooldowns: split single daily into AM/PM slots. On first
+            # migration, copy legacy last_loot into last_loot_am so existing
+            # users don't get a free extra AM claim on rollout day.
+            for col, decl in [
+                ("last_loot_am", "TEXT DEFAULT ''"),
+                ("last_loot_pm", "TEXT DEFAULT ''"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE loot_cooldowns ADD COLUMN {col} {decl}")
+                    if col == "last_loot_am":
+                        conn.execute(
+                            "UPDATE loot_cooldowns SET last_loot_am = last_loot "
+                            "WHERE last_loot != ''"
+                        )
                 except sqlite3.OperationalError:
                     pass
             conn.commit()

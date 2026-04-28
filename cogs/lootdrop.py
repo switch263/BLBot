@@ -1,21 +1,25 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import asyncio
 import random
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 import logging
 import economy
+from cogs.lootdrop_card import render_card
 
 logger = logging.getLogger(__name__)
 
 # Rarity tiers: (name, color, coin_range, weight, emoji)
+# Floor 10k (Common low), ceiling 10M (Mythic high). Each tier roughly 3-4x the previous.
 RARITIES = [
-    ("Common",    discord.Color.light_grey(), (500, 2500),       40, "⬜"),
-    ("Uncommon",  discord.Color.green(),      (2500, 7500),      30, "🟩"),
-    ("Rare",      discord.Color.blue(),       (7500, 20000),     18, "🟦"),
-    ("Epic",      discord.Color.purple(),     (20000, 50000),     9, "🟪"),
-    ("Legendary", discord.Color.gold(),       (50000, 200000),    3, "🟨"),
+    ("Common",    discord.Color.light_grey(),           (10_000,     50_000),    40, "⬜"),
+    ("Uncommon",  discord.Color.green(),                (50_000,     200_000),   30, "🟩"),
+    ("Rare",      discord.Color.blue(),                 (200_000,    750_000),   18, "🟦"),
+    ("Epic",      discord.Color.purple(),               (750_000,    2_000_000),  8, "🟪"),
+    ("Legendary", discord.Color.gold(),                 (2_000_000,  5_000_000),  3, "🟨"),
+    ("Mythic",    discord.Color.from_rgb(255, 50, 200), (5_000_000,  10_000_000), 1, "🌈"),
 ]
 
 ITEM_PREFIXES = [
@@ -23,6 +27,9 @@ ITEM_PREFIXES = [
     "Tactical", "Bootleg", "Vintage", "Overclocked", "Sentient", "Discount",
     "Radioactive", "Slightly Used", "Artisanal", "Weaponized", "Holy",
     "Deep-Fried", "Quantum", "Turbo", "Invisible", "Suspiciously Cheap",
+    "Crowdfunded", "Limited-Edition", "Counterfeit", "Off-Brand", "Microwaved",
+    "AI-Generated", "Open-Source", "Heirloom", "Smuggled", "Unlicensed",
+    "Self-Aware", "Whispering", "Possessed", "Reinforced", "Lukewarm",
 ]
 
 ITEM_OBJECTS = [
@@ -33,6 +40,9 @@ ITEM_OBJECTS = [
     "Rubber Duck", "Foam Sword", "Action Figure", "Dice Set",
     "Body Pillow", "Fedora", "Katana", "Trench Coat",
     "Participation Trophy", "Ban Hammer", "Mod Badge", "Discord Nitro Card",
+    "Cracked Smartphone", "Lava Lamp", "Beanbag Chair", "Snuggie",
+    "Rubber Chicken", "Lockpick Kit", "Nicotine Gum", "Crystal Skull",
+    "VHS Tape", "Pog", "Tamagotchi", "Pet Rock",
 ]
 
 ITEM_SUFFIXES = [
@@ -43,6 +53,11 @@ ITEM_SUFFIXES = [
     "of Absolute Unit Energy", "of the Basement Dweller",
     "of the Last Pick", "of Clutch Plays", "of the Carry",
     "that Nobody Asked For", "from Wish.com", "of the One True Gamer",
+    "of Yesterday's Patch Notes", "of the Forgotten Discord",
+    "of Chronic Latency", "of the Eternal Queue",
+    "of the Side Quest", "of Mid Vibes Only",
+    "of Suspicious Accuracy", "of the Speedrun Skip",
+    "of Dollar-Store Magic", "of Plot Armor",
 ]
 
 FLAVOR_TEXT = [
@@ -58,7 +73,27 @@ FLAVOR_TEXT = [
     "A time traveler left this here by mistake.",
     "You pulled this from a stone. Nobody else could.",
     "This materialized after you sneezed three times.",
+    "A pigeon delivered this strapped to its leg.",
+    "The vending machine ate your dollar but gave you this.",
+    "You won a Kahoot and the prize was real this time.",
+    "Found in a couch you swear you've never owned.",
+    "A glitch in the matrix coughed this up.",
+    "This was wedged inside a library book about taxes.",
+    "A mall Santa pressed it into your hand and winked.",
+    "It rolled out of a shopping cart in a thunderstorm.",
 ]
+
+
+def _current_slot() -> str:
+    return "am" if datetime.now().hour < 12 else "pm"
+
+
+def _next_reset() -> datetime:
+    """Next moment a fresh slot opens — noon today (if before noon) or midnight tomorrow."""
+    now = datetime.now()
+    if now.hour < 12:
+        return now.replace(hour=12, minute=0, second=0, microsecond=0)
+    return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 class LootDrop(commands.Cog):
@@ -70,8 +105,9 @@ class LootDrop(commands.Cog):
         logger.info("Loot Drop module has been loaded")
 
     def _check_and_set_cooldown(self, guild_id: int, user_id: int) -> bool:
-        """Returns True if the user can loot, False if on cooldown. Sets cooldown if allowed."""
+        """Returns True if the current AM/PM slot is fresh and stamps it."""
         today = date.today().isoformat()
+        column = f"last_loot_{_current_slot()}"  # safe: derived from a closed set
         try:
             with sqlite3.connect(economy.DB_FILE) as conn:
                 conn.execute(
@@ -79,14 +115,14 @@ class LootDrop(commands.Cog):
                     (guild_id, user_id)
                 )
                 cursor = conn.execute(
-                    "SELECT last_loot FROM loot_cooldowns WHERE guild_id = ? AND user_id = ?",
+                    f"SELECT {column} FROM loot_cooldowns WHERE guild_id = ? AND user_id = ?",
                     (guild_id, user_id)
                 )
-                last = cursor.fetchone()[0]
+                last = (cursor.fetchone()[0] or "")
                 if last == today:
                     return False
                 conn.execute(
-                    "UPDATE loot_cooldowns SET last_loot = ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE loot_cooldowns SET {column} = ? WHERE guild_id = ? AND user_id = ?",
                     (today, guild_id, user_id)
                 )
                 conn.commit()
@@ -109,40 +145,83 @@ class LootDrop(commands.Cog):
 
         return rarity_name, item_name, coins, color, emoji
 
-    async def _open_loot(self, guild_id: int, user: discord.Member) -> discord.Embed:
+    async def _open_loot(
+        self, guild_id: int, user: discord.Member
+    ) -> tuple[discord.Embed, discord.File | None]:
+        """Returns (embed, optional card file). Card is None when locked or render fails."""
+        next_reset_ts = int(_next_reset().timestamp())
         if not self._check_and_set_cooldown(guild_id, user.id):
-            return discord.Embed(
-                title="No Loot Available",
-                description="You already opened a loot drop today! Come back tomorrow.",
-                color=discord.Color.red()
+            slot = _current_slot().upper()
+            embed = discord.Embed(
+                title="🔒 Loot Locked",
+                description=(
+                    f"You've already cracked open the **{slot}** drop.\n"
+                    f"Two drops a day — one resets at **00:00**, the other at **12:00**.\n"
+                    f"Next drop opens <t:{next_reset_ts}:R>."
+                ),
+                color=discord.Color.red(),
             )
+            return embed, None
 
         rarity_name, item_name, coins, color, emoji = self._generate_loot()
         economy.add_coins(guild_id, user.id, coins)
 
         flavor = random.choice(FLAVOR_TEXT)
+        slot = _current_slot()
 
         embed = discord.Embed(
             title=f"{emoji} {rarity_name} Loot Drop! {emoji}",
             description=f"**{item_name}**",
-            color=color
+            color=color,
         )
-        embed.add_field(name="Value", value=f"**{coins}** coins added to your wallet!", inline=False)
-        embed.add_field(name="Rarity", value=f"{emoji} {rarity_name}", inline=True)
-        embed.set_footer(text=flavor)
+        embed.add_field(name="Next Drop", value=f"<t:{next_reset_ts}:R>", inline=True)
 
-        return embed
+        # Render card off the event loop — pure-Python pixel work would otherwise
+        # block heartbeats on slower hosts.
+        card_file: discord.File | None = None
+        try:
+            buf = await asyncio.to_thread(
+                render_card,
+                rarity_name=rarity_name,
+                item_name=item_name,
+                coins=coins,
+                color=color,
+                emoji=emoji,
+                slot=slot,
+                flavor=flavor,
+                is_mythic=(rarity_name == "Mythic"),
+            )
+            card_file = discord.File(buf, filename="lootcard.png")
+            embed.set_image(url="attachment://lootcard.png")
+        except Exception as e:
+            # Fall back to text-only embed; never block a payout because rendering broke.
+            logger.error(f"Loot card render failed, falling back to text embed: {e}")
+            embed.add_field(
+                name="Value",
+                value=f"**{coins:,}** coins added to your wallet!",
+                inline=False,
+            )
+            embed.add_field(name="Slot", value=slot.upper(), inline=True)
+            embed.set_footer(text=flavor)
+
+        return embed, card_file
 
     @commands.command(aliases=['lootdrop', 'drop'])
     async def loot(self, ctx):
-        """Open a daily loot drop for random coins!"""
-        embed = await self._open_loot(ctx.guild.id, ctx.author)
-        await ctx.send(embed=embed)
+        """Open one of your two daily loot drops (resets at 00:00 and 12:00)."""
+        embed, card = await self._open_loot(ctx.guild.id, ctx.author)
+        await ctx.send(embed=embed, file=card) if card else await ctx.send(embed=embed)
 
-    @app_commands.command(name="loot", description="Open a daily loot drop for random coins!")
+    @app_commands.command(name="loot", description="Open a loot drop. Two per day — resets at 00:00 and 12:00.")
     async def loot_slash(self, interaction: discord.Interaction):
-        embed = await self._open_loot(interaction.guild_id, interaction.user)
-        await interaction.response.send_message(embed=embed)
+        # Defer up front — the card render takes a few hundred ms and would
+        # otherwise risk the 3-second interaction ack window.
+        await interaction.response.defer()
+        embed, card = await self._open_loot(interaction.guild_id, interaction.user)
+        if card:
+            await interaction.followup.send(embed=embed, file=card)
+        else:
+            await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
