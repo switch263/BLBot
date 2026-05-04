@@ -13,16 +13,15 @@ logger = logging.getLogger(__name__)
 
 CODE_LENGTH = 4
 DIGITS = [1, 2, 3, 4, 5, 6]
-MAX_ATTEMPTS = 6
+MAX_ATTEMPTS = 5
 
 # Payout by attempts used (1-indexed). Attempts=1 means cracked on first guess (pure luck).
 PAYOUT_BY_ATTEMPT = {
-    1: 25.0,
-    2: 15.0,
-    3: 9.0,
-    4: 5.0,
-    5: 3.0,
-    6: 2.0,
+    1: 15.0,
+    2: 7.0,
+    3: 3.5,
+    4: 2.0,
+    5: 1.25,
 }
 
 SOLVE_FLAVOR = [
@@ -33,10 +32,10 @@ SOLVE_FLAVOR = [
 ]
 
 FAIL_FLAVOR = [
-    "🚨 **SIX STRIKES.** Thermite seals the vault. You flee with nothing.",
+    "🚨 **FIVE STRIKES.** Thermite seals the vault. You flee with nothing.",
     "🚨 **Biometric lock engages.** The code is burned. Lose bet.",
     "🚨 **Security drones dispatched.** The vault laughs in binary.",
-    "🚨 **The vault changes its code every 6 attempts.** You are now locked out forever.",
+    "🚨 **The vault changes its code every 5 attempts.** You are now locked out forever.",
 ]
 
 
@@ -207,7 +206,7 @@ class TheVault(commands.Cog):
             lines.append("")
             lines.append(f"**Current guess:** `{' '.join(slots)}`")
             lines.append("")
-            lines.append("**Payouts:** 1 try→25× | 2→15× | 3→9× | 4→5× | 5→3× | 6→2×")
+            lines.append("**Payouts:** 1 try→15× | 2→7× | 3→3.5× | 4→2× | 5→1.25×")
         if footer:
             lines.append("")
             lines.append(footer)
@@ -248,7 +247,7 @@ class TheVault(commands.Cog):
     async def vault_prefix(self, ctx, bet: int):
         await self._start(ctx, bet)
 
-    @app_commands.command(name="vault", description="Crack a 4-digit vault using Mastermind-style deduction. 6 attempts.")
+    @app_commands.command(name="vault", description="Crack a 4-digit vault using Mastermind-style deduction. 5 attempts.")
     @app_commands.describe(bet="Coins to risk")
     async def vault_slash(self, interaction: discord.Interaction, bet: int):
         await self._start(interaction, bet)

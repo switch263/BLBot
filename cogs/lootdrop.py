@@ -186,10 +186,10 @@ class LootDrop(commands.Cog):
                 item_name=item_name,
                 coins=coins,
                 color=color,
-                emoji=emoji,
-                slot=slot,
                 flavor=flavor,
                 is_mythic=(rarity_name == "Mythic"),
+                minted_by=user.display_name,
+                minted_at=datetime.utcnow().strftime("%Y-%m-%d"),
             )
             card_file = discord.File(buf, filename="lootcard.png")
             embed.set_image(url="attachment://lootcard.png")
