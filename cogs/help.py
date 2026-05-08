@@ -26,6 +26,7 @@ def _build_pages() -> list[discord.Embed]:
         "`/serverstats` - Server statistics\n"
         "`/whoami` - Your user info (ephemeral)\n"
         "`/channelinfo` - Channel info (ephemeral)\n"
+        "`/guildinfo` - Server info + bot reach (ephemeral)\n"
         "`/urban` - Urban Dictionary lookup\n"
         "`/xkcd` - Get an xkcd comic\n"
     ), inline=False)
@@ -94,6 +95,7 @@ def _build_pages() -> list[discord.Embed]:
         "`/blackjack` - Multi-player blackjack with buy-in lobby\n"
         "`/highlow` - Predict the next card, build streak multiplier\n"
         "`/vault` - Crack a 4-digit code, Mastermind-style deduction\n"
+        "`/vault_hard` - 5 digits from 1-9, 6 attempts, no bet cap\n"
         "`/slots` - Slot machine with weighted reels\n"
         "`/coinflip` - Heads or tails, double or nothing\n"
     ), inline=False)
@@ -151,6 +153,8 @@ def _build_pages() -> list[discord.Embed]:
     e8.add_field(name="Manage Coins", value=(
         "`/wallet` - Balance + stats across games\n"
         "`/gift` - Send coins to another user\n"
+        "`/burn` - Donate coins to the house (or `vanish:True` to destroy)\n"
+        "`/charity` - Disperse coins to random members of this channel\n"
         "`/richest` - Leaderboard & economy stats\n"
         "`/slots_leaderboard` - Top slot players\n"
     ), inline=False)

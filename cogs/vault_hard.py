@@ -11,33 +11,34 @@ from economy import get_coins, add_coins, deduct_coins, jail_message
 
 logger = logging.getLogger(__name__)
 
-CODE_LENGTH = 4
-DIGITS = [1, 2, 3, 4, 5, 6]
-MAX_ATTEMPTS = 5
-MAX_BET = 1_000_000
-MAX_PAYOUT = 10_000_000
+CODE_LENGTH = 5
+DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+MAX_ATTEMPTS = 6
 
-# Payout by attempts used (1-indexed). Attempts=1 means cracked on first guess (pure luck).
+# Payout by attempts used (1-indexed). 5-digit code from 1-9 with no repeats =
+# 9*8*7*6*5 = 15,120 possibilities, ~42x harder than the standard vault.
 PAYOUT_BY_ATTEMPT = {
-    1: 15.0,
-    2: 7.0,
-    3: 3.5,
-    4: 2.0,
-    5: 1.25,
+    1: 50.0,
+    2: 25.0,
+    3: 12.0,
+    4: 6.0,
+    5: 3.0,
+    6: 1.5,
 }
 
 SOLVE_FLAVOR = [
-    "🔓 **The vault hisses open.**",
-    "🔓 **Click. Click. Click. Click. THUNK.** Open.",
-    "🔓 **The tumblers align like the planets.**",
-    "🔓 **An ominous green light. The door swings wide.**",
+    "🔓 **The reinforced vault hisses open.**",
+    "🔓 **Tumblers scream. Plate shifts. THUNK.**",
+    "🔓 **The vault concedes. You've outsmarted the algorithm.**",
+    "🔓 **An ominous green light. The 12-inch door swings wide.**",
+    "🔓 **Even the security guard is impressed.**",
 ]
 
 FAIL_FLAVOR = [
-    "🚨 **FIVE STRIKES.** Thermite seals the vault. You flee with nothing.",
-    "🚨 **Biometric lock engages.** The code is burned. Lose bet.",
-    "🚨 **Security drones dispatched.** The vault laughs in binary.",
-    "🚨 **The vault changes its code every 5 attempts.** You are now locked out forever.",
+    "🚨 **SIX STRIKES.** Magnesium thermite welds the vault shut.",
+    "🚨 **Iris scanners, ankle monitors, drone strike. You lose everything.**",
+    "🚨 **The vault's neural net laughs. Code burned. Bet evaporated.**",
+    "🚨 **Lockdown. The walls slide in. You squeeze out empty-handed.**",
 ]
 
 
@@ -47,9 +48,8 @@ class VaultGame:
         self.user_id = user_id
         self.user_name = user_name
         self.bet = bet
-        # Code is 4 unique digits from 1-6
         self.code = random.sample(DIGITS, CODE_LENGTH)
-        self.attempts: list[tuple[list[int], str]] = []  # (guess, feedback_emoji_string)
+        self.attempts: list[tuple[list[int], str]] = []
         self.current: list[int] = []
         self.ended = False
 
@@ -134,16 +134,13 @@ class SubmitButton(discord.ui.Button):
         if solved:
             g.ended = True
             mult = PAYOUT_BY_ATTEMPT.get(attempts_used, PAYOUT_BY_ATTEMPT[MAX_ATTEMPTS])
-            raw_payout = int(g.bet * mult)
-            payout = min(raw_payout, MAX_PAYOUT)
-            capped = payout < raw_payout
+            payout = int(g.bet * mult)
             add_coins(g.guild_id, g.user_id, payout)
             for child in view.children:
                 child.disabled = True
-            cap_note = f" *(capped at {MAX_PAYOUT:,})*" if capped else ""
             footer = (
                 f"{random.choice(SOLVE_FLAVOR)}\n"
-                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{payout:,}** coins{cap_note} "
+                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{payout:,}** coins "
                 f"(net **+{payout - g.bet:,}**).\n"
                 f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
             )
@@ -166,14 +163,14 @@ class SubmitButton(discord.ui.Button):
 
 class VaultView(discord.ui.View):
     def __init__(self, cog, game: VaultGame):
-        super().__init__(timeout=300)
+        super().__init__(timeout=600)
         self.cog = cog
         self.game = game
-        # Discord caps action rows at 5 buttons each; with 6 digits we split 3+3.
-        half = len(DIGITS) // 2
-        for d in DIGITS[:half]:
+        # 9 digits split across 2 rows (5 + 4) so action-row width caps don't break it.
+        mid = (len(DIGITS) + 1) // 2
+        for d in DIGITS[:mid]:
             self.add_item(DigitButton(d, row=0))
-        for d in DIGITS[half:]:
+        for d in DIGITS[mid:]:
             self.add_item(DigitButton(d, row=1))
         self.undo = UndoButton()
         self.submit = SubmitButton()
@@ -181,22 +178,21 @@ class VaultView(discord.ui.View):
         self.add_item(self.submit)
 
     def _refresh(self):
-        # Nothing dynamic on buttons themselves, but we could update labels here if needed.
         pass
 
 
-class TheVault(commands.Cog):
+class TheVaultHard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.Cog.listener()
     async def on_ready(self):
-        logger.info("The Vault loaded.")
+        logger.info("The Vault (Hard) loaded.")
 
     def _render(self, g: VaultGame, footer: str | None = None) -> str:
         lines = [
-            f"🏦 **{g.user_name}'s Vault Heist** — bet **{g.bet}**",
-            f"Crack a **{CODE_LENGTH}-digit code** using digits **1-6** (no repeats). **{MAX_ATTEMPTS - len(g.attempts)}** attempts left.",
+            f"🏦💎 **{g.user_name}'s HARD-MODE Vault Heist** — bet **{g.bet:,}**",
+            f"Crack a **{CODE_LENGTH}-digit code** using digits **1-9** (no repeats). **{MAX_ATTEMPTS - len(g.attempts)}** attempts left.",
             f"🟢 = right digit, right position | 🟡 = right digit, wrong position | ⚫ = not in code",
             "",
         ]
@@ -205,13 +201,13 @@ class TheVault(commands.Cog):
             for i, (guess, fb) in enumerate(g.attempts, 1):
                 digits = " ".join(str(d) for d in guess)
                 lines.append(f"`{i}.` **{digits}** → {fb}")
-        # Current guess row
         if not g.ended:
             slots = [str(d) for d in g.current] + ["_"] * (CODE_LENGTH - len(g.current))
             lines.append("")
             lines.append(f"**Current guess:** `{' '.join(slots)}`")
             lines.append("")
-            lines.append(f"**Payouts:** 1 try→15× | 2→7× | 3→3.5× | 4→2× | 5→1.25× *(max payout {MAX_PAYOUT:,})*")
+            lines.append("**Payouts:** 1 try→50× | 2→25× | 3→12× | 4→6× | 5→3× | 6→1.5×")
+            lines.append("*No bet cap. No payout cap. May the math be kind.*")
         if footer:
             lines.append("")
             lines.append(footer)
@@ -236,10 +232,7 @@ class TheVault(commands.Cog):
             await reply(jmsg)
             return
         if bet <= 0:
-            await reply("Bet > 0 to crack the vault.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Max bet is **{MAX_BET:,}** coins. Payouts cap at **{MAX_PAYOUT:,}**.")
+            await reply("Bet > 0 to crack the hard vault.")
             return
         if get_coins(guild.id, user.id) < bet:
             await reply(f"Too broke. Balance: **{get_coins(guild.id, user.id):,}**")
@@ -250,16 +243,16 @@ class TheVault(commands.Cog):
         view = VaultView(self, game)
         await reply(self._render(game), view=view)
 
-    @commands.command(name="vault", aliases=["crack", "safecrack"])
+    @commands.command(name="vault_hard", aliases=["vaulthard", "vh", "hardcrack"])
     @commands.guild_only()
-    async def vault_prefix(self, ctx, bet: int):
+    async def vault_hard_prefix(self, ctx, bet: int):
         await self._start(ctx, bet)
 
-    @app_commands.command(name="vault", description="Crack a 4-digit vault using Mastermind-style deduction. 5 attempts.")
-    @app_commands.describe(bet=f"Coins to risk (max {MAX_BET:,})")
-    async def vault_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.command(name="vault_hard", description="Hard-mode vault: 5 digits from 1-9, 6 attempts. No bet cap.")
+    @app_commands.describe(bet="Coins to risk (no cap — go nuts)")
+    async def vault_hard_slash(self, interaction: discord.Interaction, bet: int):
         await self._start(interaction, bet)
 
 
 async def setup(bot):
-    await bot.add_cog(TheVault(bot))
+    await bot.add_cog(TheVaultHard(bot))
