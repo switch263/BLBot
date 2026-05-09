@@ -7,23 +7,23 @@ import os
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, get_house_id
 
 logger = logging.getLogger(__name__)
 
 CODE_LENGTH = 5
 DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9]
-MAX_ATTEMPTS = 6
+MAX_ATTEMPTS = 5
 
 # Payout by attempts used (1-indexed). 5-digit code from 1-9 with no repeats =
-# 9*8*7*6*5 = 15,120 possibilities, ~42x harder than the standard vault.
+# 9*8*7*6*5 = 15,120 possibilities. Only 5 attempts; on failure the full bet
+# is transferred to the house (not just deducted).
 PAYOUT_BY_ATTEMPT = {
-    1: 50.0,
-    2: 25.0,
-    3: 12.0,
-    4: 6.0,
-    5: 3.0,
-    6: 1.5,
+    1: 75.0,
+    2: 30.0,
+    3: 8.0,
+    4: 2.0,
+    5: 0.5,
 }
 
 SOLVE_FLAVOR = [
@@ -35,10 +35,10 @@ SOLVE_FLAVOR = [
 ]
 
 FAIL_FLAVOR = [
-    "🚨 **SIX STRIKES.** Magnesium thermite welds the vault shut.",
-    "🚨 **Iris scanners, ankle monitors, drone strike. You lose everything.**",
-    "🚨 **The vault's neural net laughs. Code burned. Bet evaporated.**",
-    "🚨 **Lockdown. The walls slide in. You squeeze out empty-handed.**",
+    "🚨 **THREE STRIKES.** Magnesium thermite welds the vault shut.",
+    "🚨 **Iris scanners, ankle monitors, drone strike. The house collects.**",
+    "🚨 **The vault's neural net laughs. Code burned. The house pockets your bet.**",
+    "🚨 **Lockdown. The walls slide in. The house takes everything.**",
 ]
 
 
@@ -146,12 +146,15 @@ class SubmitButton(discord.ui.Button):
             )
         elif attempts_used >= MAX_ATTEMPTS:
             g.ended = True
+            # Bet was already deducted at game start; on hard-mode failure,
+            # the house pockets it instead of letting it vanish.
+            add_coins(g.guild_id, get_house_id(), g.bet)
             for child in view.children:
                 child.disabled = True
             code_str = "".join(str(d) for d in g.code)
             footer = (
                 f"{random.choice(FAIL_FLAVOR)}\n"
-                f"The code was **{code_str}**. Lost **{g.bet:,}** coins.\n"
+                f"The code was **{code_str}**. **{g.bet:,}** coins transferred to the house.\n"
                 f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
             )
         else:
@@ -206,8 +209,8 @@ class TheVaultHard(commands.Cog):
             lines.append("")
             lines.append(f"**Current guess:** `{' '.join(slots)}`")
             lines.append("")
-            lines.append("**Payouts:** 1 try→50× | 2→25× | 3→12× | 4→6× | 5→3× | 6→1.5×")
-            lines.append("*No bet cap. No payout cap. May the math be kind.*")
+            lines.append("**Payouts:** 1 try→75× | 2→30× | 3→8×")
+            lines.append("*No bet cap. No payout cap. **Lose all 3 → bet goes to the house.***")
         if footer:
             lines.append("")
             lines.append(footer)
@@ -248,7 +251,7 @@ class TheVaultHard(commands.Cog):
     async def vault_hard_prefix(self, ctx, bet: int):
         await self._start(ctx, bet)
 
-    @app_commands.command(name="vault_hard", description="Hard-mode vault: 5 digits from 1-9, 6 attempts. No bet cap.")
+    @app_commands.command(name="vault_hard", description="Hard-mode vault: 5 digits 1-9, only 3 attempts, lose = bet goes to the house.")
     @app_commands.describe(bet="Coins to risk (no cap — go nuts)")
     async def vault_hard_slash(self, interaction: discord.Interaction, bet: int):
         await self._start(interaction, bet)

@@ -95,7 +95,7 @@ def _build_pages() -> list[discord.Embed]:
         "`/blackjack` - Multi-player blackjack with buy-in lobby\n"
         "`/highlow` - Predict the next card, build streak multiplier\n"
         "`/vault` - Crack a 4-digit code, Mastermind-style deduction\n"
-        "`/vault_hard` - 5 digits from 1-9, 6 attempts, no bet cap\n"
+        "`/vault_hard` - 5 digits from 1-9, **3 attempts**, lose = bet goes to the house\n"
         "`/slots` - Slot machine with weighted reels\n"
         "`/coinflip` - Heads or tails, double or nothing\n"
     ), inline=False)

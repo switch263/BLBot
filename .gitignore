@@ -32,3 +32,6 @@ Thumbs.db
 
 # GSD planning docs (local only — not committed)
 .planning/
+
+# Generated lootdrop card samples (run cogs/lootdrop_card.py to refresh)
+samples/

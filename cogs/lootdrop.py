@@ -7,19 +7,22 @@ import sqlite3
 from datetime import date, datetime, timedelta
 import logging
 import economy
-from cogs.lootdrop_card import render_card
+from cogs.lootdrop_card import render_card, pick_species, _OBJECT_DISPLAY_NAMES
 
 logger = logging.getLogger(__name__)
 
 # Rarity tiers: (name, color, coin_range, weight, emoji)
 # Floor 10k (Common low), ceiling 10M (Mythic high). Each tier roughly 3-4x the previous.
 RARITIES = [
-    ("Common",    discord.Color.light_grey(),           (10_000,     50_000),    40, "⬜"),
-    ("Uncommon",  discord.Color.green(),                (50_000,     200_000),   30, "🟩"),
-    ("Rare",      discord.Color.blue(),                 (200_000,    750_000),   18, "🟦"),
-    ("Epic",      discord.Color.purple(),               (750_000,    2_000_000),  8, "🟪"),
-    ("Legendary", discord.Color.gold(),                 (2_000_000,  5_000_000),  3, "🟨"),
-    ("Mythic",    discord.Color.from_rgb(255, 50, 200), (5_000_000,  10_000_000), 1, "🌈"),
+    ("Common",    discord.Color.light_grey(),           (10_000,      50_000),     40, "⬜"),
+    ("Uncommon",  discord.Color.green(),                (50_000,      200_000),    30, "🟩"),
+    ("Rare",      discord.Color.blue(),                 (200_000,     750_000),    18, "🟦"),
+    ("Epic",      discord.Color.purple(),               (750_000,     2_000_000),   8, "🟪"),
+    ("Legendary", discord.Color.gold(),                 (2_000_000,   5_000_000),   3, "🟨"),
+    ("Mythic",    discord.Color.from_rgb(255, 50, 200), (5_000_000,   10_000_000),  1, "🌈"),
+    # Divine — once-in-a-blue-moon tier. Always renders the QR-code "Forbidden
+    # Codex" card (which scans to a friendly Rickroll). Weight 1 keeps it rare.
+    ("Divine",    discord.Color.from_rgb(255, 240, 200), (100_000_000, 150_000_000), 1, "✨"),
 ]
 
 ITEM_PREFIXES = [
@@ -58,6 +61,29 @@ ITEM_SUFFIXES = [
     "of the Side Quest", "of Mid Vibes Only",
     "of Suspicious Accuracy", "of the Speedrun Skip",
     "of Dollar-Store Magic", "of Plot Armor",
+]
+
+# Snarky one-liners shown under any drop worth less than 100,000 coins —
+# basically the bot pointing and laughing when you roll the bottom of the barrel.
+LOW_LOOT_SNARK = [
+    "Haha, gotcha! Thought you'd get a good loot. I think not.",
+    "Don't spend it all in one place. Actually, you couldn't even if you tried.",
+    "The loot gods have spoken. They said: lol, no.",
+    "Imagine being you opening this. I am imagining it. It's funny.",
+    "I would say better luck next time, but let's be real.",
+    "This is the kind of drop that builds character. A lot of character.",
+    "Pity coins, basically. Here you go, sport.",
+    "RNG looked at your wallet and decided: you've had enough.",
+    "Congrats! You played yourself.",
+    "That'll buy you about half a sad sandwich. Enjoy.",
+    "Rolled the dice and got a participation trophy.",
+    "I dropped this on purpose, just for you. Out of spite.",
+    "Statistically, this is the worst possible outcome. Stats don't lie.",
+    "You opened the loot. The loot opened nothing back.",
+    "Some people get gold. You get this. That's the deal.",
+    "I'd refund this but the universe doesn't accept returns.",
+    "Hey, somebody's gotta roll the bad ones. Today, that's you.",
+    "This drop personally insulted me on the way out.",
 ]
 
 FLAVOR_TEXT = [
@@ -131,19 +157,34 @@ class LootDrop(commands.Cog):
             logger.error(f"Database error checking loot cooldown: {e}")
             return False
 
-    def _generate_loot(self) -> tuple[str, str, int, discord.Color, str]:
-        """Generate a random loot item. Returns (rarity_name, item_name, coins, color, emoji)."""
+    def _generate_loot(self) -> tuple[str, str, int, discord.Color, str, str]:
+        """Generate a random loot item. Returns (rarity_name, item_name, coins, color, emoji, species).
+
+        The species drives both the card art and the noun in the item name, so
+        the title and the picture always agree."""
         weights = [r[3] for r in RARITIES]
         rarity = random.choices(RARITIES, weights=weights, k=1)[0]
         rarity_name, color, coin_range, _, emoji = rarity
 
         coins = random.randint(coin_range[0], coin_range[1])
-        prefix = random.choice(ITEM_PREFIXES)
-        obj = random.choice(ITEM_OBJECTS)
-        suffix = random.choice(ITEM_SUFFIXES)
-        item_name = f"{prefix} {obj} {suffix}"
+        # Divine tier always rolls the Forbidden Codex (QR card); other tiers
+        # pick a random object from the standard pool.
+        if rarity_name == "Divine":
+            species = "qr_rickroll"
+            item_name = "Forbidden Codex"
+        else:
+            species = pick_species()
+            prefix = random.choice(ITEM_PREFIXES)
+            suffix = random.choice(ITEM_SUFFIXES)
+            species_word = _OBJECT_DISPLAY_NAMES.get(species,
+                                                      species.replace("_", " ").title())
+            # Match render_card's grammar fix — drop a leading "The" so the
+            # nickname-prepended title doesn't double-article ("the The Goat").
+            if species_word.lower().startswith("the "):
+                species_word = species_word[4:]
+            item_name = f"{prefix} {species_word} {suffix}"
 
-        return rarity_name, item_name, coins, color, emoji
+        return rarity_name, item_name, coins, color, emoji, species
 
     async def _open_loot(
         self, guild_id: int, user: discord.Member
@@ -163,15 +204,19 @@ class LootDrop(commands.Cog):
             )
             return embed, None
 
-        rarity_name, item_name, coins, color, emoji = self._generate_loot()
+        rarity_name, item_name, coins, color, emoji, species = self._generate_loot()
         economy.add_coins(guild_id, user.id, coins)
 
         flavor = random.choice(FLAVOR_TEXT)
         slot = _current_slot()
 
+        description = f"**{item_name}**"
+        if coins < 100_000:
+            description += f"\n*{random.choice(LOW_LOOT_SNARK)}*"
+
         embed = discord.Embed(
             title=f"{emoji} {rarity_name} Loot Drop! {emoji}",
-            description=f"**{item_name}**",
+            description=description,
             color=color,
         )
         embed.add_field(name="Next Drop", value=f"<t:{next_reset_ts}:R>", inline=True)
@@ -190,6 +235,7 @@ class LootDrop(commands.Cog):
                 is_mythic=(rarity_name == "Mythic"),
                 minted_by=user.display_name,
                 minted_at=datetime.utcnow().strftime("%Y-%m-%d"),
+                species=species,
             )
             card_file = discord.File(buf, filename="lootcard.png")
             embed.set_image(url="attachment://lootcard.png")
