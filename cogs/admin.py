@@ -52,9 +52,14 @@ class Admin(commands.Cog):
 
     @commands.command(name="unjail", aliases=["pardon"])
     async def unjail(self, ctx, user: discord.Member):
-        """Admin command to release a user from casino jail. Only works in the admin channel."""
-        if ctx.channel.id != ADMIN_CHANNEL_ID:
-            return
+        """Release a user from casino jail. Allowed in the admin channel, OR anywhere
+        for a member with the `Admin` role."""
+        in_admin_channel = ctx.channel.id == ADMIN_CHANNEL_ID
+        has_admin_role = isinstance(ctx.author, discord.Member) and any(
+            r.name == "Admin" for r in ctx.author.roles
+        )
+        if not (in_admin_channel or has_admin_role):
+            return  # Silently ignore — same gate behavior as the other admin commands.
 
         guild_id = ctx.guild.id
         was_jailed = economy.unjail_user(guild_id, user.id)
