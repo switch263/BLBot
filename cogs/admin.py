@@ -50,7 +50,7 @@ class Admin(commands.Cog):
 
         logger.info(f"Admin {ctx.author} granted {amount} coins to {user} in guild {guild_id}")
 
-    @commands.command(name="unjail", aliases=["bail", "pardon"])
+    @commands.command(name="unjail", aliases=["pardon"])
     async def unjail(self, ctx, user: discord.Member):
         """Admin command to release a user from casino jail. Only works in the admin channel."""
         if ctx.channel.id != ADMIN_CHANNEL_ID:
@@ -70,6 +70,40 @@ class Admin(commands.Cog):
             logger.info(f"Admin {ctx.author} unjailed {user} in guild {guild_id}")
         else:
             await ctx.send(f"{user.display_name} wasn't in jail.")
+
+    @commands.command(name="removecoins", aliases=["takecoins", "deductcoins", "subcoins"])
+    async def remove_coins(self, ctx, user: discord.Member, amount: int):
+        """Admin command to deduct coins from a user. Only works in the admin channel.
+        Clamps at 0 — never produces a negative balance."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return
+
+        if amount <= 0:
+            await ctx.send("Amount must be positive!")
+            return
+
+        guild_id = ctx.guild.id
+        before = economy.get_coins(guild_id, user.id)
+        economy.fine_user(guild_id, user.id, amount)
+        after = economy.get_coins(guild_id, user.id)
+        actually_removed = before - after
+
+        embed = discord.Embed(
+            title="💸 Coins Removed",
+            description=f"{ctx.author.mention} removed **{actually_removed:,}** coins from {user.mention}.",
+            color=discord.Color.dark_red(),
+        )
+        if actually_removed < amount:
+            embed.add_field(
+                name="Note",
+                value=f"Requested {amount:,}, but balance was only {before:,} — clamped at 0.",
+                inline=False,
+            )
+        embed.add_field(name="New Balance", value=f"{after:,} coins")
+        embed.set_footer(text=f"Admin: {ctx.author.display_name}")
+        await ctx.send(embed=embed)
+
+        logger.info(f"Admin {ctx.author} removed {actually_removed} coins from {user} in guild {guild_id}")
 
 
 async def setup(bot):

@@ -22,8 +22,6 @@ class Gift(commands.Cog):
             return discord.Embed(description="You can't gift coins to a bot!", color=discord.Color.red())
         if amount < 1:
             return discord.Embed(description="You must gift at least **1** coin!", color=discord.Color.red())
-        if amount > 1000000:
-            return discord.Embed(description="That's too generous! Max gift is **1,000,000** coins.", color=discord.Color.red())
 
         balance = economy.get_coins(guild_id, sender.id)
         if balance < amount:

@@ -115,18 +115,25 @@ class CasinoRoulette(commands.Cog):
         await self.run_bet(interaction, bet_type, amount)
 
     # --- POT ---
+    def _format_pot_message(self, pot: int, slash: bool) -> str:
+        prefix = "/" if slash else "!"
+        return (
+            f"💰 **Current pot:** **{pot:,}** coins.\n"
+            f"**Ways to win it:**\n"
+            f"• 🟢 Hit **green** on `{prefix}bet` — claim the whole pot.\n"
+            f"• 🏦 Rob the house with `{prefix}heist @<bot>` — 1-in-100, walks off with the entire vault."
+        )
+
     @commands.command(name="pot")
     @commands.guild_only()
     async def pot_prefix(self, ctx):
         pot = get_pot(ctx.guild.id)
-        await ctx.send(f"💰 **Current pot:** **{pot}** coins. Hit 🟢 green on `!bet` to claim it all.")
+        await ctx.send(self._format_pot_message(pot, slash=False))
 
-    @app_commands.command(name="pot", description="Show the current roulette house pot")
+    @app_commands.command(name="pot", description="Show the current roulette house pot and how to win it")
     async def pot_slash(self, interaction: discord.Interaction):
         pot = get_pot(interaction.guild_id)
-        await interaction.response.send_message(
-            f"💰 **Current pot:** **{pot}** coins. Hit 🟢 green on `/bet` to claim it all."
-        )
+        await interaction.response.send_message(self._format_pot_message(pot, slash=True))
 
 async def setup(bot):
     await bot.add_cog(CasinoRoulette(bot))
