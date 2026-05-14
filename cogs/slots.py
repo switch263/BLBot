@@ -136,13 +136,38 @@ class Slots(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name="🎡 Roulette",
+            name="🎡 Roulette (/bet)",
             value=f"Plays: **{wallet['roulette_plays']}**\nWins: **{wallet['roulette_wins']}**",
             inline=True,
         )
         embed.add_field(
             name="🔫 Russian Roulette",
             value=f"Games: **{wallet['rr_plays']}**\nWins: **{wallet['rr_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🏦 Vault (/vault)",
+            value=f"Plays: **{wallet['vault_plays']}**\nCracked: **{wallet['vault_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🔒 Vault Hard (/vault_hard)",
+            value=f"Plays: **{wallet['vault_hard_plays']}**\nCracked: **{wallet['vault_hard_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🃏 Blackjack",
+            value=f"Rounds: **{wallet['blackjack_plays']}**\nWins: **{wallet['blackjack_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="🆙 Higher-Lower",
+            value=f"Plays: **{wallet['highlow_plays']}**\nWins: **{wallet['highlow_wins']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="💼 Pawn Shop",
+            value=f"Plays: **{wallet['pawnshop_plays']}**\nWins: **{wallet['pawnshop_wins']}**",
             inline=True,
         )
         embed.add_field(

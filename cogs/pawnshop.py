@@ -7,7 +7,7 @@ import os
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, record_pawnshop
 
 logger = logging.getLogger(__name__)
 
@@ -131,9 +131,10 @@ class PawnView(discord.ui.View):
         g.ended = True
         payout = int(g.bet * g.current_mult)
         add_coins(g.guild_id, g.user_id, payout)
+        net = payout - g.bet
+        record_pawnshop(g.guild_id, g.user_id, won=net > 0)
         for child in self.children:
             child.disabled = True
-        net = payout - g.bet
         final = (
             f"🤝 **Deal.** The broker counts out **{payout}** coins.\n"
             f"Net: **{'+' if net >= 0 else ''}{net}**.\n"
@@ -153,6 +154,7 @@ class PawnView(discord.ui.View):
         if g.round >= MAX_ROUNDS:
             # Walk away from final offer
             g.ended = True
+            record_pawnshop(g.guild_id, g.user_id, won=False)
             for child in self.children:
                 child.disabled = True
             walkaway = random.choice(WALK_AWAY_FLAVOR)

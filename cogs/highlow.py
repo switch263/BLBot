@@ -7,7 +7,7 @@ import os
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, record_highlow
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,7 @@ class CashOutButton(discord.ui.Button):
         payout = int(g.bet * g.multiplier)
         add_coins(g.guild_id, g.user_id, payout)
         net = payout - g.bet
+        record_highlow(g.guild_id, g.user_id, won=net > 0)
         for child in view.children:
             child.disabled = True
         footer = (
@@ -181,6 +182,7 @@ class HigherOrLower(commands.Cog):
 
         # Wrong
         g.ended = True
+        record_highlow(g.guild_id, g.user_id, won=False)
         g.log.append(
             f"{suit_wrap(old_rank_idx, old_suit)} → **{'HIGHER' if guessed_higher else 'LOWER'}** → "
             f"{suit_wrap(new_rank_idx, new_suit)} ❌ **BUST**{tie_note}"

@@ -132,6 +132,16 @@ def _init_db():
                 ("den_wins", "INTEGER DEFAULT 0"),
                 ("bot_heist_offenses", "INTEGER DEFAULT 0"),
                 ("last_bail_received_ts", "REAL DEFAULT 0"),
+                ("vault_plays", "INTEGER DEFAULT 0"),
+                ("vault_wins", "INTEGER DEFAULT 0"),
+                ("vault_hard_plays", "INTEGER DEFAULT 0"),
+                ("vault_hard_wins", "INTEGER DEFAULT 0"),
+                ("blackjack_plays", "INTEGER DEFAULT 0"),
+                ("blackjack_wins", "INTEGER DEFAULT 0"),
+                ("highlow_plays", "INTEGER DEFAULT 0"),
+                ("highlow_wins", "INTEGER DEFAULT 0"),
+                ("pawnshop_plays", "INTEGER DEFAULT 0"),
+                ("pawnshop_wins", "INTEGER DEFAULT 0"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE wallets ADD COLUMN {col} {decl}")
@@ -175,6 +185,11 @@ _EMPTY_WALLET = {
     "rr_plays": 0, "rr_wins": 0,
     "heists_attempted": 0, "heists_succeeded": 0,
     "den_plays": 0, "den_wins": 0,
+    "vault_plays": 0, "vault_wins": 0,
+    "vault_hard_plays": 0, "vault_hard_wins": 0,
+    "blackjack_plays": 0, "blackjack_wins": 0,
+    "highlow_plays": 0, "highlow_wins": 0,
+    "pawnshop_plays": 0, "pawnshop_wins": 0,
 }
 
 
@@ -190,7 +205,10 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
             cursor = conn.execute(
                 "SELECT coins, total_won, total_lost, spins, jackpots, "
                 "roulette_plays, roulette_wins, rr_plays, rr_wins, "
-                "heists_attempted, heists_succeeded, den_plays, den_wins "
+                "heists_attempted, heists_succeeded, den_plays, den_wins, "
+                "vault_plays, vault_wins, vault_hard_plays, vault_hard_wins, "
+                "blackjack_plays, blackjack_wins, highlow_plays, highlow_wins, "
+                "pawnshop_plays, pawnshop_wins "
                 "FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id)
             )
@@ -202,6 +220,11 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
                 "rr_plays": row[7], "rr_wins": row[8],
                 "heists_attempted": row[9], "heists_succeeded": row[10],
                 "den_plays": row[11], "den_wins": row[12],
+                "vault_plays": row[13], "vault_wins": row[14],
+                "vault_hard_plays": row[15], "vault_hard_wins": row[16],
+                "blackjack_plays": row[17], "blackjack_wins": row[18],
+                "highlow_plays": row[19], "highlow_wins": row[20],
+                "pawnshop_plays": row[21], "pawnshop_wins": row[22],
             }
     except sqlite3.Error as e:
         logger.error(f"Database error getting wallet: {e}")
@@ -324,6 +347,21 @@ def get_leaderboard(guild_id: int, limit: int = 10) -> list:
         return []
 
 
+def get_total_economy(guild_id: int) -> int:
+    """Sum of all coins across every wallet in the guild — players AND the house.
+    Used by callers that need to size something against the total money in circulation."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(coins), 0) FROM wallets WHERE guild_id = ?",
+                (guild_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+    except sqlite3.Error as e:
+        logger.error(f"Database error reading total economy: {e}")
+        return 0
+
+
 def get_server_stats(guild_id: int) -> dict:
     """Get aggregate economy stats for a server. Excludes the house (bot) wallet."""
     try:
@@ -390,6 +428,46 @@ def record_rr(guild_id: int, user_id: int, won: bool):
             conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error recording Russian Roulette play: {e}")
+
+
+def _record_game(guild_id: int, user_id: int, plays_col: str, wins_col: str, won: bool):
+    """Generic stat bump used by the per-game record_* wrappers below."""
+    get_wallet(guild_id, user_id)
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                f"UPDATE wallets SET {plays_col} = {plays_col} + 1, "
+                f"{wins_col} = {wins_col} + ? WHERE guild_id = ? AND user_id = ?",
+                (1 if won else 0, guild_id, user_id),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error recording {plays_col} stat: {e}")
+
+
+def record_vault(guild_id: int, user_id: int, won: bool):
+    """Record a Vault Heist play and win (if applicable)."""
+    _record_game(guild_id, user_id, "vault_plays", "vault_wins", won)
+
+
+def record_vault_hard(guild_id: int, user_id: int, won: bool):
+    """Record a Vault Hard play and win (if applicable)."""
+    _record_game(guild_id, user_id, "vault_hard_plays", "vault_hard_wins", won)
+
+
+def record_blackjack(guild_id: int, user_id: int, won: bool):
+    """Record a Blackjack play and win (if applicable)."""
+    _record_game(guild_id, user_id, "blackjack_plays", "blackjack_wins", won)
+
+
+def record_highlow(guild_id: int, user_id: int, won: bool):
+    """Record a High-Low play and win (if applicable)."""
+    _record_game(guild_id, user_id, "highlow_plays", "highlow_wins", won)
+
+
+def record_pawnshop(guild_id: int, user_id: int, won: bool):
+    """Record a Pawn Shop play and win (if applicable)."""
+    _record_game(guild_id, user_id, "pawnshop_plays", "pawnshop_wins", won)
 
 
 def record_heist(guild_id: int, user_id: int, succeeded: bool):
@@ -507,11 +585,12 @@ def bail_cooldown_remaining(guild_id: int, user_id: int) -> int:
 def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
     """Atomically pay bail to release a jailed user. Bail money goes to the house.
 
+    Self-bail IS allowed at this layer — the caller is responsible for any
+    "only-self-when-jailed" policy on top.
+
     Returns a dict with `ok` (bool) and either `amount`/`reason`/`channel_id` on success
     or `error` describing the failure path. Caller is responsible for messaging."""
     import time as _t
-    if jailed_user_id == payer_user_id:
-        return {"ok": False, "error": "self"}
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")

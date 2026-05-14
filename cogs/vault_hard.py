@@ -7,7 +7,7 @@ import os
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message, get_house_id
+from economy import get_coins, add_coins, deduct_coins, jail_message, get_house_id, record_vault_hard
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,7 @@ class SubmitButton(discord.ui.Button):
             mult = PAYOUT_BY_ATTEMPT.get(attempts_used, PAYOUT_BY_ATTEMPT[MAX_ATTEMPTS])
             payout = int(g.bet * mult)
             add_coins(g.guild_id, g.user_id, payout)
+            record_vault_hard(g.guild_id, g.user_id, won=True)
             for child in view.children:
                 child.disabled = True
             footer = (
@@ -149,6 +150,7 @@ class SubmitButton(discord.ui.Button):
             # Bet was already deducted at game start; on hard-mode failure,
             # the house pockets it instead of letting it vanish.
             add_coins(g.guild_id, get_house_id(), g.bet)
+            record_vault_hard(g.guild_id, g.user_id, won=False)
             for child in view.children:
                 child.disabled = True
             code_str = "".join(str(d) for d in g.code)

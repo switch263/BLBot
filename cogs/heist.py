@@ -135,6 +135,29 @@ BAIL_PCT_MAX = 1.00
 BAIL_REPEAT_STEP = 0.25  # +25% per prior offense beyond the first
 BAIL_REPEAT_CAP = 3.0    # 3× the base bail at most
 
+# Hard ceiling — bail is capped at the LOWER of:
+#   - BAIL_ECONOMY_CAP_PCT × the guild's total wallet coins (players + house), and
+#   - BAIL_HARD_CAP (absolute ceiling).
+# Stops repeat-offender bails from becoming unpayable in either a rich server
+# (cap kicks in at 100M) or a small one (cap kicks in at 25% of all coins).
+BAIL_ECONOMY_CAP_PCT = 0.25
+BAIL_HARD_CAP = 100_000_000
+
+# Accomplices are slippery — when a bot heist fails, the accomplice (NOT the
+# thief) bolts and avoids jail with this probability. Encourages bringing one.
+ACCOMPLICE_ESCAPE_RATE = 0.95
+
+ACCOMPLICE_ESCAPE_FLAVOR = [
+    "{accomplice} bolted through the kitchen and was out a side window before the bouncers turned the corner.",
+    "{accomplice} ducked into a janitor closet, swapped jackets with a mop, and walked out whistling.",
+    "{accomplice} blended into a passing bachelorette party and was three blocks away before anyone noticed.",
+    "{accomplice} slipped a $20 to a cocktail waitress and got escorted out the staff entrance.",
+    "{accomplice} climbed into a laundry cart and rolled to freedom. Smelled like towels for a week.",
+    "{accomplice} simply walked. Calmly. Out the front door. Nobody questions confidence.",
+    "{accomplice} faked a heart attack near the valet stand, hopped in their own car during the chaos, and peeled out.",
+    "{accomplice} ghosted before security even hit the alarm. They were never even there. Allegedly.",
+]
+
 # How often the release-message loop scans for expired sentences.
 RELEASE_SCAN_INTERVAL_SECONDS = 30
 
@@ -357,10 +380,20 @@ class _ExtendTierButton(discord.ui.Button):
         if guild is None:
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
-        text = await self.cog._do_extend_jail(guild, interaction.user, self.target, self.hours)
+        ok, text = await self.cog._do_extend_jail(guild, interaction.user, self.target, self.hours)
         for child in self.view.children:
             child.disabled = True
-        await interaction.response.edit_message(content=text, view=self.view)
+        # Successful extensions need a public announcement so the target (and channel)
+        # see what happened — the picker itself is ephemeral, hidden from everyone else.
+        # Failures stay ephemeral to avoid leaking "X is broke" to the whole channel.
+        if ok:
+            await interaction.response.edit_message(content="✅ Extension applied — see the channel.", view=self.view)
+            try:
+                await interaction.followup.send(text)
+            except discord.HTTPException:
+                pass
+        else:
+            await interaction.response.edit_message(content=text, view=self.view)
         self.view.stop()
 
 
@@ -406,7 +439,11 @@ class Heist(commands.Cog):
             f"• A friend can **`/bail`** you out (once per week). Bail scales with the vault — and gets steeper every time you re-offend.\n"
         )
         if accomplice:
-            desc += f"• Your accomplice {accomplice.mention} pulls **their own random sentence** and **their own bail** if you flop.\n"
+            esc_pct = int(ACCOMPLICE_ESCAPE_RATE * 100)
+            desc += (
+                f"• Your accomplice {accomplice.mention} has a **{esc_pct}% chance to slip the bust** if it goes south — "
+                f"the remaining {100 - esc_pct}% they catch their own random sentence and bail.\n"
+            )
         desc += "\nThe house almost always wins. Are you sure?"
         return discord.Embed(title="🏦 Robbing the House — Are You Sure?", description=desc, color=discord.Color.orange())
 
@@ -416,11 +453,16 @@ class Heist(commands.Cog):
             return 1.0
         return min(BAIL_REPEAT_CAP, 1.0 + BAIL_REPEAT_STEP * (offenses - 1))
 
-    def _roll_bail(self, vault_size: int, offenses: int) -> int:
-        """Bail = random 25-100% of the vault at heist time × repeat multiplier."""
+    def _roll_bail(self, guild_id: int, vault_size: int, offenses: int) -> int:
+        """Bail = random 25-100% of the vault × repeat multiplier, then capped at
+        the LOWER of BAIL_HARD_CAP and BAIL_ECONOMY_CAP_PCT × total guild economy."""
         pct = random.uniform(BAIL_PCT_MIN, BAIL_PCT_MAX)
-        amount = int(vault_size * pct * self._bail_multiplier(offenses))
-        return max(1, amount)
+        rolled = int(vault_size * pct * self._bail_multiplier(offenses))
+        econ_cap = int(economy.get_total_economy(guild_id) * BAIL_ECONOMY_CAP_PCT)
+        effective_cap = BAIL_HARD_CAP
+        if econ_cap > 0:
+            effective_cap = min(effective_cap, econ_cap)
+        return max(1, min(rolled, effective_cap))
 
     def _roll_jail_seconds(self) -> int:
         return random.randint(BOT_HEIST_JAIL_MIN_SECONDS, BOT_HEIST_JAIL_MAX_SECONDS)
@@ -448,7 +490,7 @@ class Heist(commands.Cog):
         # both scaled by their own prior bot-heist offenses.
         thief_offenses = economy.increment_bot_heist_offenses(guild_id, thief.id)
         thief_seconds = self._roll_jail_seconds()
-        thief_bail = self._roll_bail(victim_coins, thief_offenses)
+        thief_bail = self._roll_bail(guild_id, victim_coins, thief_offenses)
         economy.jail_user(
             guild_id, thief.id, thief_seconds,
             reason="Attempted to rob the house",
@@ -459,23 +501,34 @@ class Heist(commands.Cog):
         msg = random.choice(BOT_FAIL_MESSAGES).format(thief=thief.mention, hours=thief_hours)
         msg += f"\n\n💰 Bail set at **{thief_bail:,} coins** (offense #{thief_offenses}). Use the buttons below — or `/bail` — once per week, per inmate."
 
+        # Accomplice: 95% chance to slip out of the bust entirely — no jail, no
+        # offense bump, no bail. Only the thief eats the full consequence in that case.
+        accomplice_jailed = False
         accomplice_bail = 0
         if accomplice:
-            acc_offenses = economy.increment_bot_heist_offenses(guild_id, accomplice.id)
-            acc_seconds = self._roll_jail_seconds()
-            accomplice_bail = self._roll_bail(victim_coins, acc_offenses)
-            economy.jail_user(
-                guild_id, accomplice.id, acc_seconds,
-                reason="Accomplice in house robbery",
-                bail_amount=accomplice_bail, channel_id=channel_id,
-            )
-            acc_hours = max(1, round(acc_seconds / 3600))
-            msg += (
-                f"\n\n{accomplice.mention} caught their own **{acc_hours}-hour** sentence "
-                f"(offense #{acc_offenses}). Bail: **{accomplice_bail:,} coins**."
-            )
+            if random.random() < ACCOMPLICE_ESCAPE_RATE:
+                escape_line = random.choice(ACCOMPLICE_ESCAPE_FLAVOR).format(accomplice=accomplice.mention)
+                msg += f"\n\n🏃 {escape_line} **{accomplice.display_name}** walks free."
+            else:
+                acc_offenses = economy.increment_bot_heist_offenses(guild_id, accomplice.id)
+                acc_seconds = self._roll_jail_seconds()
+                accomplice_bail = self._roll_bail(guild_id, victim_coins, acc_offenses)
+                economy.jail_user(
+                    guild_id, accomplice.id, acc_seconds,
+                    reason="Accomplice in house robbery",
+                    bail_amount=accomplice_bail, channel_id=channel_id,
+                )
+                accomplice_jailed = True
+                acc_hours = max(1, round(acc_seconds / 3600))
+                msg += (
+                    f"\n\n{accomplice.mention} caught their own **{acc_hours}-hour** sentence "
+                    f"(offense #{acc_offenses}). Bail: **{accomplice_bail:,} coins**."
+                )
         embed = discord.Embed(title="🚔 CAUGHT ROBBING THE HOUSE", description=msg, color=discord.Color.dark_red())
-        view = JailActionView(self, guild_id, thief, thief_bail, accomplice, accomplice_bail)
+        # Only attach an accomplice row of bail/extend buttons if the accomplice
+        # actually got jailed; otherwise there's no one to bail.
+        view_accomplice = accomplice if accomplice_jailed else None
+        view = JailActionView(self, guild_id, thief, thief_bail, view_accomplice, accomplice_bail)
         return embed, view
 
     async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None) -> tuple[discord.Embed, discord.ui.View | None]:
@@ -661,11 +714,14 @@ class Heist(commands.Cog):
 
     async def _do_bail(self, guild: discord.Guild, payer: discord.Member, jailed: discord.Member) -> str:
         if jailed is None:
-            return "Usage: `!bail @user` — pay someone else's bail to spring them out of casino jail."
+            return "Usage: `!bail @user` — pay someone's bail to spring them out of casino jail. If you're jailed, you can only bail yourself."
         if jailed.bot:
             return "The house doesn't accept bail for itself or its bouncers."
-        if jailed.id == payer.id:
-            return "🚫 You can't bail yourself out. That's not how bail works."
+        # Rule: a jailed user may bail ONLY themselves out, not anyone else.
+        payer_jailed = economy.jail_remaining(guild.id, payer.id) > 0
+        is_self = jailed.id == payer.id
+        if payer_jailed and not is_self:
+            return "🚫 You're in jail. You can only bail **yourself** out — not anyone else. Make some calls."
 
         result = economy.pay_bail(guild.id, jailed.id, payer.id)
         if result["ok"]:
@@ -687,8 +743,6 @@ class Heist(commands.Cog):
             return f"⏳ **{jailed.display_name}** was bailed out too recently. They're eligible again in **{self._format_duration(cd)}**."
         if err == "broke":
             return f"💸 You'd need **{result.get('need', 0):,} coins** to post bail. You have **{result.get('have', 0):,}**."
-        if err == "self":
-            return "🚫 You can't bail yourself out."
         return "⚠️ Bail attempt failed (database error). Try again in a moment."
 
     @commands.command(name="bail")
@@ -709,15 +763,16 @@ class Heist(commands.Cog):
     def _extend_options_summary(self) -> str:
         return ", ".join(f"+{h}h = **{c:,}**" for h, c in sorted(EXTEND_OPTIONS.items()))
 
-    async def _do_extend_jail(self, guild: discord.Guild, payer: discord.Member, target: discord.Member, hours: int) -> str:
+    async def _do_extend_jail(self, guild: discord.Guild, payer: discord.Member, target: discord.Member, hours: int) -> tuple[bool, str]:
+        """Run an extension attempt. Returns (succeeded, message)."""
         if target is None:
-            return f"Usage: `!extendjail @user <hours>` — options: {self._extend_options_summary()}."
+            return False, f"Usage: `!extendjail @user <hours>` — options: {self._extend_options_summary()}."
         if target.bot:
-            return "You can't extend a bot's sentence. They have nothing but time anyway."
+            return False, "You can't extend a bot's sentence. They have nothing but time anyway."
         if target.id == payer.id:
-            return "🚫 You can't extend your own sentence. Even Houdini didn't try that."
+            return False, "🚫 You can't extend your own sentence. Even Houdini didn't try that."
         if hours not in EXTEND_OPTIONS:
-            return f"Pick one of the preset tiers: {self._extend_options_summary()}."
+            return False, f"Pick one of the preset tiers: {self._extend_options_summary()}."
 
         additional_seconds = hours * 3600
         cost = EXTEND_OPTIONS[hours]
@@ -728,38 +783,38 @@ class Heist(commands.Cog):
         )
         if result["ok"]:
             new_extended = result["extended_seconds"]
-            return (
+            return True, (
                 f"⛓️ **{payer.display_name}** slipped the warden **{cost:,} coins** to keep "
-                f"**{target.display_name}** in their cell **+{hours}h** longer. "
+                f"**{target.mention}** in their cell **+{hours}h** longer. "
                 f"Total extension on this sentence: **{self._format_duration(new_extended)}** / "
                 f"**{self._format_duration(EXTEND_MAX_TOTAL_SECONDS)}** cap."
             )
 
         err = result.get("error")
         if err == "not_jailed":
-            return f"✅ **{target.display_name}** isn't in casino jail. Nothing to extend."
+            return False, f"✅ **{target.display_name}** isn't in casino jail. Nothing to extend."
         if err == "sentence_done":
-            return f"✅ **{target.display_name}**'s sentence is already over. The doors are opening."
+            return False, f"✅ **{target.display_name}**'s sentence is already over. The doors are opening."
         if err == "cap":
             already = result.get("already_extended", 0)
-            return (
+            return False, (
                 f"⛓️ **{target.display_name}**'s sentence has already been extended "
                 f"**{self._format_duration(already)}** of the **{self._format_duration(EXTEND_MAX_TOTAL_SECONDS)}** cap. "
                 f"Adding {hours}h would blow past it."
             )
         if err == "broke":
-            return f"💸 Extending **{target.display_name}** by **{hours}h** costs **{result.get('need', cost):,} coins**. You have **{result.get('have', 0):,}**."
+            return False, f"💸 Extending **{target.display_name}** by **{hours}h** costs **{result.get('need', cost):,} coins**. You have **{result.get('have', 0):,}**."
         if err == "self":
-            return "🚫 You can't extend your own sentence."
+            return False, "🚫 You can't extend your own sentence."
         if err == "invalid_amount":
-            return "Pick a valid extension tier."
-        return "⚠️ Extension failed (database error). Try again in a moment."
+            return False, "Pick a valid extension tier."
+        return False, "⚠️ Extension failed (database error). Try again in a moment."
 
     @commands.command(name="extendjail", aliases=["lockup"])
     @commands.guild_only()
     async def extendjail_prefix(self, ctx, member: discord.Member = None, hours: int = 0):
         """Pay coins to keep someone in casino jail longer (preset tiers only)."""
-        msg = await self._do_extend_jail(ctx.guild, ctx.author, member, hours)
+        _ok, msg = await self._do_extend_jail(ctx.guild, ctx.author, member, hours)
         await ctx.send(msg)
 
     @app_commands.command(name="extendjail", description="Pay coins to keep someone in casino jail longer")
@@ -773,7 +828,7 @@ class Heist(commands.Cog):
         app_commands.Choice(name="+24 hours — 4,000,000,000 coins", value=24),
     ])
     async def extendjail_slash(self, interaction: discord.Interaction, member: discord.Member, hours: app_commands.Choice[int]):
-        msg = await self._do_extend_jail(interaction.guild, interaction.user, member, hours.value)
+        _ok, msg = await self._do_extend_jail(interaction.guild, interaction.user, member, hours.value)
         await interaction.response.send_message(msg)
 
     # ---- Release-message loop --------------------------------------------

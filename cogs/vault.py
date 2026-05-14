@@ -7,7 +7,7 @@ import os
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, record_vault
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,7 @@ class SubmitButton(discord.ui.Button):
             payout = min(raw_payout, MAX_PAYOUT)
             capped = payout < raw_payout
             add_coins(g.guild_id, g.user_id, payout)
+            record_vault(g.guild_id, g.user_id, won=True)
             for child in view.children:
                 child.disabled = True
             cap_note = f" *(capped at {MAX_PAYOUT:,})*" if capped else ""
@@ -149,6 +150,7 @@ class SubmitButton(discord.ui.Button):
             )
         elif attempts_used >= MAX_ATTEMPTS:
             g.ended = True
+            record_vault(g.guild_id, g.user_id, won=False)
             for child in view.children:
                 child.disabled = True
             code_str = "".join(str(d) for d in g.code)

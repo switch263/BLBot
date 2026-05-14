@@ -9,7 +9,7 @@ import asyncio
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, record_blackjack
 
 logger = logging.getLogger(__name__)
 
@@ -549,6 +549,10 @@ class Blackjack(commands.Cog):
             p.payout = payout
             if payout:
                 add_coins(r.guild_id, p.user_id, payout)
+            # Stat tracking: one play per player per round; "won" = ended up ahead
+            # vs. what they put in (pushes count as plays but not wins).
+            total_bet = sum(p.hand_bets)
+            record_blackjack(r.guild_id, p.user_id, won=payout > total_bet)
             p.result_text = " | ".join(results)
 
         content = self._render_playing(r, reveal_dealer=True, header_note="**Round complete!**")
