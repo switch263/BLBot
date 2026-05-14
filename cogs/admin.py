@@ -78,10 +78,14 @@ class Admin(commands.Cog):
 
     @commands.command(name="removecoins", aliases=["takecoins", "deductcoins", "subcoins"])
     async def remove_coins(self, ctx, user: discord.Member, amount: int):
-        """Admin command to deduct coins from a user. Only works in the admin channel.
-        Clamps at 0 — never produces a negative balance."""
-        if ctx.channel.id != ADMIN_CHANNEL_ID:
-            return
+        """Deduct coins from a user. Allowed in the admin channel, OR anywhere for
+        a member with the `Admin` role. Clamps at 0 — never produces a negative balance."""
+        in_admin_channel = ctx.channel.id == ADMIN_CHANNEL_ID
+        has_admin_role = isinstance(ctx.author, discord.Member) and any(
+            r.name == "Admin" for r in ctx.author.roles
+        )
+        if not (in_admin_channel or has_admin_role):
+            return  # Silently ignore — same gate behavior as unjail.
 
         if amount <= 0:
             await ctx.send("Amount must be positive!")
