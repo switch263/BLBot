@@ -475,12 +475,14 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
 
 # --- House liquidity / safe-harbor reserve --------------------------------
 # The house has two buckets:
-#   on-hand: the house's `coins` in `wallets`. This is what's heistable, what
-#            funds casino_payout, and what green-roulette can claim. Capped at
-#            HOUSE_LIQUID_CAP — overflow gets swept into the reserve on every
-#            normalize call.
-#   reserve: `house_reserve.coins`. Untouchable by heist or payouts. Earns
-#            interest at HOUSE_INTEREST_RATE_PER_HOUR, compounded lazily on read.
+#   on-hand: the house's `coins` in `wallets`. This is what's heistable and
+#            what green-roulette can claim. Capped at HOUSE_LIQUID_CAP —
+#            overflow gets swept into the reserve on every normalize call.
+#   reserve: `house_reserve.coins`. Untouchable by heist/jackpot drains. Earns
+#            interest at HOUSE_INTEREST_APR, compounded lazily on read.
+#            casino_payout will top on-hand up from the reserve when on-hand
+#            is insufficient — so the bank can't go bankrupt on a single big
+#            bet while the investment account still has cash.
 HOUSE_LIQUID_CAP = 100_000_000_000  # 100B on-hand. Anything above sweeps to reserve.
 # Annualized rate, compounded continuously on read. 0.001 = 0.1% APR.
 # Stays scale-invariant: doesn't matter if you read every second or once a month,
@@ -597,12 +599,14 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
 
 
 def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
-    """Pay a casino win from the house to a player, clamped to on-hand balance.
+    """Pay a casino win from the house to a player.
 
-    Returns the actual coins paid (≤ amount; 0 if on-hand is empty). Atomic.
-    Normalizes the house first (interest + overflow sweep), so the reserve is
-    untouched — payouts only come from on-hand. Use this anywhere a cog used
-    to mint winnings via add_coins().
+    Returns the actual coins paid (≤ amount). Atomic. Normalizes the house
+    first (interest + overflow sweep). If on-hand is short, tops it up from
+    the safe-harbor reserve by exactly what's needed for this payout — so a
+    "break-even" outcome on a bet larger than HOUSE_LIQUID_CAP doesn't
+    silently lose the player money to the sweep. The reserve is still
+    invisible to heist/jackpot drains; only payouts can tap it.
     """
     if amount <= 0:
         return 0
@@ -624,6 +628,24 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 (guild_id, house_id),
             ).fetchone()
             house_coins = house_row[0] if house_row else 0
+            shortfall = amount - house_coins
+            if shortfall > 0:
+                reserve_row = conn.execute(
+                    "SELECT coins FROM house_reserve WHERE guild_id = ?",
+                    (guild_id,),
+                ).fetchone()
+                reserve_coins = reserve_row[0] if reserve_row else 0
+                topup = min(shortfall, max(0, reserve_coins))
+                if topup > 0:
+                    conn.execute(
+                        "UPDATE house_reserve SET coins = coins - ? WHERE guild_id = ?",
+                        (topup, guild_id),
+                    )
+                    conn.execute(
+                        "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                        (topup, guild_id, house_id),
+                    )
+                    house_coins += topup
             pay = min(amount, max(0, house_coins))
             if pay <= 0:
                 conn.rollback()

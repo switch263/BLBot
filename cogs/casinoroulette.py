@@ -142,7 +142,7 @@ class CasinoRoulette(commands.Cog):
         return (
             f"💰 **House Pot**\n"
             f"• **On hand:** **{on_hand:,}** coins — heistable, funds payouts.\n"
-            f"• **Safe harbor:** **{reserve:,}** coins — untouchable, earning **{apr_pct:.2f}% APR**.\n"
+            f"• **Safe harbor:** **{reserve:,}** coins — earning **{apr_pct:.2f}% APR**, taps to cover payouts when on-hand runs short.\n"
             f"• **Total net worth:** **{on_hand + reserve:,}**\n\n"
             f"**Ways to bleed the on-hand cash:**\n"
             f"• 🟢 Hit **green** on `{prefix}bet` — random **{green_pct_range}** of on-hand (**{green_lo:,}–{green_hi:,}**).\n"
