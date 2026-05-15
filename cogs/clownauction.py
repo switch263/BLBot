@@ -2,13 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 import asyncio
 import time
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from economy import get_coins, add_coins, deduct_coins, jail_message
 
 logger = logging.getLogger(__name__)

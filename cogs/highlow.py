@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message, record_highlow
+from economy import get_coins, jail_message, record_highlow, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +92,16 @@ class CashOutButton(discord.ui.Button):
             await interaction.response.send_message("No streak yet — make at least one correct call first.", ephemeral=True)
             return
         g.ended = True
-        payout = int(g.bet * g.multiplier)
-        add_coins(g.guild_id, g.user_id, payout)
-        net = payout - g.bet
+        requested = int(g.bet * g.multiplier)
+        paid = casino_payout(g.guild_id, g.user_id, requested)
+        net = paid - g.bet
         record_highlow(g.guild_id, g.user_id, won=net > 0)
         for child in view.children:
             child.disabled = True
+        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         footer = (
-            f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{payout}** coins "
-            f"(net **+{net}**). Streak: **{g.streak}**.\n"
+            f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{paid}** coins "
+            f"(net **{net:+,}**).{short} Streak: **{g.streak}**.\n"
             f"Balance: **{get_coins(g.guild_id, g.user_id)}**"
         )
         await interaction.response.edit_message(content=view.cog._render(g, footer), view=view)
@@ -237,11 +235,13 @@ class HigherOrLower(commands.Cog):
         if bet <= 0:
             await reply("Bet > 0.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         game = HighLowGame(guild.id, user.id, user.display_name, bet)
         view = HighLowView(self, game)
         view._refresh()

@@ -57,6 +57,54 @@ def set_house_id(new_id: int):
     _house_id = new_id
 
 
+# Maps each canonical game name to its (plays_column, wins_column) on the
+# legacy `wallets` table. Used only for the one-shot backfill into game_stats.
+_LEGACY_GAME_COLUMNS = {
+    "roulette": ("roulette_plays", "roulette_wins"),
+    "rr": ("rr_plays", "rr_wins"),
+    "heist": ("heists_attempted", "heists_succeeded"),
+    "den": ("den_plays", "den_wins"),
+    "vault": ("vault_plays", "vault_wins"),
+    "vault_hard": ("vault_hard_plays", "vault_hard_wins"),
+    "blackjack": ("blackjack_plays", "blackjack_wins"),
+    "highlow": ("highlow_plays", "highlow_wins"),
+    "pawnshop": ("pawnshop_plays", "pawnshop_wins"),
+}
+
+
+def _backfill_game_stats(conn: sqlite3.Connection):
+    """One-shot migration: copy per-game counters from `wallets` into `game_stats`.
+    Skips columns that don't exist on a fresh DB (caught via OperationalError)."""
+    select_cols = ["guild_id", "user_id"]
+    game_order = []
+    for game, (plays_col, wins_col) in _LEGACY_GAME_COLUMNS.items():
+        select_cols.append(plays_col)
+        select_cols.append(wins_col)
+        game_order.append(game)
+    try:
+        rows = conn.execute(f"SELECT {', '.join(select_cols)} FROM wallets").fetchall()
+    except sqlite3.OperationalError:
+        return  # Fresh DB without the legacy columns — nothing to backfill.
+    inserted = 0
+    for row in rows:
+        guild_id, user_id = row[0], row[1]
+        offset = 2
+        for game in game_order:
+            plays = row[offset] or 0
+            wins = row[offset + 1] or 0
+            offset += 2
+            if plays == 0 and wins == 0:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO game_stats (guild_id, user_id, game, plays, wins) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (guild_id, user_id, game, plays, wins),
+            )
+            inserted += 1
+    if inserted:
+        logger.info(f"Backfilled {inserted} game_stats rows from legacy wallet columns.")
+
+
 def _init_db():
     """Create tables if they don't exist."""
     try:
@@ -119,6 +167,30 @@ def _init_db():
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_bounty_log_guild_ts ON bounty_log (guild_id, ts)"
             )
+            # game_stats: per-game play/win counts. Replaces the per-game columns
+            # on `wallets` (which are now deprecated but kept for backfill safety).
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS game_stats (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    game TEXT NOT NULL,
+                    plays INTEGER NOT NULL DEFAULT 0,
+                    wins INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, user_id, game)
+                )
+            ''')
+            # house_reserve: the safe-harbor side of the house pot. The house
+            # wallet's `coins` is the on-hand (heistable / payout-funded) bucket,
+            # capped at HOUSE_LIQUID_CAP — overflow auto-sweeps here on every
+            # _normalize_house call. Earns interest at HOUSE_INTEREST_RATE_PER_HOUR,
+            # compounded lazily on read.
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS house_reserve (
+                    guild_id INTEGER PRIMARY KEY,
+                    coins INTEGER NOT NULL DEFAULT 0,
+                    last_interest_ts REAL NOT NULL DEFAULT 0
+                )
+            ''')
             # Migrations: add columns if missing (safe on existing DBs)
             for col, decl in [
                 ("last_daily", "TEXT DEFAULT ''"),
@@ -174,6 +246,12 @@ def _init_db():
                         )
                 except sqlite3.OperationalError:
                     pass
+            # Schema version. Bump when introducing a one-shot migration.
+            #   1 = backfill `game_stats` from per-game wallet columns.
+            current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if current_version < 1:
+                _backfill_game_stats(conn)
+                conn.execute("PRAGMA user_version = 1")
             conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error initializing economy: {e}")
@@ -181,20 +259,12 @@ def _init_db():
 
 _EMPTY_WALLET = {
     "coins": 0, "total_won": 0, "total_lost": 0, "spins": 0, "jackpots": 0,
-    "roulette_plays": 0, "roulette_wins": 0,
-    "rr_plays": 0, "rr_wins": 0,
-    "heists_attempted": 0, "heists_succeeded": 0,
-    "den_plays": 0, "den_wins": 0,
-    "vault_plays": 0, "vault_wins": 0,
-    "vault_hard_plays": 0, "vault_hard_wins": 0,
-    "blackjack_plays": 0, "blackjack_wins": 0,
-    "highlow_plays": 0, "highlow_wins": 0,
-    "pawnshop_plays": 0, "pawnshop_wins": 0,
 }
 
 
 def get_wallet(guild_id: int, user_id: int) -> dict:
-    """Get or create a wallet. Returns dict with all stat fields."""
+    """Get or create a wallet. Returns dict with balance and global stats only.
+    Per-game stats live in `game_stats` — use `get_game_stats()` for those."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
@@ -203,12 +273,7 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
             )
             conn.commit()
             cursor = conn.execute(
-                "SELECT coins, total_won, total_lost, spins, jackpots, "
-                "roulette_plays, roulette_wins, rr_plays, rr_wins, "
-                "heists_attempted, heists_succeeded, den_plays, den_wins, "
-                "vault_plays, vault_wins, vault_hard_plays, vault_hard_wins, "
-                "blackjack_plays, blackjack_wins, highlow_plays, highlow_wins, "
-                "pawnshop_plays, pawnshop_wins "
+                "SELECT coins, total_won, total_lost, spins, jackpots "
                 "FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id)
             )
@@ -216,23 +281,50 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
             return {
                 "coins": row[0], "total_won": row[1], "total_lost": row[2],
                 "spins": row[3], "jackpots": row[4],
-                "roulette_plays": row[5], "roulette_wins": row[6],
-                "rr_plays": row[7], "rr_wins": row[8],
-                "heists_attempted": row[9], "heists_succeeded": row[10],
-                "den_plays": row[11], "den_wins": row[12],
-                "vault_plays": row[13], "vault_wins": row[14],
-                "vault_hard_plays": row[15], "vault_hard_wins": row[16],
-                "blackjack_plays": row[17], "blackjack_wins": row[18],
-                "highlow_plays": row[19], "highlow_wins": row[20],
-                "pawnshop_plays": row[21], "pawnshop_wins": row[22],
             }
     except sqlite3.Error as e:
         logger.error(f"Database error getting wallet: {e}")
         return dict(_EMPTY_WALLET)
 
 
+def record_game(guild_id: int, user_id: int, game: str, won: bool):
+    """Upsert a play (and optional win) into game_stats. Replaces the per-game record_* shims."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                "INSERT INTO game_stats (guild_id, user_id, game, plays, wins) "
+                "VALUES (?, ?, ?, 1, ?) "
+                "ON CONFLICT(guild_id, user_id, game) DO UPDATE SET "
+                "plays = plays + 1, wins = wins + excluded.wins",
+                (guild_id, user_id, game, 1 if won else 0),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error recording game play ({game}): {e}")
+
+
+def get_game_stats(guild_id: int, user_id: int) -> dict[str, dict[str, int]]:
+    """Return {game: {'plays': X, 'wins': Y}} for every game this user has played.
+    Games the user has never played are absent — callers should default to (0, 0)."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT game, plays, wins FROM game_stats "
+                "WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchall()
+            return {game: {"plays": plays, "wins": wins} for game, plays, wins in rows}
+    except sqlite3.Error as e:
+        logger.error(f"Database error reading game stats: {e}")
+        return {}
+
+
 def get_coins(guild_id: int, user_id: int) -> int:
-    """Get coin balance for a user, creating wallet if needed."""
+    """Get coin balance for a user, creating wallet if needed.
+    For the house, this returns ON-HAND only (post-normalize) — the safe-harbor
+    reserve is not exposed here. Use get_house_state() for the full breakdown."""
+    if user_id == get_house_id():
+        return get_house_state(guild_id)["on_hand"]
     return get_wallet(guild_id, user_id)["coins"]
 
 
@@ -295,26 +387,338 @@ def fine_user(guild_id: int, user_id: int, amount: int):
         logger.error(f"Database error fining user: {e}")
 
 
-def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> tuple[int, int]:
-    """Transfer coins between users. Returns (sender_balance, receiver_balance)."""
-    get_wallet(guild_id, to_id)  # ensure receiver exists
+def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> dict:
+    """Atomically transfer coins between users (BEGIN IMMEDIATE + balance check).
+
+    Returns a dict:
+      {"ok": True, "sender_balance": X, "receiver_balance": Y}
+      {"ok": False, "error": "invalid_amount"}
+      {"ok": False, "error": "broke", "have": X, "need": amount}
+      {"ok": False, "error": "db"}
+    Sender/receiver wallets are created in-transaction if missing.
+    """
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
     try:
         with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, from_id, STARTING_COINS),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, to_id, STARTING_COINS),
+            )
+            sender_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, from_id),
+            ).fetchone()
+            sender_coins = sender_row[0] if sender_row else 0
+            if sender_coins < amount:
+                conn.rollback()
+                return {"ok": False, "error": "broke", "have": sender_coins, "need": amount}
             conn.execute(
                 "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
-                (amount, guild_id, from_id)
+                (amount, guild_id, from_id),
             )
             conn.execute(
                 "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
-                (amount, guild_id, to_id)
+                (amount, guild_id, to_id),
             )
+            sender_balance = sender_coins - amount
+            recv_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, to_id),
+            ).fetchone()
+            receiver_balance = recv_row[0] if recv_row else 0
             conn.commit()
-            c1 = conn.execute("SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?", (guild_id, from_id)).fetchone()[0]
-            c2 = conn.execute("SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?", (guild_id, to_id)).fetchone()[0]
-            return c1, c2
+            return {
+                "ok": True,
+                "sender_balance": sender_balance,
+                "receiver_balance": receiver_balance,
+            }
     except sqlite3.Error as e:
         logger.error(f"Database error transferring coins: {e}")
-        return 0, 0
+        return {"ok": False, "error": "db"}
+
+
+def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
+    """Atomically deduct `amount` only if the wallet has enough. Returns True on success.
+
+    Use this in cogs to take a bet; it closes the TOCTOU window between a balance
+    check and the actual deduction. Wallet is created in-transaction if missing.
+    """
+    if amount <= 0:
+        return False
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            cursor = conn.execute(
+                "UPDATE wallets SET coins = coins - ?, total_lost = total_lost + ? "
+                "WHERE guild_id = ? AND user_id = ? AND coins >= ?",
+                (amount, amount, guild_id, user_id, amount),
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return False
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logger.error(f"Database error in try_deduct: {e}")
+        return False
+
+
+# --- House liquidity / safe-harbor reserve --------------------------------
+# The house has two buckets:
+#   on-hand: the house's `coins` in `wallets`. This is what's heistable, what
+#            funds casino_payout, and what green-roulette can claim. Capped at
+#            HOUSE_LIQUID_CAP — overflow gets swept into the reserve on every
+#            normalize call.
+#   reserve: `house_reserve.coins`. Untouchable by heist or payouts. Earns
+#            interest at HOUSE_INTEREST_RATE_PER_HOUR, compounded lazily on read.
+HOUSE_LIQUID_CAP = 100_000_000_000  # 100B on-hand. Anything above sweeps to reserve.
+# Annualized rate, compounded continuously on read. 0.001 = 0.1% APR.
+# Stays scale-invariant: doesn't matter if you read every second or once a month,
+# the effective growth equals the APR exactly.
+HOUSE_INTEREST_APR = 0.001
+_SECONDS_PER_YEAR = 365.25 * 24 * 3600
+
+# Per-event drain caps as random ranges. A successful event rolls uniform(min, max)
+# and takes that fraction of on-hand. Living here (not in their cogs) so /pot can
+# read the ranges without a cross-cog import and so any future "casino policy"
+# tuning happens in one file.
+HOUSE_HEIST_MIN_PCT = 0.15
+HOUSE_HEIST_MAX_PCT = 0.90
+GREEN_JACKPOT_MIN_PCT = 0.75
+GREEN_JACKPOT_MAX_PCT = 0.90
+
+
+def _normalize_house(conn: sqlite3.Connection, guild_id: int):
+    """Apply accrued interest to the reserve and sweep any on-hand overflow
+    above HOUSE_LIQUID_CAP into the reserve. Idempotent. Caller is expected to
+    be holding BEGIN IMMEDIATE so the read-modify-write is atomic."""
+    import time as _t
+    now = _t.time()
+    conn.execute(
+        "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) VALUES (?, 0, ?)",
+        (guild_id, now),
+    )
+    row = conn.execute(
+        "SELECT coins, last_interest_ts FROM house_reserve WHERE guild_id = ?",
+        (guild_id,),
+    ).fetchone()
+    reserve_coins = row[0] or 0
+    last_ts = row[1] or 0
+    # Compound interest on any existing reserve. APR-based: elapsed seconds
+    # are converted to fractional years and the growth factor is (1+APR)^years.
+    # This stays invariant to read frequency — same end balance whether read once
+    # per year or 1000 times per day.
+    if reserve_coins > 0 and last_ts > 0 and now > last_ts:
+        elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
+        reserve_coins = int(reserve_coins * ((1.0 + HOUSE_INTEREST_APR) ** elapsed_years))
+    # Sweep on-hand overflow into the reserve.
+    house_id = get_house_id()
+    house_row = conn.execute(
+        "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+        (guild_id, house_id),
+    ).fetchone()
+    house_coins = house_row[0] if house_row else 0
+    if house_coins > HOUSE_LIQUID_CAP:
+        overflow = house_coins - HOUSE_LIQUID_CAP
+        reserve_coins += overflow
+        conn.execute(
+            "UPDATE wallets SET coins = ? WHERE guild_id = ? AND user_id = ?",
+            (HOUSE_LIQUID_CAP, guild_id, house_id),
+        )
+    conn.execute(
+        "UPDATE house_reserve SET coins = ?, last_interest_ts = ? WHERE guild_id = ?",
+        (reserve_coins, now, guild_id),
+    )
+
+
+def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
+    """Atomic transfer from a user to the house (donations, vig, bet collection).
+    After the deposit, normalizes the house: applies interest to the reserve and
+    sweeps on-hand overflow above HOUSE_LIQUID_CAP into the reserve.
+
+    Same return shape as transfer_coins. `receiver_balance` is the post-sweep
+    on-hand wallet, not the total house net worth."""
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    house_id = get_house_id()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+                (guild_id, house_id),
+            )
+            sender_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            sender_coins = sender_row[0] if sender_row else 0
+            if sender_coins < amount:
+                conn.rollback()
+                return {"ok": False, "error": "broke", "have": sender_coins, "need": amount}
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, user_id),
+            )
+            conn.execute(
+                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, house_id),
+            )
+            sender_balance = sender_coins - amount
+            _normalize_house(conn, guild_id)
+            recv_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, house_id),
+            ).fetchone()
+            receiver_balance = recv_row[0] if recv_row else 0
+            conn.commit()
+            return {
+                "ok": True,
+                "sender_balance": sender_balance,
+                "receiver_balance": receiver_balance,
+            }
+    except sqlite3.Error as e:
+        logger.error(f"Database error in transfer_to_house: {e}")
+        return {"ok": False, "error": "db"}
+
+
+def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
+    """Pay a casino win from the house to a player, clamped to on-hand balance.
+
+    Returns the actual coins paid (≤ amount; 0 if on-hand is empty). Atomic.
+    Normalizes the house first (interest + overflow sweep), so the reserve is
+    untouched — payouts only come from on-hand. Use this anywhere a cog used
+    to mint winnings via add_coins().
+    """
+    if amount <= 0:
+        return 0
+    house_id = get_house_id()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+                (guild_id, house_id),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            _normalize_house(conn, guild_id)
+            house_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, house_id),
+            ).fetchone()
+            house_coins = house_row[0] if house_row else 0
+            pay = min(amount, max(0, house_coins))
+            if pay <= 0:
+                conn.rollback()
+                return 0
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (pay, guild_id, house_id),
+            )
+            conn.execute(
+                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? "
+                "WHERE guild_id = ? AND user_id = ?",
+                (pay, pay, guild_id, user_id),
+            )
+            conn.commit()
+            return pay
+    except sqlite3.Error as e:
+        logger.error(f"Database error in casino_payout: {e}")
+        return 0
+
+
+def get_house_state(guild_id: int) -> dict:
+    """Snapshot of both house buckets. Applies interest + sweeps overflow as a
+    side effect. Returns {'on_hand': X, 'reserve': Y, 'rate_per_hour': Z}."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _normalize_house(conn, guild_id)
+            house_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, get_house_id()),
+            ).fetchone()
+            reserve_row = conn.execute(
+                "SELECT coins FROM house_reserve WHERE guild_id = ?",
+                (guild_id,),
+            ).fetchone()
+            conn.commit()
+            return {
+                "on_hand": (house_row[0] if house_row else 0),
+                "reserve": (reserve_row[0] if reserve_row else 0),
+                "apr": HOUSE_INTEREST_APR,
+            }
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_house_state: {e}")
+        return {"on_hand": 0, "reserve": 0, "apr": HOUSE_INTEREST_APR}
+
+
+def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> dict:
+    """Atomically transfer from `from_id` to many recipients in one transaction.
+
+    `payments` is a list of (recipient_user_id, amount) pairs. Total is debited once
+    from the sender. Either all payments go through or none do.
+
+    Returns:
+      {"ok": True, "sender_balance": X, "total": T}
+      {"ok": False, "error": "invalid_amount"}  # any non-positive share, or empty list
+      {"ok": False, "error": "broke", "have": X, "need": T}
+      {"ok": False, "error": "db"}
+    """
+    if not payments or any(amt <= 0 for _, amt in payments):
+        return {"ok": False, "error": "invalid_amount"}
+    total = sum(amt for _, amt in payments)
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, from_id, STARTING_COINS),
+            )
+            sender_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, from_id),
+            ).fetchone()
+            sender_coins = sender_row[0] if sender_row else 0
+            if sender_coins < total:
+                conn.rollback()
+                return {"ok": False, "error": "broke", "have": sender_coins, "need": total}
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (total, guild_id, from_id),
+            )
+            for recipient_id, amt in payments:
+                conn.execute(
+                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                    (guild_id, recipient_id, STARTING_COINS),
+                )
+                conn.execute(
+                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? "
+                    "WHERE guild_id = ? AND user_id = ?",
+                    (amt, amt, guild_id, recipient_id),
+                )
+            conn.commit()
+            return {"ok": True, "sender_balance": sender_coins - total, "total": total}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in disburse: {e}")
+        return {"ok": False, "error": "db"}
 
 
 def award_coins(guild_id: int, user_id: int, amount: int):
@@ -348,15 +752,21 @@ def get_leaderboard(guild_id: int, limit: int = 10) -> list:
 
 
 def get_total_economy(guild_id: int) -> int:
-    """Sum of all coins across every wallet in the guild — players AND the house.
-    Used by callers that need to size something against the total money in circulation."""
+    """Sum of all coins across the guild — every player wallet, the house on-hand,
+    AND the house safe-harbor reserve. The reserve is real money even though it
+    isn't heistable, so it counts toward total circulation."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute(
+            wallets_total = conn.execute(
                 "SELECT COALESCE(SUM(coins), 0) FROM wallets WHERE guild_id = ?",
                 (guild_id,),
+            ).fetchone()[0] or 0
+            reserve_row = conn.execute(
+                "SELECT coins FROM house_reserve WHERE guild_id = ?",
+                (guild_id,),
             ).fetchone()
-            return int(row[0]) if row else 0
+            reserve_total = (reserve_row[0] if reserve_row else 0) or 0
+            return int(wallets_total) + int(reserve_total)
     except sqlite3.Error as e:
         logger.error(f"Database error reading total economy: {e}")
         return 0
@@ -386,103 +796,21 @@ def get_server_stats(guild_id: int) -> dict:
 
 
 def get_pot(guild_id: int) -> int:
-    """Get the casino roulette house pot balance (the bot's wallet)."""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.execute(
-                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                (guild_id, get_house_id())
-            )
-            row = cursor.fetchone()
-            return row[0] if row else 0
-    except sqlite3.Error as e:
-        logger.error(f"Database error getting pot: {e}")
-        return 0
+    """On-hand house coins — the heistable / payout-funded bucket.
+    For the full breakdown (on-hand + safe-harbor reserve) call get_house_state."""
+    return get_house_state(guild_id)["on_hand"]
 
 
-def record_roulette(guild_id: int, user_id: int, won: bool):
-    """Record a casino roulette play and win (if applicable)."""
-    get_wallet(guild_id, user_id)
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                "UPDATE wallets SET roulette_plays = roulette_plays + 1, "
-                "roulette_wins = roulette_wins + ? WHERE guild_id = ? AND user_id = ?",
-                (1 if won else 0, guild_id, user_id)
-            )
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error recording roulette play: {e}")
-
-
-def record_rr(guild_id: int, user_id: int, won: bool):
-    """Record a Russian Roulette play and win (if applicable)."""
-    get_wallet(guild_id, user_id)
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                "UPDATE wallets SET rr_plays = rr_plays + 1, "
-                "rr_wins = rr_wins + ? WHERE guild_id = ? AND user_id = ?",
-                (1 if won else 0, guild_id, user_id)
-            )
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error recording Russian Roulette play: {e}")
-
-
-def _record_game(guild_id: int, user_id: int, plays_col: str, wins_col: str, won: bool):
-    """Generic stat bump used by the per-game record_* wrappers below."""
-    get_wallet(guild_id, user_id)
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                f"UPDATE wallets SET {plays_col} = {plays_col} + 1, "
-                f"{wins_col} = {wins_col} + ? WHERE guild_id = ? AND user_id = ?",
-                (1 if won else 0, guild_id, user_id),
-            )
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error recording {plays_col} stat: {e}")
-
-
-def record_vault(guild_id: int, user_id: int, won: bool):
-    """Record a Vault Heist play and win (if applicable)."""
-    _record_game(guild_id, user_id, "vault_plays", "vault_wins", won)
-
-
-def record_vault_hard(guild_id: int, user_id: int, won: bool):
-    """Record a Vault Hard play and win (if applicable)."""
-    _record_game(guild_id, user_id, "vault_hard_plays", "vault_hard_wins", won)
-
-
-def record_blackjack(guild_id: int, user_id: int, won: bool):
-    """Record a Blackjack play and win (if applicable)."""
-    _record_game(guild_id, user_id, "blackjack_plays", "blackjack_wins", won)
-
-
-def record_highlow(guild_id: int, user_id: int, won: bool):
-    """Record a High-Low play and win (if applicable)."""
-    _record_game(guild_id, user_id, "highlow_plays", "highlow_wins", won)
-
-
-def record_pawnshop(guild_id: int, user_id: int, won: bool):
-    """Record a Pawn Shop play and win (if applicable)."""
-    _record_game(guild_id, user_id, "pawnshop_plays", "pawnshop_wins", won)
-
-
-def record_heist(guild_id: int, user_id: int, succeeded: bool):
-    """Record a heist attempt and success (if applicable)."""
-    get_wallet(guild_id, user_id)
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                "UPDATE wallets SET heists_attempted = heists_attempted + 1, "
-                "heists_succeeded = heists_succeeded + ? WHERE guild_id = ? AND user_id = ?",
-                (1 if succeeded else 0, guild_id, user_id)
-            )
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error recording heist: {e}")
+# Per-game record_* shims. All delegate to record_game(); kept so existing cog
+# imports keep working. New cogs should call record_game directly.
+def record_roulette(guild_id, user_id, won): record_game(guild_id, user_id, "roulette", won)
+def record_rr(guild_id, user_id, won): record_game(guild_id, user_id, "rr", won)
+def record_vault(guild_id, user_id, won): record_game(guild_id, user_id, "vault", won)
+def record_vault_hard(guild_id, user_id, won): record_game(guild_id, user_id, "vault_hard", won)
+def record_blackjack(guild_id, user_id, won): record_game(guild_id, user_id, "blackjack", won)
+def record_highlow(guild_id, user_id, won): record_game(guild_id, user_id, "highlow", won)
+def record_pawnshop(guild_id, user_id, won): record_game(guild_id, user_id, "pawnshop", won)
+def record_heist(guild_id, user_id, succeeded): record_game(guild_id, user_id, "heist", succeeded)
 
 
 def jail_user(guild_id: int, user_id: int, duration_seconds: int, reason: str = "",
@@ -972,19 +1300,7 @@ def jail_message(guild_id: int, user_id: int) -> str | None:
     return f"🚔 **You're in casino jail** for another **{m}m**. No bets, no gambling."
 
 
-def record_den(guild_id: int, user_id: int, won: bool):
-    """Record a Raccoon's Den dig and whether they cashed out (won) or got bitten."""
-    get_wallet(guild_id, user_id)
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                "UPDATE wallets SET den_plays = den_plays + 1, "
-                "den_wins = den_wins + ? WHERE guild_id = ? AND user_id = ?",
-                (1 if won else 0, guild_id, user_id)
-            )
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error recording den play: {e}")
+def record_den(guild_id, user_id, won): record_game(guild_id, user_id, "den", won)
 
 
 # Initialize DB on import

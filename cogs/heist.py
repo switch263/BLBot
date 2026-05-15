@@ -128,6 +128,9 @@ HEIST_COOLDOWN = 300  # 5 minutes
 BOT_HEIST_SUCCESS_RATE = 0.01  # 1% — 1-in-100 long shot
 BOT_HEIST_JAIL_MIN_SECONDS = 1 * 60 * 60   # 1 hour
 BOT_HEIST_JAIL_MAX_SECONDS = 36 * 60 * 60  # 36 hours
+# Heist take is a uniform random fraction of on-hand within this band. Tune in
+# economy.py so /pot can display the same range without a cross-cog import.
+from economy import HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT
 
 # Bail: someone ELSE pays a random share of the would-be loot to spring you.
 # Multiplier grows with prior offenses, capped so it doesn't become unpayable.
@@ -172,9 +175,9 @@ EXTEND_OPTIONS = {
 EXTEND_MAX_TOTAL_SECONDS = 24 * 60 * 60
 
 BOT_SUCCESS_MESSAGES = [
-    "**{thief} ROBBED THE HOUSE.** They cracked the bot's vault and walked off with the **entire pot of {amount} coins**. The casino is in ruins.",
-    "**{thief} SOMEHOW DID IT.** The bot's wallet has been cleaned out. **{amount} coins.** Nobody saw this coming. Including the bot.",
-    "**{thief} PULLED OFF A MIRACLE HEIST.** The bot stared blankly as **{amount} coins** walked out the door.",
+    "**{thief} ROBBED THE HOUSE.** They cracked **{pct}%** of the bot's vault and walked off with **{amount} coins**. The rest stayed bolted down.",
+    "**{thief} SOMEHOW DID IT.** They cleared **{amount} coins** ({pct}% of on-hand) before the silent alarm tripped. The bot is rattled but solvent.",
+    "**{thief} PULLED OFF A MIRACLE HEIST.** The bot stared blankly as **{amount} coins** — **{pct}%** of the vault — walked out the door.",
 ]
 
 BOT_FAIL_MESSAGES = [
@@ -435,7 +438,7 @@ class Heist(commands.Cog):
         max_h = BOT_HEIST_JAIL_MAX_SECONDS // 3600
         desc = (
             f"⚠️ {thief.mention}, you're about to **rob the house**.\n\n"
-            f"• **Win odds:** ~**{win_pct:.0f}%** (1 in 100). Win and you walk with the entire vault.\n"
+            f"• **Win odds:** ~**{win_pct:.0f}%** (1 in 100). Win and you roll **{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%** of the vault (uniform random — could be a scratch, could be a fortune).\n"
             f"• **Lose odds:** ~**{100 - win_pct:.0f}%**. Caught means **casino jail for a random {min_h}–{max_h} hours** — no bets, no gambling.\n"
             f"• A friend can **`/bail`** you out (once per week). Bail scales with the vault — and gets steeper every time you re-offend.\n"
         )
@@ -482,9 +485,12 @@ class Heist(commands.Cog):
             economy.record_heist(guild_id, accomplice.id, success)
 
         if success:
-            loot = victim_coins
+            heist_pct = random.uniform(HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT)
+            loot = max(1, int(victim_coins * heist_pct))
             economy.transfer_coins(guild_id, victim.id, thief.id, loot)
-            msg = random.choice(BOT_SUCCESS_MESSAGES).format(thief=thief.mention, amount=loot)
+            msg = random.choice(BOT_SUCCESS_MESSAGES).format(
+                thief=thief.mention, amount=f"{loot:,}", pct=int(round(heist_pct * 100)),
+            )
             return discord.Embed(title="🏦 HOUSE ROBBED", description=msg, color=discord.Color.gold()), None
 
         # Failure: each participant gets their own random sentence + bail amount,

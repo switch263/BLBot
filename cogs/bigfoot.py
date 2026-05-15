@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -124,20 +121,21 @@ class HexButton(discord.ui.Button):
             # Base multiplier from footprints PLUS Bigfoot jackpot
             base_mult = current_multiplier(g.footprints_found)
             final_mult = base_mult * BIGFOOT_MULT
-            payout = int(g.bet * final_mult)
-            add_coins(g.guild_id, g.user_id, payout)
+            requested = int(g.bet * final_mult)
+            paid = casino_payout(g.guild_id, g.user_id, requested)
             for child in view.children:
                 if isinstance(child, HexButton):
                     if child.idx in g.bears:
                         child.label = "🐻"
                         child.style = discord.ButtonStyle.danger
                 child.disabled = True
-            net = payout - g.bet
+            net = paid - g.bet
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
             narrative = random.choice(BIGFOOT_NARRATIVES)
             content = view.cog._render(
                 g,
                 f"🦍 **BIGFOOT PHOTOGRAPHED!** {narrative}\n"
-                f"Final multiplier: **{final_mult:.2f}×** ({base_mult:.2f}× prints × {BIGFOOT_MULT:.0f}× jackpot). Net **+{net}** coins.",
+                f"Final multiplier: **{final_mult:.2f}×** ({base_mult:.2f}× prints × {BIGFOOT_MULT:.0f}× jackpot). Net **{net:+,}** coins.{short}",
             )
             await interaction.response.edit_message(content=content, view=view)
             return
@@ -168,8 +166,8 @@ class CashOutButton(discord.ui.Button):
             return
         g.ended = True
         mult = current_multiplier(g.footprints_found)
-        payout = int(g.bet * mult)
-        add_coins(g.guild_id, g.user_id, payout)
+        requested = int(g.bet * mult)
+        paid = casino_payout(g.guild_id, g.user_id, requested)
         for child in view.children:
             if isinstance(child, HexButton):
                 if child.idx in g.bears:
@@ -178,12 +176,13 @@ class CashOutButton(discord.ui.Button):
                 elif child.idx == g.bigfoot:
                     child.label = "🦍"
             child.disabled = True
-        net = payout - g.bet
+        net = paid - g.bet
+        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         narrative = random.choice(CASHOUT_FLAVOR)
         content = view.cog._render(
             g,
             f"📷 **Headed back with {g.footprints_found} footprints.** {narrative}\n"
-            f"Multiplier **{mult:.2f}×** → net **+{net}** coins.",
+            f"Multiplier **{mult:.2f}×** → net **{net:+,}** coins.{short}",
         )
         await interaction.response.edit_message(content=content, view=view)
 
@@ -209,7 +208,7 @@ class ExpeditionView(discord.ui.View):
             g = self.game
             if g.footprints_found > 0:
                 mult = current_multiplier(g.footprints_found)
-                add_coins(g.guild_id, g.user_id, int(g.bet * mult))
+                casino_payout(g.guild_id, g.user_id, int(g.bet * mult))
             g.ended = True
 
 
@@ -257,11 +256,13 @@ class BigfootExpedition(commands.Cog):
         if bet <= 0:
             await reply("You gotta risk something, coward.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke for an expedition. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke for an expedition. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         game = Expedition(guild.id, user.id, user.display_name, bet)
         view = ExpeditionView(self, game)
         await reply(self._render(game), view=view)

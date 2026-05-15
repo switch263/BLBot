@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, record_den, jail_message
+from economy import get_coins, record_den, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -173,20 +170,21 @@ class BinButton(discord.ui.Button):
             g.ended = True
             g.won = True
             mult = g.get_multiplier()
-            payout = int(g.bet * mult)
-            add_coins(g.guild_id, g.user_id, payout)
+            requested = int(g.bet * mult)
+            paid = casino_payout(g.guild_id, g.user_id, requested)
             record_den(g.guild_id, g.user_id, won=True)
             for child in view.children:
                 if isinstance(child, BinButton) and child.idx in g.raccoons:
                     child.label = "🦝"
                     child.style = discord.ButtonStyle.danger
                 child.disabled = True
-            net = payout - g.bet
+            net = paid - g.bet
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
             flavor = random.choice(WIN_FLAVOR)
             content = view.cog._render(
                 g,
                 f"🏆 **PERFECT RUN at {mult:.2f}×!** You cleaned out the den.\n"
-                f"Net **+{net}** coins. _{flavor}_",
+                f"Net **{net:+,}** coins.{short} _{flavor}_",
             )
             await interaction.response.edit_message(content=content, view=view)
             return
@@ -213,19 +211,20 @@ class CashOutButton(discord.ui.Button):
         g.ended = True
         g.won = True
         mult = g.get_multiplier()
-        payout = int(g.bet * mult)
-        add_coins(g.guild_id, g.user_id, payout)
+        requested = int(g.bet * mult)
+        paid = casino_payout(g.guild_id, g.user_id, requested)
         record_den(g.guild_id, g.user_id, won=True)
         for child in view.children:
             if isinstance(child, BinButton) and child.idx in g.raccoons:
                 child.label = "🦝"
                 child.style = discord.ButtonStyle.danger
             child.disabled = True
-        net = payout - g.bet
+        net = paid - g.bet
+        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         flavor = random.choice(WIN_FLAVOR)
         content = view.cog._render(
             g,
-            f"💰 **Climbed out at {mult:.2f}×.** Net **+{net}** coins. _{flavor}_",
+            f"💰 **Climbed out at {mult:.2f}×.** Net **{net:+,}** coins.{short} _{flavor}_",
         )
         await interaction.response.edit_message(content=content, view=view)
 
@@ -275,7 +274,7 @@ class DenView(discord.ui.View):
             g = self.game
             if g.revealed:
                 mult = g.get_multiplier()
-                add_coins(g.guild_id, g.user_id, int(g.bet * mult))
+                casino_payout(g.guild_id, g.user_id, int(g.bet * mult))
                 record_den(g.guild_id, g.user_id, won=True)
             else:
                 record_den(g.guild_id, g.user_id, won=False)
@@ -330,12 +329,13 @@ class RaccoonDen(commands.Cog):
         if bet <= 0:
             await reply("You gotta risk something, cheapskate.")
             return
-        balance = get_coins(guild.id, user.id)
-        if balance < bet:
-            await reply(f"Too broke. Balance: **{balance}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         game = DenGame(guild.id, user.id, user.display_name, bet)
         view = DenView(self, game)
         await reply(self._render(game), view=view)

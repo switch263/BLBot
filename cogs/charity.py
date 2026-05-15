@@ -74,13 +74,6 @@ class Charity(commands.Cog):
         if amount <= 0:
             return discord.Embed(description="Donate at least **1** coin.", color=discord.Color.red())
 
-        balance = economy.get_coins(guild_id, giver.id)
-        if balance < amount:
-            return discord.Embed(
-                description=f"You only have **{balance:,}** coins.",
-                color=discord.Color.red(),
-            )
-
         pool = _eligible_recipients(channel, giver.id)
         if not pool:
             return discord.Embed(
@@ -97,11 +90,18 @@ class Charity(commands.Cog):
         shares.sort(reverse=True)
         pairings = list(zip(recipients, shares))
 
-        economy.deduct_coins(guild_id, giver.id, amount)
-        for recipient, share in pairings:
-            economy.add_coins(guild_id, recipient.id, share)
-
-        new_bal = economy.get_coins(guild_id, giver.id)
+        result = economy.disburse(
+            guild_id, giver.id,
+            [(r.id, s) for r, s in pairings],
+        )
+        if not result.get("ok"):
+            if result.get("error") == "broke":
+                return discord.Embed(
+                    description=f"You only have **{result.get('have', 0):,}** coins.",
+                    color=discord.Color.red(),
+                )
+            return discord.Embed(description="Charity drive failed. Try again.", color=discord.Color.red())
+        new_bal = result["sender_balance"]
         title = random.choice(CHARITY_TITLES)
         flavor = random.choice(CHARITY_FLAVOR).format(giver=giver.display_name)
 

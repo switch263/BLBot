@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message, record_pawnshop
+from economy import get_coins, jail_message, record_pawnshop, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -129,15 +126,16 @@ class PawnView(discord.ui.View):
             await interaction.response.defer()
             return
         g.ended = True
-        payout = int(g.bet * g.current_mult)
-        add_coins(g.guild_id, g.user_id, payout)
-        net = payout - g.bet
+        requested = int(g.bet * g.current_mult)
+        paid = casino_payout(g.guild_id, g.user_id, requested)
+        net = paid - g.bet
         record_pawnshop(g.guild_id, g.user_id, won=net > 0)
         for child in self.children:
             child.disabled = True
+        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         final = (
-            f"🤝 **Deal.** The broker counts out **{payout}** coins.\n"
-            f"Net: **{'+' if net >= 0 else ''}{net}**.\n"
+            f"🤝 **Deal.** The broker counts out **{paid}** coins.{short}\n"
+            f"Net: **{net:+,}**.\n"
             f"Balance: **{get_coins(g.guild_id, g.user_id)}**"
         )
         await interaction.response.edit_message(content=self.cog._render(g, final), view=self)
@@ -217,11 +215,13 @@ class PawnShop(commands.Cog):
         if bet <= 0:
             await reply("You gotta bring an item of some value.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         item_name = f"{random.choice(ITEM_PREFIXES)} {random.choice(ITEM_OBJECTS)}"
         game = PawnGame(guild.id, user.id, user.display_name, bet, item_name)
         # Prime round 1 on display

@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import os
 import logging
 from pathlib import Path
 from lenny import lenny

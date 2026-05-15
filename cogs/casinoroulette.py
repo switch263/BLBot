@@ -3,13 +3,16 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import asyncio
-import sys
-import os
 
 # Ensure root is in path for economy import
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from economy import get_coins, add_coins, deduct_coins, record_roulette, get_pot, get_house_id, jail_message
+from economy import (
+    get_coins, record_roulette, get_house_state, jail_message,
+    transfer_to_house, casino_payout,
+    GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT,
+    HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT,
+)
+
 
 class CasinoRoulette(commands.Cog):
     def __init__(self, bot):
@@ -33,18 +36,19 @@ class CasinoRoulette(commands.Cog):
         if jmsg:
             return await ctx_or_interaction.send(jmsg) if not is_slash else await ctx_or_interaction.response.send_message(jmsg)
 
-        balance = get_coins(guild.id, user.id)
-
         if amount <= 0:
             msg = "Bet more than 0, you cheapskate."
             return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
-        
-        if balance < amount:
-            msg = f"You're too broke. Balance: **{balance}**"
-            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
 
-        # Start the game
-        deduct_coins(guild.id, user.id, amount)
+        # Collect the bet atomically into the house pot. If the player is broke,
+        # this fails and nothing else happens.
+        bet_result = transfer_to_house(guild.id, user.id, amount)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                msg = f"You're too broke. Balance: **{bet_result.get('have', 0)}**"
+            else:
+                msg = "Bet failed. Try again in a moment."
+            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
         bet_type = bet_type.lower()
         winning_number = random.randint(0, 36)
         color = "🟢 GREEN" if winning_number == 0 else ("🔴 RED" if winning_number in self.red_numbers else "⚫ BLACK")
@@ -80,23 +84,32 @@ class CasinoRoulette(commands.Cog):
             won, multiplier = True, 35
 
         result_msg = f"The ball landed on **{winning_number} ({color})**!"
-        
-        house_id = get_house_id()
+
         if won:
             winnings = amount * multiplier
-            add_coins(guild.id, user.id, winnings)
-            final_text = f"{result_msg}\n🎉 **WINNER!** You won **{winnings}** coins!"
+            paid = casino_payout(guild.id, user.id, winnings)
+            if paid < winnings:
+                final_text = (
+                    f"{result_msg}\n🎉 **WINNER!** Owed **{winnings:,}** — house only had **{paid:,}**. "
+                    f"You got what was there."
+                )
+            else:
+                final_text = f"{result_msg}\n🎉 **WINNER!** You won **{paid:,}** coins!"
 
             if hit_jackpot_shot:
-                pot_total = get_coins(guild.id, house_id)
-                if pot_total > 0:
-                    add_coins(guild.id, user.id, pot_total)
-                    deduct_coins(guild.id, house_id, pot_total)
-                    final_text += f"\n💰 **JACKPOT!!** You also claimed the house pot of **{pot_total}**!"
+                on_hand = get_house_state(guild.id)["on_hand"]
+                jackpot_pct = random.uniform(GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT)
+                jackpot_cap = int(on_hand * jackpot_pct)
+                if jackpot_cap > 0:
+                    jackpot_paid = casino_payout(guild.id, user.id, jackpot_cap)
+                    if jackpot_paid > 0:
+                        final_text += (
+                            f"\n💰 **JACKPOT!!** You raked **{jackpot_paid:,}** — "
+                            f"**{int(round(jackpot_pct * 100))}%** of on-hand. Safe harbor untouched."
+                        )
         else:
-            tax = int(amount * 0.10)
-            add_coins(guild.id, house_id, tax)
-            final_text = f"{result_msg}\n💀 **L.** {tax} added to the !pot."
+            # Bet already went to house above; nothing more to do on a loss.
+            final_text = f"{result_msg}\n💀 **L.** Your **{amount:,}** is in the pot now."
 
         record_roulette(guild.id, user.id, won)
 
@@ -115,25 +128,37 @@ class CasinoRoulette(commands.Cog):
         await self.run_bet(interaction, bet_type, amount)
 
     # --- POT ---
-    def _format_pot_message(self, pot: int, slash: bool) -> str:
+    def _format_pot_message(self, state: dict, slash: bool) -> str:
         prefix = "/" if slash else "!"
+        on_hand = state["on_hand"]
+        reserve = state["reserve"]
+        apr_pct = state["apr"] * 100
+        green_lo = int(on_hand * GREEN_JACKPOT_MIN_PCT)
+        green_hi = int(on_hand * GREEN_JACKPOT_MAX_PCT)
+        heist_lo = int(on_hand * HOUSE_HEIST_MIN_PCT)
+        heist_hi = int(on_hand * HOUSE_HEIST_MAX_PCT)
+        green_pct_range = f"{int(GREEN_JACKPOT_MIN_PCT*100)}–{int(GREEN_JACKPOT_MAX_PCT*100)}%"
+        heist_pct_range = f"{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%"
         return (
-            f"💰 **Current pot:** **{pot:,}** coins.\n"
-            f"**Ways to win it:**\n"
-            f"• 🟢 Hit **green** on `{prefix}bet` — claim the whole pot.\n"
-            f"• 🏦 Rob the house with `{prefix}heist @<bot>` — 1-in-100, walks off with the entire vault."
+            f"💰 **House Pot**\n"
+            f"• **On hand:** **{on_hand:,}** coins — heistable, funds payouts.\n"
+            f"• **Safe harbor:** **{reserve:,}** coins — untouchable, earning **{apr_pct:.2f}% APR**.\n"
+            f"• **Total net worth:** **{on_hand + reserve:,}**\n\n"
+            f"**Ways to bleed the on-hand cash:**\n"
+            f"• 🟢 Hit **green** on `{prefix}bet` — random **{green_pct_range}** of on-hand (**{green_lo:,}–{green_hi:,}**).\n"
+            f"• 🏦 Rob the house with `{prefix}heist @<bot>` — 1-in-100, random **{heist_pct_range}** of on-hand (**{heist_lo:,}–{heist_hi:,}**)."
         )
 
     @commands.command(name="pot")
     @commands.guild_only()
     async def pot_prefix(self, ctx):
-        pot = get_pot(ctx.guild.id)
-        await ctx.send(self._format_pot_message(pot, slash=False))
+        state = get_house_state(ctx.guild.id)
+        await ctx.send(self._format_pot_message(state, slash=False))
 
-    @app_commands.command(name="pot", description="Show the current roulette house pot and how to win it")
+    @app_commands.command(name="pot", description="Show the house pot — on-hand cash vs safe-harbor investments")
     async def pot_slash(self, interaction: discord.Interaction):
-        pot = get_pot(interaction.guild_id)
-        await interaction.response.send_message(self._format_pot_message(pot, slash=True))
+        state = get_house_state(interaction.guild_id)
+        await interaction.response.send_message(self._format_pot_message(state, slash=True))
 
 async def setup(bot):
     await bot.add_cog(CasinoRoulette(bot))

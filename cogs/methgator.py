@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -203,16 +200,16 @@ class MethGator(commands.Cog):
         user_id = interaction.user.id
         bet = view.bet
 
-        if mult >= 1.0:
-            payout = int(bet * mult)
-            add_coins(guild_id, user_id, payout)
-            result = f"**×{mult:.2f}** → **+{payout - bet}** coins."
-        elif mult > 0:
-            payout = int(bet * mult)
-            add_coins(guild_id, user_id, payout)
-            result = f"**×{mult:.2f}** → partial refund **{payout}**. Lost **{bet - payout}**."
+        if mult > 0:
+            requested = int(bet * mult)
+            paid = casino_payout(guild_id, user_id, requested)
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            if mult >= 1.0:
+                result = f"**×{mult:.2f}** → **{paid - bet:+,}** coins.{short}"
+            else:
+                result = f"**×{mult:.2f}** → partial refund **{paid:,}**. Lost **{bet - paid:,}**.{short}"
         else:
-            result = f"**Lost {bet}** coins."
+            result = f"**Lost {bet:,}** coins."
 
         text = (
             f"🐊 **{interaction.user.display_name}'s Meth Gator** picks: **{action['emoji']} {action['label']}**\n\n"
@@ -243,11 +240,13 @@ class MethGator(commands.Cog):
         if bet <= 0:
             await reply("The meth gator demands tribute. > 0.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke for chaos. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke for chaos. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("The gator declines your bet. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         view = MethGatorView(self, user.id, bet)
         content = (
             f"🐊 **{user.display_name}** is a meth gator. **{bet}** coins on the line.\n"

@@ -2,13 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 import asyncio
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +183,13 @@ class DUISimulator(commands.Cog):
             # Resolve
             if not game.ended:
                 # All rounds complete — auto-bank
-                payout = int(game.bet * game.multiplier)
-                add_coins(game.guild_id, game.user_id, payout)
-                net = payout - game.bet
+                requested = int(game.bet * game.multiplier)
+                paid = casino_payout(game.guild_id, game.user_id, requested)
+                net = paid - game.bet
+                short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
                 final = (
                     f"🏁 **{random.choice(COMPLETE_FLAVOR)}**\n"
-                    f"Final multiplier: **{game.multiplier:.2f}×** → **+{net}** coins.\n"
+                    f"Final multiplier: **{game.multiplier:.2f}×** → **{net:+,}** coins.{short}\n"
                     f"Balance: **{get_coins(game.guild_id, game.user_id)}**"
                 )
             elif game.end_reason == "early":
@@ -236,11 +234,13 @@ class DUISimulator(commands.Cog):
         if bet <= 0:
             await reply("Gas money, bro.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke for gas. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke for gas. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         game = DUIGame(guild.id, user.id, user.display_name, bet)
         view = DUIView(self, game)
         intro = (

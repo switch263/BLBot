@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -132,14 +129,19 @@ class TrollBridge(commands.Cog):
         user_id = interaction.user.id
         bet = view.bet
         if correct:
-            payout = bet * 3
-            add_coins(guild_id, user_id, payout)
-            net = payout - bet
-            result = f"✅ **Correct!** {random.choice(WIN_FLAVOR)}\n**+{net}** coins."
+            requested = bet * 3
+            paid = casino_payout(guild_id, user_id, requested)
+            net = paid - bet
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            result = f"✅ **Correct!** {random.choice(WIN_FLAVOR)}\n**{net:+,}** coins.{short}"
         else:
-            extra = min(get_coins(guild_id, user_id), bet // 2)
+            fine_target = bet // 2
+            extra = 0
+            if fine_target > 0:
+                fine_result = transfer_to_house(guild_id, user_id, fine_target)
+                if fine_result.get("ok"):
+                    extra = fine_target
             if extra > 0:
-                deduct_coins(guild_id, user_id, extra)
                 fine_line = f"**Lost {bet}** + **{extra}** fine."
             else:
                 fine_line = f"**Lost {bet}**."
@@ -170,11 +172,13 @@ class TrollBridge(commands.Cog):
         if bet <= 0:
             await reply("The troll demands tribute. > 0 coins.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke for the toll. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke for the toll. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("The troll's calculator is on the fritz. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         question, options, correct_idx = random.choice(RIDDLES)
         view = BridgeView(self, user.id, bet, options, correct_idx)
         text = (

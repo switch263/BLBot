@@ -2,14 +2,11 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 import asyncio
 import time
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message, record_blackjack
+from economy import get_coins, jail_message, record_blackjack, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -170,12 +167,14 @@ class LobbyView(discord.ui.View):
         if jmsg:
             await interaction.response.send_message(jmsg, ephemeral=True)
             return
-        balance = get_coins(r.guild_id, interaction.user.id)
-        if balance < r.buy_in:
-            await interaction.response.send_message(
-                f"Too broke for the buy-in of **{r.buy_in}**. Balance: **{balance}**", ephemeral=True)
+        bet_result = transfer_to_house(r.guild_id, interaction.user.id, r.buy_in)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await interaction.response.send_message(
+                    f"Too broke for the buy-in of **{r.buy_in}**. Balance: **{bet_result.get('have', 0)}**", ephemeral=True)
+            else:
+                await interaction.response.send_message("Buy-in failed. Try again.", ephemeral=True)
             return
-        deduct_coins(r.guild_id, interaction.user.id, r.buy_in)
         r.players.append(PlayerState(interaction.user.id, interaction.user.display_name, r.buy_in))
         await interaction.response.edit_message(content=self.cog._render_lobby(r), view=self)
 
@@ -189,7 +188,7 @@ class LobbyView(discord.ui.View):
         if not p:
             await interaction.response.send_message("You're not in this round.", ephemeral=True)
             return
-        add_coins(r.guild_id, p.user_id, p.bet)
+        casino_payout(r.guild_id, p.user_id, p.bet)
         r.players.remove(p)
         if interaction.user.id == r.host_id and r.players:
             r.host_id = r.players[0].user_id
@@ -222,7 +221,7 @@ class LobbyView(discord.ui.View):
             await interaction.response.send_message("Round already started.", ephemeral=True)
             return
         for p in r.players:
-            add_coins(r.guild_id, p.user_id, p.bet)
+            casino_payout(r.guild_id, p.user_id, p.bet)
         r.phase = Round.DONE
         if r.timer_task:
             r.timer_task.cancel()
@@ -286,11 +285,11 @@ class PlayingView(discord.ui.View):
         r = self.round
         p = r.current_player
         bet = p.hand_bets[p.current_hand_idx]
-        if get_coins(r.guild_id, p.user_id) < bet:
+        bet_result = transfer_to_house(r.guild_id, p.user_id, bet)
+        if not bet_result.get("ok"):
             await interaction.response.send_message(
                 f"Can't double — not enough coins for **{bet}**.", ephemeral=True)
             return
-        deduct_coins(r.guild_id, p.user_id, bet)
         p.hand_bets[p.current_hand_idx] *= 2
         p.current_hand.append(r.deck.pop())
         await self.cog._after_action(interaction, self, auto_advance=True)
@@ -301,11 +300,11 @@ class PlayingView(discord.ui.View):
             return
         r = self.round
         p = r.current_player
-        if get_coins(r.guild_id, p.user_id) < p.bet:
+        bet_result = transfer_to_house(r.guild_id, p.user_id, p.bet)
+        if not bet_result.get("ok"):
             await interaction.response.send_message(
                 f"Can't split — not enough coins for **{p.bet}**.", ephemeral=True)
             return
-        deduct_coins(r.guild_id, p.user_id, p.bet)
         h = p.current_hand
         second_card = h.pop()
         h.append(r.deck.pop())
@@ -423,12 +422,13 @@ class Blackjack(commands.Cog):
         if channel.id in self.rounds:
             await reply("A blackjack round is already running in this channel.")
             return
-        balance = get_coins(guild.id, user.id)
-        if balance < bet:
-            await reply(f"You're too broke for the buy-in. Balance: **{balance}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"You're too broke for the buy-in. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Buy-in failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         r = Round(guild.id, channel.id, user.id, bet)
         r.players.append(PlayerState(user.id, user.display_name, bet))
         r.lobby_deadline = time.time() + LOBBY_SECONDS
@@ -548,7 +548,7 @@ class Blackjack(commands.Cog):
                     results.append(f"💀 lose ({ptotal} vs {dealer_total}) — lose {bet}")
             p.payout = payout
             if payout:
-                add_coins(r.guild_id, p.user_id, payout)
+                casino_payout(r.guild_id, p.user_id, payout)
             # Stat tracking: one play per player per round; "won" = ended up ahead
             # vs. what they put in (pushes count as plays but not wins).
             total_bet = sum(p.hand_bets)

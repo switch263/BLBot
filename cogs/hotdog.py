@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +146,10 @@ class HotDogView(discord.ui.View):
             g.log.append(f"#{g.eaten}: {dog} — *kept down.* (×{g.multiplier:.2f})")
         if g.eaten >= MAX_DOGS:
             g.ended = True
-            payout = int(g.bet * g.multiplier)
-            add_coins(g.guild_id, g.user_id, payout)
-            g.log.append(f"🏆 **TEN DOG LIMIT REACHED.** You are a national treasure. Auto-bank at ×{g.multiplier:.2f}.")
+            requested = int(g.bet * g.multiplier)
+            paid = casino_payout(g.guild_id, g.user_id, requested)
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            g.log.append(f"🏆 **TEN DOG LIMIT REACHED.** You are a national treasure. Auto-bank at ×{g.multiplier:.2f}.{short}")
             self._refresh()
             for child in self.children:
                 child.disabled = True
@@ -174,9 +172,10 @@ class HotDogView(discord.ui.View):
             await interaction.response.send_message("You haven't eaten yet, coward.", ephemeral=True)
             return
         g.ended = True
-        payout = int(g.bet * g.multiplier)
-        add_coins(g.guild_id, g.user_id, payout)
-        g.log.append(f"✅ **Tapped out at ×{g.multiplier:.2f}.** {random.choice(BANK_MESSAGES)}")
+        requested = int(g.bet * g.multiplier)
+        paid = casino_payout(g.guild_id, g.user_id, requested)
+        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        g.log.append(f"✅ **Tapped out at ×{g.multiplier:.2f}.** {random.choice(BANK_MESSAGES)}{short}")
         self._refresh()
         for child in self.children:
             child.disabled = True
@@ -229,11 +228,13 @@ class HotDogContest(commands.Cog):
         if bet <= 0:
             await reply("Gotta ante up, skinny.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke. Balance: **{get_coins(guild.id, user.id)}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         game = HotDogGame(guild.id, user.id, user.display_name, bet)
         view = HotDogView(self, game)
         view._refresh()

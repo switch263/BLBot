@@ -119,6 +119,19 @@ class Slots(commands.Cog):
 
         return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
 
+    # (game_key, embed_label_with_emoji, plays_word, wins_word)
+    _GAME_DISPLAY = [
+        ("roulette",   "🎡 Roulette (/bet)",        "Plays",   "Wins"),
+        ("rr",         "🔫 Russian Roulette",       "Games",   "Wins"),
+        ("vault",      "🏦 Vault (/vault)",         "Plays",   "Cracked"),
+        ("vault_hard", "🔒 Vault Hard (/vault_hard)", "Plays", "Cracked"),
+        ("blackjack",  "🃏 Blackjack",              "Rounds",  "Wins"),
+        ("highlow",    "🆙 Higher-Lower",           "Plays",   "Wins"),
+        ("pawnshop",   "💼 Pawn Shop",              "Plays",   "Wins"),
+        ("heist",      "🥷 Heists",                 "Attempts", "Successes"),
+        ("den",        "🦝 Raccoon Den",            "Digs",    "Survived"),
+    ]
+
     def _build_balance_embed(self, user: discord.Member, wallet: dict) -> discord.Embed:
         embed = discord.Embed(
             title=f"🪙 {user.display_name}'s Wallet",
@@ -135,51 +148,14 @@ class Slots(commands.Cog):
             value=f"Spins: **{wallet['spins']}**\nJackpots: **{wallet['jackpots']}**",
             inline=True,
         )
-        embed.add_field(
-            name="🎡 Roulette (/bet)",
-            value=f"Plays: **{wallet['roulette_plays']}**\nWins: **{wallet['roulette_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🔫 Russian Roulette",
-            value=f"Games: **{wallet['rr_plays']}**\nWins: **{wallet['rr_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🏦 Vault (/vault)",
-            value=f"Plays: **{wallet['vault_plays']}**\nCracked: **{wallet['vault_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🔒 Vault Hard (/vault_hard)",
-            value=f"Plays: **{wallet['vault_hard_plays']}**\nCracked: **{wallet['vault_hard_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🃏 Blackjack",
-            value=f"Rounds: **{wallet['blackjack_plays']}**\nWins: **{wallet['blackjack_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🆙 Higher-Lower",
-            value=f"Plays: **{wallet['highlow_plays']}**\nWins: **{wallet['highlow_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="💼 Pawn Shop",
-            value=f"Plays: **{wallet['pawnshop_plays']}**\nWins: **{wallet['pawnshop_wins']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🥷 Heists",
-            value=f"Attempts: **{wallet['heists_attempted']}**\nSuccesses: **{wallet['heists_succeeded']}**",
-            inline=True,
-        )
-        embed.add_field(
-            name="🦝 Raccoon Den",
-            value=f"Digs: **{wallet['den_plays']}**\nSurvived: **{wallet['den_wins']}**",
-            inline=True,
-        )
+        stats = economy.get_game_stats(user.guild.id, user.id)
+        for game_key, label, plays_word, wins_word in self._GAME_DISPLAY:
+            row = stats.get(game_key, {"plays": 0, "wins": 0})
+            embed.add_field(
+                name=label,
+                value=f"{plays_word}: **{row['plays']}**\n{wins_word}: **{row['wins']}**",
+                inline=True,
+            )
         return embed
 
     def _give_daily(self, guild_id: int, user_id: int) -> tuple[bool, int, int]:

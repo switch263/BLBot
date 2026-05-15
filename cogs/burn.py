@@ -35,20 +35,26 @@ class Burn(commands.Cog):
     async def _do_burn(self, guild_id: int, user: discord.abc.User, amount: int, vanish: bool) -> discord.Embed:
         if amount <= 0:
             return discord.Embed(description="Burn at least **1** coin.", color=discord.Color.red())
-        balance = economy.get_coins(guild_id, user.id)
-        if balance < amount:
-            return discord.Embed(
-                description=f"You only have **{balance:,}** coins.",
-                color=discord.Color.red(),
-            )
 
-        economy.deduct_coins(guild_id, user.id, amount)
         if vanish:
+            if not economy.try_deduct(guild_id, user.id, amount):
+                balance = economy.get_coins(guild_id, user.id)
+                return discord.Embed(
+                    description=f"You only have **{balance:,}** coins.",
+                    color=discord.Color.red(),
+                )
             flavor = random.choice(VANISH_FLAVOR)
             target = "the void"
             color = discord.Color.dark_red()
         else:
-            economy.add_coins(guild_id, economy.get_house_id(), amount)
+            result = economy.transfer_to_house(guild_id, user.id, amount)
+            if not result.get("ok"):
+                if result.get("error") == "broke":
+                    return discord.Embed(
+                        description=f"You only have **{result.get('have', 0):,}** coins.",
+                        color=discord.Color.red(),
+                    )
+                return discord.Embed(description="Donation failed. Try again.", color=discord.Color.red())
             flavor = random.choice(DONATE_FLAVOR)
             target = "the house"
             color = discord.Color.orange()

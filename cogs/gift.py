@@ -23,19 +23,25 @@ class Gift(commands.Cog):
         if amount < 1:
             return discord.Embed(description="You must gift at least **1** coin!", color=discord.Color.red())
 
-        balance = economy.get_coins(guild_id, sender.id)
-        if balance < amount:
-            return discord.Embed(description=f"You only have **{balance}** coins!", color=discord.Color.red())
-
-        sender_bal, recv_bal = economy.transfer_coins(guild_id, sender.id, recipient.id, amount)
+        result = economy.transfer_coins(guild_id, sender.id, recipient.id, amount)
+        if not result.get("ok"):
+            err = result.get("error")
+            if err == "broke":
+                return discord.Embed(
+                    description=f"You only have **{result.get('have', 0)}** coins!",
+                    color=discord.Color.red(),
+                )
+            if err == "invalid_amount":
+                return discord.Embed(description="Gift at least **1** coin.", color=discord.Color.red())
+            return discord.Embed(description="Transfer failed. Try again.", color=discord.Color.red())
 
         embed = discord.Embed(
             title="Gift Sent!",
             description=f"{sender.mention} gifted **{amount}** coins to {recipient.mention}!",
             color=discord.Color.green()
         )
-        embed.add_field(name=f"{sender.display_name}'s Balance", value=f"{sender_bal} coins", inline=True)
-        embed.add_field(name=f"{recipient.display_name}'s Balance", value=f"{recv_bal} coins", inline=True)
+        embed.add_field(name=f"{sender.display_name}'s Balance", value=f"{result['sender_balance']} coins", inline=True)
+        embed.add_field(name=f"{recipient.display_name}'s Balance", value=f"{result['receiver_balance']} coins", inline=True)
         return embed
 
     @commands.command(aliases=['give', 'send'])

@@ -2,12 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message, record_vault
+from economy import get_coins, jail_message, record_vault, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -135,17 +132,18 @@ class SubmitButton(discord.ui.Button):
             g.ended = True
             mult = PAYOUT_BY_ATTEMPT.get(attempts_used, PAYOUT_BY_ATTEMPT[MAX_ATTEMPTS])
             raw_payout = int(g.bet * mult)
-            payout = min(raw_payout, MAX_PAYOUT)
-            capped = payout < raw_payout
-            add_coins(g.guild_id, g.user_id, payout)
+            requested = min(raw_payout, MAX_PAYOUT)
+            capped = requested < raw_payout
+            paid = casino_payout(g.guild_id, g.user_id, requested)
             record_vault(g.guild_id, g.user_id, won=True)
             for child in view.children:
                 child.disabled = True
             cap_note = f" *(capped at {MAX_PAYOUT:,})*" if capped else ""
+            short_note = f" *(house was short — owed {requested:,})*" if paid < requested else ""
             footer = (
                 f"{random.choice(SOLVE_FLAVOR)}\n"
-                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{payout:,}** coins{cap_note} "
-                f"(net **+{payout - g.bet:,}**).\n"
+                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{paid:,}** coins{cap_note}{short_note} "
+                f"(net **{paid - g.bet:+,}**).\n"
                 f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
             )
         elif attempts_used >= MAX_ATTEMPTS:
@@ -243,11 +241,13 @@ class TheVault(commands.Cog):
         if bet > MAX_BET:
             await reply(f"Max bet is **{MAX_BET:,}** coins. Payouts cap at **{MAX_PAYOUT:,}**.")
             return
-        if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke. Balance: **{get_coins(guild.id, user.id):,}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
         game = VaultGame(guild.id, user.id, user.display_name, bet)
         view = VaultView(self, game)
         await reply(self._render(game), view=view)

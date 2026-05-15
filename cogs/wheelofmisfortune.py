@@ -2,13 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sys
-import os
 import logging
 import asyncio
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, jail_message, transfer_to_house, casino_payout
 
 logger = logging.getLogger(__name__)
 
@@ -100,32 +97,40 @@ class WheelOfMisfortune(commands.Cog):
         user_id = user.id
 
         if outcome == "jackpot_10x":
-            add_coins(guild_id, user_id, bet * 10)
-            return f"🎉 **JACKPOT ×10!** You won **{bet * 9}** coins."
+            paid = casino_payout(guild_id, user_id, bet * 10)
+            short = f" *(house was short — owed {bet*10:,})*" if paid < bet * 10 else ""
+            return f"🎉 **JACKPOT ×10!** You won **{paid - bet:+,}** coins.{short}"
 
         if outcome == "jackpot_5x":
-            add_coins(guild_id, user_id, bet * 5)
-            return f"💎 **×5 HIT!** +**{bet * 4}** coins."
+            paid = casino_payout(guild_id, user_id, bet * 5)
+            short = f" *(house was short — owed {bet*5:,})*" if paid < bet * 5 else ""
+            return f"💎 **×5 HIT!** **{paid - bet:+,}** coins.{short}"
 
         if outcome == "payout_3x":
-            add_coins(guild_id, user_id, bet * 3)
-            return f"🎰 **×3!** +**{bet * 2}** coins."
+            paid = casino_payout(guild_id, user_id, bet * 3)
+            short = f" *(house was short — owed {bet*3:,})*" if paid < bet * 3 else ""
+            return f"🎰 **×3!** **{paid - bet:+,}** coins.{short}"
 
         if outcome == "payout_2x":
-            add_coins(guild_id, user_id, bet * 2)
-            return f"✨ **×2!** +**{bet}** coins."
+            paid = casino_payout(guild_id, user_id, bet * 2)
+            short = f" *(house was short — owed {bet*2:,})*" if paid < bet * 2 else ""
+            return f"✨ **×2!** **{paid - bet:+,}** coins.{short}"
 
         if outcome == "break_even":
-            add_coins(guild_id, user_id, bet)
+            casino_payout(guild_id, user_id, bet)
             return f"🙃 **Break even.** The wheel is bored. Bet returned."
 
         if outcome == "nothing":
             return f"💀 **The wheel ate your {bet} coins and stared silently.**"
 
         if outcome == "lose_extra":
-            extra = min(get_coins(guild_id, user_id), bet // 2)
+            extra_target = bet // 2
+            extra = 0
+            if extra_target > 0:
+                extra_result = transfer_to_house(guild_id, user_id, extra_target)
+                if extra_result.get("ok"):
+                    extra = extra_target
             if extra > 0:
-                deduct_coins(guild_id, user_id, extra)
                 return f"🪦 **Cursed!** Lost **{bet}** + an extra **{extra}** fee ripped from your wallet."
             return f"🪦 **Cursed!** Lost **{bet}**. Tried to charge you more but you're already broke. Humiliating."
 
@@ -145,7 +150,7 @@ class WheelOfMisfortune(commands.Cog):
                 return f"🏚️ **The wheel wanted to pay the audience but nobody's around. Lose {bet}.**"
             per = max(1, bet // len(recent_users))
             for u in recent_users:
-                add_coins(guild_id, u.id, per)
+                casino_payout(guild_id, u.id, per)
             names = ", ".join(u.display_name for u in recent_users)
             return f"🎁 **The wheel is generous (with your money)!** {names} each get **{per}**. You lose **{bet}**."
 
@@ -154,7 +159,7 @@ class WheelOfMisfortune(commands.Cog):
             if not members:
                 return f"💀 **No lucky winners in sight. Lose {bet}.**"
             lucky = random.choice(members)
-            add_coins(guild_id, lucky.id, bet)
+            casino_payout(guild_id, lucky.id, bet)
             return f"🎰 **The wheel chose a benefactor!** **{lucky.display_name}** pockets your **{bet}** coins."
 
         if outcome == "florida_man":
@@ -209,12 +214,13 @@ class WheelOfMisfortune(commands.Cog):
         if bet <= 0:
             await reply("Bet more than 0, cheapskate.")
             return
-        balance = get_coins(guild.id, user.id)
-        if balance < bet:
-            await reply(f"You're too broke. Balance: **{balance}**")
+        bet_result = transfer_to_house(guild.id, user.id, bet)
+        if not bet_result.get("ok"):
+            if bet_result.get("error") == "broke":
+                await reply(f"You're too broke. Balance: **{bet_result.get('have', 0)}**")
+            else:
+                await reply("Bet failed. Try again.")
             return
-
-        deduct_coins(guild.id, user.id, bet)
 
         frames = [
             "🎡 **Spinning the Wheel of Misfortune...**",
