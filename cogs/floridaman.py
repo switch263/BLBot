@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 from datetime import date
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 

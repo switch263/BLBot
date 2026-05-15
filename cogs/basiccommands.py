@@ -5,6 +5,7 @@ import random
 import logging
 from pathlib import Path
 from lenny import lenny
+import os
 
 logger = logging.getLogger(__name__)
 cwd = str(os.getcwd())

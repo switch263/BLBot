@@ -9,6 +9,7 @@ Run this module directly to render a sample card to /tmp:
 """
 import io
 import math
+import os
 import random
 from datetime import datetime, timezone
 from typing import Tuple
