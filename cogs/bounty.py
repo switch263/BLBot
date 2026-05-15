@@ -59,6 +59,78 @@ ALREADY_JAILED_FLAVOR = [
 ]
 
 
+# Inmates-board flavor for jail rows created by /bounty. Used as the `reason`
+# column so the inmates command displays something funnier than "Bounty placed by X".
+# Two pools: one for the *target* (what the placer pinned on them), one for the
+# *placer* themselves (what they got caught doing while arranging the hit).
+
+TARGET_CRIME_REASONS = [
+    "Caught laundering nickels through a Coinstar",
+    "Fed the koi pond entire baguettes (no permit)",
+    "Replaced the casino's complimentary peanuts with wasabi peas",
+    "Convicted of being TOO good at thumb wars",
+    "Yodeling in the no-yodeling zone",
+    "Accepted a bribe of one (1) Werther's Original",
+    "Unsanctioned interpretive dance at the craps table",
+    "Failed a vibe check, repeatedly",
+    "Wore Crocs to the high-stakes table",
+    "Running a Ponzi scheme involving Beanie Babies",
+    "Tampered with a slot machine using a fridge magnet",
+    "Whispering to the dice. The dice confessed everything.",
+    "Refused to tip the dealer 'on principle'",
+    "Brought their own deck. From 2003. Pokémon on the back.",
+    "Charged with crypto-something — nobody asked, they went anyway",
+    "Uncomfortably loud at brunch",
+    "Too friendly with the parking valet",
+    "Excessive enthusiasm during 'Take Me Home, Country Roads'",
+    "Replaced the casino's coffee with decaf",
+    "Listed 'vibes' as occupation on their W-2",
+    "Running an unlicensed lemonade stand inside the casino",
+    "Made eye contact with the dealer for 17 uninterrupted seconds",
+    "Wore the same outfit as the pit boss. On purpose.",
+    "Tried to pay in Chuck E. Cheese tokens. Twice.",
+    "Heckled the live piano player",
+    "Smuggled a goldfish past security in a regular fish tank",
+    "Microwaved fish in the high-roller lounge",
+    "Caught reading aloud from a self-help book at the blackjack table",
+    "Suspected of being a guy named Steve. They are not Steve.",
+    "Refused to break eye contact with the security camera for 3 hours",
+]
+
+PLACER_BOTCH_REASONS = [
+    "Tripped over their own getaway scooter mid-handoff",
+    "Hired a 'hitman' off Craigslist. It was a guy named Greg who flips couches.",
+    "Wrote 'eliminate {target}' on a napkin and left it at the table",
+    "Paid the hitman in Chuck E. Cheese tokens",
+    "Tried to recruit a hitman in a Wendy's drive-thru. Wendy's has cameras.",
+    "Drunkenly Yelp-reviewed the failed hit",
+    "Texted the contract to their mom by mistake. Mom called the cops.",
+    "Posted the bounty on LinkedIn",
+    "Hired a hitman who turned out to be an undercover Boy Scout",
+    "Caught practicing menacing in a mirror at Cabela's",
+    "Wore a fedora to the meet. Profiled immediately.",
+    "Confessed everything during a TED talk audition",
+    "Submitted the bounty paperwork as a Mad Libs",
+    "Hired their own roommate. Roommate ratted for the security deposit.",
+    "Dropped the contract under a coffee cup at the DMV",
+    "Tried to bribe a goldfish to deliver the contract. Goldfish testified.",
+    "Solicited a hit in the comments of a bonsai forum",
+    "Used the wrong burner phone. It was actually a calculator.",
+    "Said 'I'd like to place a bounty' out loud, in line, at a Starbucks",
+    "Wrote out the hit instructions in fridge magnets at a friend's house",
+    "Hired a hitman with a Pinterest board titled 'wet work'",
+    "Tried to pay the hitman in unsigned IOUs. They cashed one anyway.",
+    "Carved the target's name into a park bench in front of three witnesses",
+    "Forgot the target's name mid-handoff and just said 'you know, that guy'",
+    "Tried to slip the hitman a folded note in cursive. They couldn't read cursive.",
+    "Gave the hitman a printed PowerPoint deck. Slide 7 was self-incriminating.",
+    "Live-tweeted the planning phase. Pinned the worst tweet.",
+    "Got mistaken for their own hitman. Arrested by both teams.",
+    "Stored the contract in their Notes app. iCloud sync did the rest.",
+    "Tried to subcontract the hit to a Roomba",
+]
+
+
 def _success_rate(bet: int) -> float:
     if bet <= MIN_BOUNTY:
         return MIN_RATE
@@ -108,10 +180,12 @@ class Bounty(commands.Cog):
 
         if success:
             jail_seconds = _roll_jail_seconds()
+            # Unhinged inmates-board crime; tag the placer so people can tell who paid.
+            crime = f"{random.choice(TARGET_CRIME_REASONS)} (bountied by {placer.display_name})"
             result = economy.place_jail_bounty(
                 guild.id, placer.id, target.id,
                 bet=bet, success=True, jail_seconds=jail_seconds,
-                channel_id=channel_id, reason=f"Bounty placed by {placer.display_name}",
+                channel_id=channel_id, reason=crime,
                 guild_limit=BOUNTY_GUILD_LIMIT, guild_window_seconds=BOUNTY_GUILD_WINDOW_SECONDS,
                 user_limit=BOUNTY_USER_LIMIT, user_window_seconds=BOUNTY_USER_WINDOW_SECONDS,
             )
@@ -137,9 +211,11 @@ class Bounty(commands.Cog):
         if not result["ok"]:
             return self._format_economy_error(result, bet)
         backfire_seconds = _roll_jail_seconds()
+        # Unhinged botch flavor; substitute the target's name where the template asks for it.
+        botch = random.choice(PLACER_BOTCH_REASONS).format(target=target.display_name)
         economy.jail_user(
             guild.id, placer.id, backfire_seconds,
-            reason=f"Botched bounty on {target.display_name}",
+            reason=botch,
             bail_amount=0,  # no bail-out — they shouldn't have hired an idiot
             channel_id=channel_id,
         )

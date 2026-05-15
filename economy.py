@@ -537,6 +537,31 @@ def get_jail_info(guild_id: int, user_id: int) -> dict | None:
         return None
 
 
+def get_active_jails(guild_id: int) -> list[dict]:
+    """Return every currently-jailed user in a guild (until_ts in the future),
+    ordered by soonest release first."""
+    import time as _t
+    now = _t.time()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, until_ts, reason, bail_amount, channel_id, jailed_at, extended_seconds "
+                "FROM jail WHERE guild_id = ? AND until_ts > ? ORDER BY until_ts ASC",
+                (guild_id, now),
+            ).fetchall()
+            return [
+                {
+                    "user_id": r[0], "until_ts": r[1], "reason": r[2] or "",
+                    "bail_amount": r[3] or 0, "channel_id": r[4] or 0,
+                    "jailed_at": r[5] or 0.0, "extended_seconds": r[6] or 0,
+                }
+                for r in rows
+            ]
+    except sqlite3.Error as e:
+        logger.error(f"Database error reading active jails: {e}")
+        return []
+
+
 def get_expired_jails() -> list[dict]:
     """Return every jail row whose sentence has expired. Used by the release-message loop."""
     import time as _t

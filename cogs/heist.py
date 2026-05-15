@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import random
 import logging
+import time
 import economy
 
 logger = logging.getLogger(__name__)
@@ -709,6 +710,63 @@ class Heist(commands.Cog):
     async def jail_slash(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         await interaction.response.send_message(self._format_jail_status(target))
+
+    # ---- Inmate roster ---------------------------------------------------
+
+    def _resolve_display_name(self, guild: discord.Guild, user_id: int) -> str:
+        member = guild.get_member(user_id)
+        if member:
+            return member.display_name
+        return f"User {user_id}"
+
+    def _build_inmates_embed(self, guild: discord.Guild) -> discord.Embed:
+        rows = economy.get_active_jails(guild.id)
+        if not rows:
+            return discord.Embed(
+                title="🏛️ Casino Jail",
+                description="✅ The cells are empty. Everyone's law-abiding right now.",
+                color=discord.Color.green(),
+            )
+
+        embed = discord.Embed(
+            title=f"🏛️ Casino Jail — {len(rows)} inmate{'s' if len(rows) != 1 else ''}",
+            description="Sorted by soonest release.",
+            color=discord.Color.dark_red(),
+        )
+        # Discord caps embeds at 25 fields. If we somehow get more inmates than
+        # that, show the first 24 and note the overflow.
+        display_rows = rows[:24]
+        now = time.time()
+        for row in display_rows:
+            name = self._resolve_display_name(guild, row["user_id"])
+            remaining = max(0, int(row["until_ts"] - now))
+            reason = row["reason"] or "—"
+            bail = row["bail_amount"]
+            extended = row["extended_seconds"]
+            value_lines = [
+                f"**Crime:** {reason}",
+                f"**Released in:** {self._format_duration(remaining)}",
+            ]
+            if bail and bail > 0:
+                value_lines.append(f"**Bail:** {bail:,} coins")
+            else:
+                value_lines.append("**Bail:** _not available_")
+            if extended and extended > 0:
+                value_lines.append(f"**Sentence extended by:** {self._format_duration(extended)}")
+            embed.add_field(name=name, value="\n".join(value_lines), inline=False)
+        if len(rows) > len(display_rows):
+            embed.set_footer(text=f"+ {len(rows) - len(display_rows)} more inmate(s) not shown")
+        return embed
+
+    @commands.command(name="inmates", aliases=["jailroster", "lockdown"])
+    @commands.guild_only()
+    async def inmates_prefix(self, ctx):
+        """List every user currently sitting in casino jail."""
+        await ctx.send(embed=self._build_inmates_embed(ctx.guild))
+
+    @app_commands.command(name="inmates", description="List every user currently in casino jail")
+    async def inmates_slash(self, interaction: discord.Interaction):
+        await interaction.response.send_message(embed=self._build_inmates_embed(interaction.guild))
 
     # ---- Bail ------------------------------------------------------------
 
