@@ -4,14 +4,13 @@ from discord import app_commands
 import random
 import logging
 
-from economy import get_coins, jail_message, record_vault, transfer_to_house, casino_payout
+from economy import get_coins, jail_message, record_vault, transfer_to_house, casino_payout, MAX_BET
 
 logger = logging.getLogger(__name__)
 
 CODE_LENGTH = 4
 DIGITS = [1, 2, 3, 4, 5, 6]
 MAX_ATTEMPTS = 5
-MAX_BET = 1_000_000
 MAX_PAYOUT = 10_000_000
 
 # Payout by attempts used (1-indexed). Attempts=1 means cracked on first guess (pure luck).
@@ -239,7 +238,7 @@ class TheVault(commands.Cog):
             await reply("Bet > 0 to crack the vault.")
             return
         if bet > MAX_BET:
-            await reply(f"Max bet is **{MAX_BET:,}** coins. Payouts cap at **{MAX_PAYOUT:,}**.")
+            await reply(f"Easy, high roller — max bet is **{MAX_BET:,}** coins. Payouts cap at **{MAX_PAYOUT:,}**.")
             return
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):

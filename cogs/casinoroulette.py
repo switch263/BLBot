@@ -8,7 +8,7 @@ import asyncio
 
 from economy import (
     get_coins, record_roulette, get_house_state, jail_message,
-    transfer_to_house, casino_payout,
+    transfer_to_house, casino_payout, MAX_BET,
     GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT,
     HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT,
 )
@@ -38,6 +38,9 @@ class CasinoRoulette(commands.Cog):
 
         if amount <= 0:
             msg = "Bet more than 0, you cheapskate."
+            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
+        if amount > MAX_BET:
+            msg = f"Easy, high roller — max bet is {MAX_BET:,} coins."
             return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
 
         # Collect the bet atomically into the house pot. If the player is broke,

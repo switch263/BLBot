@@ -6,7 +6,7 @@ import logging
 import asyncio
 import time
 
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, MAX_BET, memorial_tithe
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +342,9 @@ class PigDerby(commands.Cog):
         if bet <= 0:
             await reply("Buy-in must be > 0.")
             return
+        if bet > MAX_BET:
+            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
+            return
         if channel.id in self.derbies:
             await reply("A pig derby is already running in this channel.")
             return
@@ -422,6 +425,8 @@ class PigDerby(commands.Cog):
                 payouts.append((b, payout))
             else:
                 payouts.append((b, 0))
+        # Memorial tithe: 1.5% of the total wagered, paid by the house to kev2tall.
+        memorial_tithe(d.guild_id, sum(b.amount for b in d.bets))
 
         d.phase = Derby.DONE
         self.derbies.pop(d.channel_id, None)

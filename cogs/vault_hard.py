@@ -6,7 +6,7 @@ import logging
 
 from economy import (
     get_coins, jail_message, record_vault_hard,
-    transfer_to_house, casino_payout,
+    transfer_to_house, casino_payout, MAX_BET,
 )
 
 logger = logging.getLogger(__name__)
@@ -240,6 +240,9 @@ class TheVaultHard(commands.Cog):
             return
         if bet <= 0:
             await reply("Bet > 0 to crack the hard vault.")
+            return
+        if bet > MAX_BET:
+            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
             return
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):

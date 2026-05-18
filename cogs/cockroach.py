@@ -5,7 +5,7 @@ import random
 import logging
 import asyncio
 
-from economy import get_coins, add_coins, deduct_coins, jail_message
+from economy import get_coins, add_coins, deduct_coins, jail_message, MAX_BET, memorial_tithe
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,8 @@ class CockroachFightClub(commands.Cog):
         flourish = random.choice(WINNER_FLOURISHES).format(b=loser_roach)
         payout = c.bet * 2
         add_coins(c.guild_id, winner_member.id, payout)
+        # Memorial tithe: 1.5% of the pot, paid by the house to kev2tall.
+        memorial_tithe(c.guild_id, payout)
 
         final = (
             f"\n💀 **{winner_roach}** {flourish}\n"
@@ -195,6 +197,9 @@ class CockroachFightClub(commands.Cog):
             return
         if bet <= 0:
             await reply("Put some skin in the game.")
+            return
+        if bet > MAX_BET:
+            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
             return
         if get_coins(guild.id, user.id) < bet:
             await reply(f"Too broke for this bout. Balance: **{get_coins(guild.id, user.id)}**")

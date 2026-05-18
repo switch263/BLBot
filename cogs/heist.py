@@ -557,6 +557,12 @@ class Heist(commands.Cog):
         if victim.bot and not targeting_house:
             return discord.Embed(description="You can't rob that bot. No wallet, no dice.", color=discord.Color.red()), None
 
+        # kev2tall is a memorial player — exempt from heists entirely.
+        if economy.is_memorial(victim.id):
+            return discord.Embed(description="kev2tall rests easy. You don't rob the memorial. 🕊️", color=discord.Color.red()), None
+        if economy.is_memorial(thief.id) or (accomplice and economy.is_memorial(accomplice.id)):
+            return discord.Embed(description="kev2tall doesn't run heists anymore. Rest easy, brother. 🕊️", color=discord.Color.red()), None
+
         # Jail check (can't rob while jailed)
         jmsg = economy.jail_message(guild_id, thief.id)
         if jmsg:
@@ -870,6 +876,8 @@ class Heist(commands.Cog):
             return False, f"💸 Extending **{target.display_name}** by **{hours}h** costs **{result.get('need', cost):,} coins**. You have **{result.get('have', 0):,}**."
         if err == "self":
             return False, "🚫 You can't extend your own sentence."
+        if err == "memorial":
+            return False, "🕊️ kev2tall doesn't do time. Leave the memorial be."
         if err == "invalid_amount":
             return False, "Pick a valid extension tier."
         return False, "⚠️ Extension failed (database error). Try again in a moment."

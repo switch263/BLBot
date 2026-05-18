@@ -10,6 +10,45 @@ logger = logging.getLogger(__name__)
 DB_FILE = os.path.join(DATA_DIR, "economy.db")
 STARTING_COINS = 100
 
+# Hard ceiling on a single stake, enforced by every game via check_bet().
+# One bet can never move more than this — keeps a whale from blowing up the
+# house (or another player) in one roll.
+MAX_BET = 100_000
+
+
+def check_bet(bet: int) -> str | None:
+    """Validate a player's stake before collecting it. Returns a user-facing
+    error string if the bet is non-positive or exceeds MAX_BET, else None.
+    Call at the top of every game's bet flow, before transfer_to_house /
+    deduct, e.g.:
+
+        err = check_bet(bet)
+        if err:
+            await reply(err)
+            return
+    """
+    if bet <= 0:
+        return "Bet must be greater than 0."
+    if bet > MAX_BET:
+        return f"Max bet is **{MAX_BET:,}** coins."
+    return None
+
+
+# --- Memorial player ------------------------------------------------------
+# kev2tall is an opt-out, exempt player — a member who has passed away. He is
+# never jailed and never involved in a heist. As a standing offering, 1.5% of
+# every game win and loss is tithed to his wallet, always paid by the house:
+# _memorial_house_tithe runs inside transfer_to_house / casino_payout for
+# games that route through the house wallet; memorial_tithe is the standalone
+# version for games that settle elsewhere (slots, coinflip, roulette, PvP).
+MEMORIAL_USER_ID = 361219124979826698  # kev2tall
+MEMORIAL_TITHE_PCT = 0.015  # 1.5%
+
+
+def is_memorial(user_id: int) -> bool:
+    """True if user_id is the memorial player (kev2tall)."""
+    return user_id == MEMORIAL_USER_ID
+
 # The bot itself is the house. Its Discord user ID is set via set_house_id() on startup.
 # Until that happens, fall back to legacy id 0 so older data still resolves.
 _LEGACY_HOUSE_ID = 0
@@ -180,10 +219,10 @@ def _init_db():
                 )
             ''')
             # house_reserve: the safe-harbor side of the house pot. The house
-            # wallet's `coins` is the on-hand (heistable / payout-funded) bucket,
-            # capped at HOUSE_LIQUID_CAP — overflow auto-sweeps here on every
-            # _normalize_house call. Earns interest at HOUSE_INTEREST_RATE_PER_HOUR,
-            # compounded lazily on read.
+            # wallet's `coins` is the on-hand (heistable) bucket; this reserve is
+            # untouchable by heist/jackpot drains and backstops casino_payout when
+            # on-hand is short. Earns interest at HOUSE_INTEREST_APR, compounded
+            # lazily on read.
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS house_reserve (
                     guild_id INTEGER PRIMARY KEY,
@@ -476,14 +515,12 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
 # --- House liquidity / safe-harbor reserve --------------------------------
 # The house has two buckets:
 #   on-hand: the house's `coins` in `wallets`. This is what's heistable and
-#            what green-roulette can claim. Capped at HOUSE_LIQUID_CAP —
-#            overflow gets swept into the reserve on every normalize call.
+#            what green-roulette can claim. Uncapped — it holds every bet.
 #   reserve: `house_reserve.coins`. Untouchable by heist/jackpot drains. Earns
 #            interest at HOUSE_INTEREST_APR, compounded lazily on read.
 #            casino_payout will top on-hand up from the reserve when on-hand
 #            is insufficient — so the bank can't go bankrupt on a single big
 #            bet while the investment account still has cash.
-HOUSE_LIQUID_CAP = 100_000_000_000  # 100B on-hand. Anything above sweeps to reserve.
 # Annualized rate, compounded continuously on read. 0.001 = 0.1% APR.
 # Stays scale-invariant: doesn't matter if you read every second or once a month,
 # the effective growth equals the APR exactly.
@@ -501,9 +538,8 @@ GREEN_JACKPOT_MAX_PCT = 0.90
 
 
 def _normalize_house(conn: sqlite3.Connection, guild_id: int):
-    """Apply accrued interest to the reserve and sweep any on-hand overflow
-    above HOUSE_LIQUID_CAP into the reserve. Idempotent. Caller is expected to
-    be holding BEGIN IMMEDIATE so the read-modify-write is atomic."""
+    """Apply accrued interest to the safe-harbor reserve. Idempotent. Caller is
+    expected to be holding BEGIN IMMEDIATE so the read-modify-write is atomic."""
     import time as _t
     now = _t.time()
     conn.execute(
@@ -523,33 +559,79 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
     if reserve_coins > 0 and last_ts > 0 and now > last_ts:
         elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
         reserve_coins = int(reserve_coins * ((1.0 + HOUSE_INTEREST_APR) ** elapsed_years))
-    # Sweep on-hand overflow into the reserve.
-    house_id = get_house_id()
-    house_row = conn.execute(
-        "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-        (guild_id, house_id),
-    ).fetchone()
-    house_coins = house_row[0] if house_row else 0
-    if house_coins > HOUSE_LIQUID_CAP:
-        overflow = house_coins - HOUSE_LIQUID_CAP
-        reserve_coins += overflow
-        conn.execute(
-            "UPDATE wallets SET coins = ? WHERE guild_id = ? AND user_id = ?",
-            (HOUSE_LIQUID_CAP, guild_id, house_id),
-        )
     conn.execute(
         "UPDATE house_reserve SET coins = ?, last_interest_ts = ? WHERE guild_id = ?",
         (reserve_coins, now, guild_id),
     )
 
 
+def _memorial_house_tithe(conn: sqlite3.Connection, guild_id: int, amount: int) -> int:
+    """Within an open transaction, move MEMORIAL_TITHE_PCT of `amount` from the
+    house's on-hand wallet to the memorial player (kev2tall). Best-effort —
+    tithes only what the house can cover. Returns the coins tithed.
+
+    Used by transfer_to_house (the loss side) and casino_payout (the win side)
+    so the house funds the offering and players are never shortchanged."""
+    tithe = int(amount * MEMORIAL_TITHE_PCT)
+    if tithe <= 0:
+        return 0
+    house_id = get_house_id()
+    house_row = conn.execute(
+        "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+        (guild_id, house_id),
+    ).fetchone()
+    house_coins = house_row[0] if house_row else 0
+    pay = min(tithe, max(0, house_coins))
+    if pay <= 0:
+        return 0
+    conn.execute(
+        "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+        (guild_id, MEMORIAL_USER_ID),
+    )
+    conn.execute(
+        "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+        (pay, guild_id, house_id),
+    )
+    conn.execute(
+        "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+        (pay, guild_id, MEMORIAL_USER_ID),
+    )
+    return pay
+
+
+def memorial_tithe(guild_id: int, amount: int) -> int:
+    """Move MEMORIAL_TITHE_PCT of `amount` from the house to the memorial
+    player (kev2tall). Standalone, atomic version of _memorial_house_tithe for
+    games that settle outside transfer_to_house / casino_payout (slots,
+    coinflip, roulette, cockroach, pigderby) — the house still funds the
+    offering, it just wasn't otherwise a party to that game's money flow.
+    Best-effort: tithes only what the house on-hand can cover. Call once per
+    game outcome with the win or loss amount. Returns the coins tithed."""
+    tithe = int(amount * MEMORIAL_TITHE_PCT)
+    if tithe <= 0:
+        return 0
+    house_id = get_house_id()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+                (guild_id, house_id),
+            )
+            pay = _memorial_house_tithe(conn, guild_id, amount)
+            conn.commit()
+            return pay
+    except sqlite3.Error as e:
+        logger.error(f"Database error in memorial_tithe: {e}")
+        return 0
+
+
 def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
     """Atomic transfer from a user to the house (donations, vig, bet collection).
-    After the deposit, normalizes the house: applies interest to the reserve and
-    sweeps on-hand overflow above HOUSE_LIQUID_CAP into the reserve.
+    After the deposit, normalizes the house (applies interest to the reserve).
 
-    Same return shape as transfer_coins. `receiver_balance` is the post-sweep
-    on-hand wallet, not the total house net worth."""
+    Same return shape as transfer_coins. `receiver_balance` is the on-hand
+    wallet, not the total house net worth."""
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     house_id = get_house_id()
@@ -582,6 +664,9 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
             )
             sender_balance = sender_coins - amount
             _normalize_house(conn, guild_id)
+            # Memorial tithe: 1.5% of the bet (the loss side), house → kev2tall.
+            if not is_memorial(user_id):
+                _memorial_house_tithe(conn, guild_id, amount)
             recv_row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
@@ -602,11 +687,10 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
     """Pay a casino win from the house to a player.
 
     Returns the actual coins paid (≤ amount). Atomic. Normalizes the house
-    first (interest + overflow sweep). If on-hand is short, tops it up from
+    first (applies reserve interest). If on-hand is short, tops it up from
     the safe-harbor reserve by exactly what's needed for this payout — so a
-    "break-even" outcome on a bet larger than HOUSE_LIQUID_CAP doesn't
-    silently lose the player money to the sweep. The reserve is still
-    invisible to heist/jackpot drains; only payouts can tap it.
+    drained on-hand bucket doesn't silently shortchange a winner. The reserve
+    is still invisible to heist/jackpot drains; only payouts can tap it.
     """
     if amount <= 0:
         return 0
@@ -659,6 +743,10 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 "WHERE guild_id = ? AND user_id = ?",
                 (pay, pay, guild_id, user_id),
             )
+            # Memorial tithe: 1.5% of the win, paid by the house on top — the
+            # winner keeps 100% of `pay`.
+            if not is_memorial(user_id):
+                _memorial_house_tithe(conn, guild_id, pay)
             conn.commit()
             return pay
     except sqlite3.Error as e:
@@ -667,8 +755,8 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
 
 
 def get_house_state(guild_id: int) -> dict:
-    """Snapshot of both house buckets. Applies interest + sweeps overflow as a
-    side effect. Returns {'on_hand': X, 'reserve': Y, 'rate_per_hour': Z}."""
+    """Snapshot of both house buckets. Applies reserve interest as a side
+    effect. Returns {'on_hand': X, 'reserve': Y, 'apr': Z}."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -840,7 +928,13 @@ def jail_user(guild_id: int, user_id: int, duration_seconds: int, reason: str = 
     """Lock a user out of casino activities for `duration_seconds` from now.
     If already jailed longer, keep the later deadline.
     `bail_amount` and `channel_id` are stored so /bail and the release-message
-    loop can find them later."""
+    loop can find them later.
+
+    The memorial player (kev2tall) is exempt — jailing him is a silent no-op.
+    Since every jail path (heist busts, bounties, /jail, extends) routes
+    through here, this single guard makes him un-jailable everywhere."""
+    if is_memorial(user_id):
+        return
     import time as _t
     now = _t.time()
     until = now + duration_seconds
@@ -1054,6 +1148,8 @@ def extend_jail(guild_id: int, jailed_user_id: int, payer_user_id: int,
     import time as _t
     if jailed_user_id == payer_user_id:
         return {"ok": False, "error": "self"}
+    if is_memorial(jailed_user_id):
+        return {"ok": False, "error": "memorial"}
     if additional_seconds <= 0 or cost <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
@@ -1141,6 +1237,8 @@ def place_jail_bounty(guild_id: int, placer_user_id: int, target_user_id: int,
     import time as _t
     if placer_user_id == target_user_id:
         return {"ok": False, "error": "self"}
+    if is_memorial(target_user_id):
+        return {"ok": False, "error": "memorial"}
     if bet <= 0:
         return {"ok": False, "error": "invalid_bet"}
     try:

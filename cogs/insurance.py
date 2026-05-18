@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import logging
 
-from economy import get_coins, jail_message, jail_user, transfer_to_house, casino_payout
+from economy import get_coins, jail_message, jail_user, transfer_to_house, casino_payout, MAX_BET
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +205,9 @@ class Insurance(commands.Cog):
             return
         if bet <= 0:
             await reply("Premium has to be > 0. The actuary is firm on this.")
+            return
+        if bet > MAX_BET:
+            await reply(f"Easy, high roller — max premium is {MAX_BET:,} coins.")
             return
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):

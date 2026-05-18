@@ -5,9 +5,9 @@ import logging
 import economy
 import re
 
-logger = logging.getLogger(__name__)
+from config import ADMIN_CHANNEL_ID
 
-ADMIN_CHANNEL_ID = 401391297211924480
+logger = logging.getLogger(__name__)
 
 
 class Admin(commands.Cog):

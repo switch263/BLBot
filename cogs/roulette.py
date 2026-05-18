@@ -12,7 +12,7 @@ BULLET_EMOJI = "💀"
 SAFE_EMOJI = "😅"
 CHAMBER_SIZE = 6
 TIMEOUT_DURATION = 60  # seconds to timeout the loser
-# No buy-in. Everyone goes ALL-IN — you risk your entire wallet, winner takes the pot.
+# No buy-in. Each player antes up to MAX_BET coins, winner takes the pot.
 
 CLICK_MESSAGES = [
     "*Click.* {user} survives... for now.",
@@ -69,7 +69,7 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await ctx.send(f"{author.mention}, you're already in the game!")
                     return
-                stake = economy.get_coins(guild_id, author.id)
+                stake = min(economy.get_coins(guild_id, author.id), economy.MAX_BET)
                 if stake <= 0:
                     await ctx.send(f"{author.mention}, you're dead broke — nothing to ante up.")
                     return
@@ -78,7 +78,7 @@ class RussianRoulette(commands.Cog):
                 game["stakes"][author.id] = stake
                 game["pot"] += stake
                 await ctx.send(
-                    f"{author.mention} throws in their **entire {stake}** coins. "
+                    f"{author.mention} throws in **{stake}** coins. "
                     f"({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
                     f"Type `!roulette` to join. Starter: `!pull` when ready."
                 )
@@ -87,7 +87,7 @@ class RussianRoulette(commands.Cog):
                 await ctx.send("A game is already in progress in this channel!")
                 return
 
-        stake = economy.get_coins(guild_id, author.id)
+        stake = min(economy.get_coins(guild_id, author.id), economy.MAX_BET)
         if stake <= 0:
             await ctx.send("You're dead broke — nothing to ante up.")
             return
@@ -106,8 +106,8 @@ class RussianRoulette(commands.Cog):
         embed = discord.Embed(
             title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} anted up their **entire {stake}** coins.\n\n"
-                f"**No buy-in. Everyone goes all-in.** Join with `!roulette` — your entire wallet goes into the pot.\n"
+                f"{author.mention} anted up **{stake}** coins.\n\n"
+                f"**No buy-in. Ante up to {economy.MAX_BET:,} coins.** Join with `!roulette` — your stake goes into the pot.\n"
                 f"Winner takes everything.\n\n"
                 f"{author.display_name}: type `!pull` when the table's full."
             ),
@@ -191,6 +191,8 @@ class RussianRoulette(commands.Cog):
         # Winner!
         winner = players[0]
         economy.award_coins(guild_id, winner.id, pot)
+        # Memorial tithe: 1.5% of the pot, paid by the house to kev2tall.
+        economy.memorial_tithe(guild_id, pot)
         economy.record_rr(guild_id, winner.id, True)
         # Record losses for everyone else who joined
         for p in game["players"]:
@@ -217,7 +219,7 @@ class RussianRoulette(commands.Cog):
                 if author.id in [p.id for p in game["players"]]:
                     await interaction.response.send_message("You're already in the game!", ephemeral=True)
                     return
-                stake = economy.get_coins(guild_id, author.id)
+                stake = min(economy.get_coins(guild_id, author.id), economy.MAX_BET)
                 if stake <= 0:
                     await interaction.response.send_message("You're dead broke — nothing to ante up.", ephemeral=True)
                     return
@@ -226,7 +228,7 @@ class RussianRoulette(commands.Cog):
                 game["stakes"][author.id] = stake
                 game["pot"] += stake
                 await interaction.response.send_message(
-                    f"{author.mention} throws in their **entire {stake}** coins. "
+                    f"{author.mention} throws in **{stake}** coins. "
                     f"({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
                     f"Use `/roulette` to join. Starter: `!pull` when ready."
                 )
@@ -235,7 +237,7 @@ class RussianRoulette(commands.Cog):
                 await interaction.response.send_message("A game is already in progress!", ephemeral=True)
                 return
 
-        stake = economy.get_coins(guild_id, author.id)
+        stake = min(economy.get_coins(guild_id, author.id), economy.MAX_BET)
         if stake <= 0:
             await interaction.response.send_message("You're dead broke — nothing to ante up.", ephemeral=True)
             return
@@ -254,8 +256,8 @@ class RussianRoulette(commands.Cog):
         embed = discord.Embed(
             title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} anted up their **entire {stake}** coins.\n\n"
-                f"**No buy-in. Everyone goes all-in.** Join with `!roulette` or `/roulette` — your entire wallet goes in.\n"
+                f"{author.mention} anted up **{stake}** coins.\n\n"
+                f"**No buy-in. Ante up to {economy.MAX_BET:,} coins.** Join with `!roulette` or `/roulette` — your stake goes in.\n"
                 f"Winner takes everything.\n\n"
                 f"{author.display_name}: type `!pull` when the table's full."
             ),

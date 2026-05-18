@@ -98,6 +98,12 @@ class Slots(commands.Cog):
                 description=f"Bet must be at least **{MIN_BET}** coin.",
                 color=discord.Color.red()
             )
+        if bet > economy.MAX_BET:
+            return discord.Embed(
+                title="🎰 Invalid Bet",
+                description=f"Easy, high roller — max bet is **{economy.MAX_BET:,}** coins.",
+                color=discord.Color.red()
+            )
 
         if wallet["coins"] < bet:
             return discord.Embed(
@@ -116,6 +122,8 @@ class Slots(commands.Cog):
             net = -bet
 
         economy.update_wallet(guild_id, user_id, net, is_jackpot)
+        # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
+        economy.memorial_tithe(guild_id, bet)
 
         return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
 

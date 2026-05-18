@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import economy
+from config import ADMIN_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,10 @@ class Bounty(commands.Cog):
             return "You can't bounty a bot. The house doesn't take contracts on itself."
         if target.id == placer.id:
             return "🚫 You can't bounty yourself. That's just paying to go to jail."
+        # kev2tall is a memorial player. Trying to bounty him gets you smited —
+        # no bet floor, no rate limit, no jail gate. The desecration is enough.
+        if economy.is_memorial(target.id):
+            return await self._smite_for_memorial_bounty(guild, placer)
         if bet is None or bet < MIN_BOUNTY:
             return f"💼 Minimum bounty is **{MIN_BOUNTY:,} coins**. You offered **{(bet or 0):,}**."
 
@@ -224,6 +229,52 @@ class Bounty(commands.Cog):
             placer=placer.mention, target=target.mention, bet=bet, hours=hours,
         )
 
+    async def _smite_for_memorial_bounty(self, guild: discord.Guild, placer: discord.Member) -> str:
+        """kev2tall is a memorial player. Putting a bounty on him is a desecration:
+        half the placer's wallet is torn loose and split evenly among the mortals
+        of the admin channel, and kev2tall makes his displeasure known."""
+        balance = economy.get_coins(guild.id, placer.id)
+        smite_amount = balance // 2
+
+        # Recipients: non-bot members who can see the admin channel, minus the
+        # placer themselves and the memorial.
+        recipients: list[discord.Member] = []
+        admin_channel = guild.get_channel(ADMIN_CHANNEL_ID)
+        if admin_channel is not None:
+            recipients = [
+                m for m in admin_channel.members
+                if not m.bot and m.id != placer.id and not economy.is_memorial(m.id)
+            ]
+
+        distributed = 0
+        if smite_amount > 0 and recipients:
+            share = smite_amount // len(recipients)
+            if share > 0:
+                result = economy.disburse(
+                    guild.id, placer.id, [(m.id, share) for m in recipients],
+                )
+                if result.get("ok"):
+                    distributed = result.get("total", share * len(recipients))
+
+        lobster = " 🦞 "
+        msg = (
+            f"🕊️🦞 **WHO DARES.**\n"
+            f"{placer.mention} put a bounty on **kev2tall**. The memorial does not rest so lightly.\n"
+            f"*\"You disturb my peace{lobster}for COIN?{lobster}I was a MEMBER here.\"*\n"
+        )
+        if distributed > 0:
+            msg += (
+                f"kev2tall reaches up from the offering and tears **{distributed:,} coins** — half of "
+                f"{placer.mention}'s wallet — loose, scattering them among the **{len(recipients)}** "
+                f"mortals of the admin channel.{lobster}Let this be a lesson."
+            )
+        else:
+            msg += (
+                f"kev2tall reaches for {placer.mention}'s wallet and finds it bare. "
+                f"The smite lands on empty pockets.{lobster}Consider yourself warned."
+            )
+        return msg
+
     def _format_wait(self, seconds: int) -> str:
         d, rem = divmod(max(0, seconds), 86400)
         h, rem = divmod(rem, 3600)
@@ -243,6 +294,8 @@ class Bounty(commands.Cog):
             return f"💸 You'd need **{result.get('need', bet):,} coins** to put up that bounty. You have **{result.get('have', 0):,}**."
         if err == "self":
             return "🚫 You can't bounty yourself."
+        if err == "memorial":
+            return "🕊️ kev2tall can't be bountied. The memorial is off-limits — nothing was charged."
         if err == "invalid_bet":
             return f"💼 Minimum bounty is **{MIN_BOUNTY:,} coins**."
         if err == "rate_limited_user":

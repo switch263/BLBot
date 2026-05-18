@@ -6,7 +6,7 @@ import logging
 import asyncio
 import time
 
-from economy import get_coins, jail_message, record_blackjack, transfer_to_house, casino_payout
+from economy import get_coins, jail_message, record_blackjack, transfer_to_house, casino_payout, MAX_BET
 
 logger = logging.getLogger(__name__)
 
@@ -418,6 +418,9 @@ class Blackjack(commands.Cog):
             return
         if bet <= 0:
             await reply("Buy-in needs to be greater than 0.")
+            return
+        if bet > MAX_BET:
+            await reply(f"Easy, high roller — max buy-in is {MAX_BET:,} coins.")
             return
         if channel.id in self.rounds:
             await reply("A blackjack round is already running in this channel.")

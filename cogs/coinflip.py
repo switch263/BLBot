@@ -50,6 +50,8 @@ class CoinFlip(commands.Cog):
 
         if bet < MIN_BET:
             return discord.Embed(description=f"Bet must be at least **{MIN_BET}** coin.", color=discord.Color.red())
+        if bet > economy.MAX_BET:
+            return discord.Embed(description=f"Easy, high roller — max bet is **{economy.MAX_BET:,}** coins.", color=discord.Color.red())
 
         balance = economy.get_coins(guild_id, user_id)
         if balance < bet:
@@ -78,6 +80,9 @@ class CoinFlip(commands.Cog):
                 description=f"You called **{call_full}** and lost **{bet}** coins. {random.choice(LOSE_MESSAGES)}",
                 color=discord.Color.red()
             )
+
+        # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
+        economy.memorial_tithe(guild_id, bet)
 
         embed.set_footer(text=f"Balance: {new_bal} coins")
         return embed
