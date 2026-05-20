@@ -1,9 +1,9 @@
 """Shop cog — spend coins on item cards.
 
 Buying destroys the coins (a real money sink); the item lands in the player's
-inventory. Items are used via `/use` (Get Out of Jail Free, Loaded Dice),
-`/freespin` in the slots cog (Bonus Spin), or passively (Heist Shield, in the
-heist cog). The catalog lives in items.py; economy.py stores the inventory.
+inventory. Items are used via `/use` (Get Out of Jail Free), `/freespin` in
+the slots cog (Bonus Spin), or passively (Heist Shield, in the heist cog).
+The catalog lives in items.py; economy.py stores the inventory.
 """
 
 import logging
@@ -14,7 +14,7 @@ from discord.ext import commands
 
 import economy
 from items import (
-    ITEMS, ALL_ITEMS, JAIL_CARD, BONUS_SPIN, HEIST_SHIELD, LOADED_DICE,
+    ITEMS, ALL_ITEMS, JAIL_CARD, BONUS_SPIN, HEIST_SHIELD,
     item_meta, display, resolve,
 )
 
@@ -32,7 +32,7 @@ _ITEM_CHOICES = [
 
 
 def _split_item_qty(args: str) -> tuple[str, int]:
-    """Parse a prefix-command tail like 'loaded dice 3' into ('loaded dice', 3).
+    """Parse a prefix-command tail like 'jail card 3' into ('jail card', 3).
     A trailing integer is the quantity; otherwise quantity defaults to 1."""
     parts = args.rsplit(None, 1)
     if len(parts) == 2 and parts[1].isdigit():
@@ -175,28 +175,6 @@ class Shop(commands.Cog):
             )
             return
 
-        if key == LOADED_DICE:
-            if not economy.consume_item(guild.id, user.id, LOADED_DICE):
-                await reply(f"You don't own a {m['emoji']} **{m['name']}**.")
-                return
-            result = economy.refund_last_loss(guild.id, user.id)
-            if not result.get("ok"):
-                economy.grant_item(guild.id, user.id, LOADED_DICE)  # give it back
-                err = result.get("error")
-                if err == "house_broke":
-                    await reply("The house can't cover a refund right now. Loaded Dice kept.")
-                else:
-                    await reply(
-                        "No bet lost in the last 10 minutes to undo. Loaded Dice kept — "
-                        "play it right after a loss."
-                    )
-                return
-            await reply(
-                f"🎲 **{user.display_name}** rolls the **Loaded Dice** — the last losing "
-                f"bet of **{result['refunded']:,}** coins is refunded by the house."
-            )
-            return
-
     # --- prefix commands ---------------------------------------------------
     @commands.command(name="shop")
     @commands.guild_only()
@@ -207,7 +185,7 @@ class Shop(commands.Cog):
     @commands.guild_only()
     async def buy_prefix(self, ctx, *, args: str = ""):
         if not args:
-            await ctx.send("Usage: `!buy <item> [qty]` — e.g. `!buy loaded dice 2`.")
+            await ctx.send("Usage: `!buy <item> [qty]` — e.g. `!buy jail card 2`.")
             return
         item_text, qty = _split_item_qty(args)
         await self._buy(ctx, item_text, qty)
@@ -221,7 +199,7 @@ class Shop(commands.Cog):
     @commands.guild_only()
     async def use_prefix(self, ctx, *, item: str = ""):
         if not item:
-            await ctx.send("Usage: `!use <item>` — e.g. `!use jail` or `!use dice`.")
+            await ctx.send("Usage: `!use <item>` — e.g. `!use jail card`.")
             return
         await self._use(ctx, item)
 

@@ -129,10 +129,6 @@ class Slots(commands.Cog):
         economy.update_wallet(guild_id, user_id, net, is_jackpot)
         # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
         economy.memorial_tithe(guild_id, bet)
-        # Loaded Dice mulligan: record the wager; a win settles it (no refund).
-        economy.record_wager(guild_id, user_id, bet)
-        if payout_mult > 0:
-            economy.settle_wager(guild_id, user_id)
 
         return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
 

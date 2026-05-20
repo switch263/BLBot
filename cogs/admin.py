@@ -176,7 +176,7 @@ class ClearEconomyView(discord.ui.View):
             f"• every player wallet (back to fresh)\n"
             f"• the house pot — on-hand AND safe-harbor reserve\n"
             f"• all active jail sentences\n"
-            f"• every item-card inventory and the Loaded Dice wager\n"
+            f"• every item-card inventory\n"
             f"• loot-drop cooldowns (AM/PM)\n"
             f"• jail-bounty rate-limit history\n\n"
             f"**Preserved:** game stats (play counts, win counts) — leaderboards survive.\n\n"

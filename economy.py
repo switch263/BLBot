@@ -15,6 +15,13 @@ STARTING_COINS = 100
 # house (or another player) in one roll.
 MAX_BET = 100_000
 
+# Vault cooldown range (seconds). Per-user, shared between /vault and
+# /vault_hard. Rolled fresh each play in [MIN, MAX] so the gap isn't
+# predictable. The vault is one of the bigger payout sources — this is the
+# anti-inflation throttle. Bumped here, not in the cogs.
+VAULT_COOLDOWN_MIN_SECONDS = 45 * 60   # 45 min
+VAULT_COOLDOWN_MAX_SECONDS = 60 * 60   # 60 min
+
 
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
@@ -232,9 +239,9 @@ def _init_db():
             ''')
             # cog_kv: the generic per-(guild,user) key-value store. ONE table
             # backs every bit of cog/feature state that isn't a core economy
-            # concept — inventory, the Loaded Dice wager, future cooldowns and
-            # flags. A cog stores under its own `namespace` via the kv_* /
-            # feature helpers and never needs its own table or SQLite handle.
+            # concept — inventory, future cooldowns and flags. A cog stores
+            # under its own `namespace` via the kv_* / feature helpers and
+            # never needs its own table or SQLite handle.
             # `value` is typed per-row (SQLite stores int/real/text as-is).
             # Guild-scoped (not per-user) state uses user_id = 0.
             conn.execute('''
@@ -700,11 +707,10 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
             )
             sender_balance = sender_coins - amount
             _normalize_house(conn, guild_id)
-            # Memorial tithe (1.5% of the bet, the loss side) and the Loaded
-            # Dice wager record — both skip the memorial player.
+            # Memorial tithe (1.5% of the bet, the loss side) — skips the
+            # memorial player so he doesn't tithe to himself.
             if not is_memorial(user_id):
                 _memorial_house_tithe(conn, guild_id, amount)
-                _record_wager(conn, guild_id, user_id, amount)
             recv_row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
@@ -830,11 +836,9 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 (pay, pay, guild_id, user_id),
             )
             # Memorial tithe (1.5% of the win, paid by the house on top — the
-            # winner keeps 100% of `pay`) and the Loaded Dice settle: a payout
-            # landed, so this round is no longer a refundable loss.
+            # winner keeps 100% of `pay`). Skips the memorial player.
             if not is_memorial(user_id):
                 _memorial_house_tithe(conn, guild_id, pay)
-                _settle_wager(conn, guild_id, user_id)
             conn.commit()
             return pay
     except sqlite3.Error as e:
@@ -870,8 +874,8 @@ def get_house_state(guild_id: int) -> dict:
 
 # --- Generic key-value store ----------------------------------------------
 # One table (`cog_kv`) holds every bit of per-(guild,user) state that isn't a
-# core economy concept: inventory, the Loaded Dice wager, and whatever future
-# cogs need. A cog picks a `namespace` and stores under it — no new table, no
+# core economy concept: inventory, and whatever future cogs need. A cog picks
+# a `namespace` and stores under it — no new table, no
 # SQLite handle of its own, no economy.py change. Removing a cog? Delete its
 # file; its rows are harmless orphans, or wipe them with kv_clear_namespace.
 # Guild-scoped (not per-user) state uses user_id = 0.
@@ -970,6 +974,55 @@ def kv_clear_namespace(guild_id: int, namespace: str):
         logger.error(f"Database error in kv_clear_namespace: {e}")
 
 
+# --- Vault cooldown -------------------------------------------------------
+# Per-user, shared between /vault and /vault_hard — playing either gates both
+# for a rolled cooldown in [VAULT_COOLDOWN_MIN_SECONDS, VAULT_COOLDOWN_MAX_SECONDS].
+# The next-allowed unix timestamp lives in cog_kv under "vault_cd"/"until".
+# Throttles vault grinding without touching the game's payout table.
+_VAULT_CD_NS = "vault_cd"
+
+
+def vault_cooldown_remaining(guild_id: int, user_id: int) -> int:
+    """Seconds left on this user's vault cooldown (0 if ready to play).
+    Shared between /vault and /vault_hard."""
+    import time as _t
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key='until'",
+                (guild_id, user_id, _VAULT_CD_NS),
+            ).fetchone()
+            if not row:
+                return 0
+            return max(0, int(row[0] - _t.time()))
+    except sqlite3.Error as e:
+        logger.error(f"Database error in vault_cooldown_remaining: {e}")
+        return 0
+
+
+def arm_vault_cooldown(guild_id: int, user_id: int) -> int:
+    """Roll a cooldown in [VAULT_COOLDOWN_MIN_SECONDS, VAULT_COOLDOWN_MAX_SECONDS]
+    and stamp the next-allowed play time on this user. Returns the rolled
+    cooldown in seconds. Call right after a vault bet is committed so a
+    rage-quit can't dodge the throttle."""
+    import time as _t
+    import random as _r
+    cd = _r.randint(VAULT_COOLDOWN_MIN_SECONDS, VAULT_COOLDOWN_MAX_SECONDS)
+    until = _t.time() + cd
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=?",
+                (guild_id, user_id, _VAULT_CD_NS, "until", until, until),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error in arm_vault_cooldown: {e}")
+    return cd
+
+
 # --- Inventory / shop items -----------------------------------------------
 # Items (shop purchases, loot-drop cards) live in the cog_kv store under the
 # "inventory" namespace, keyed item → qty. The catalog (names, prices, effects)
@@ -1049,119 +1102,6 @@ def release_from_jail(guild_id: int, user_id: int) -> bool:
     except sqlite3.Error as e:
         logger.error(f"Database error in release_from_jail: {e}")
         return False
-
-
-# --- Wager tracking (Loaded Dice mulligan) --------------------------------
-# A player's most recent bet lives in cog_kv under the "wager" namespace as
-# three keys — amount, ts, settled. `settled` flips to 1 once a payout lands;
-# an unsettled, recent wager is a refundable loss.
-_WAGER_NS = "wager"
-
-
-def _record_wager(conn: sqlite3.Connection, guild_id: int, user_id: int, amount: int):
-    """Within an open transaction: stamp this as the player's most recent,
-    unsettled wager. Called from transfer_to_house; slots/coinflip use the
-    standalone record_wager()."""
-    import time as _t
-    now = _t.time()
-    for k, v in (("amount", amount), ("ts", now), ("settled", 0)):
-        conn.execute(
-            "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
-            "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=?",
-            (guild_id, user_id, _WAGER_NS, k, v, v),
-        )
-
-
-def _settle_wager(conn: sqlite3.Connection, guild_id: int, user_id: int):
-    """Within an open transaction: mark the player's last wager settled — a
-    payout landed, so it is no longer a refundable loss."""
-    conn.execute(
-        "UPDATE cog_kv SET value=1 WHERE guild_id=? AND user_id=? AND namespace=? AND key='settled'",
-        (guild_id, user_id, _WAGER_NS),
-    )
-
-
-def record_wager(guild_id: int, user_id: int, amount: int):
-    """Standalone wager record for games that settle outside transfer_to_house
-    (slots, coinflip). Pair with settle_wager() on a win."""
-    if amount <= 0:
-        return
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            _record_wager(conn, guild_id, user_id, amount)
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error in record_wager: {e}")
-
-
-def settle_wager(guild_id: int, user_id: int):
-    """Standalone wager settle (a win) for slots/coinflip. See _settle_wager."""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            _settle_wager(conn, guild_id, user_id)
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error in settle_wager: {e}")
-
-
-def refund_last_loss(guild_id: int, user_id: int, max_age_seconds: int = 600) -> dict:
-    """Loaded Dice mulligan: if the player has a recent, unsettled losing
-    wager, refund it from the house and mark it settled (no double-claims).
-
-    Returns:
-      {"ok": True, "refunded": X}
-      {"ok": False, "error": "no_loss"}      # nothing recent and unsettled
-      {"ok": False, "error": "house_broke"}  # house can't cover the refund
-      {"ok": False, "error": "db"}
-    """
-    import time as _t
-    house_id = get_house_id()
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                "SELECT key, value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=?",
-                (guild_id, user_id, _WAGER_NS),
-            ).fetchall()
-            w = {k: v for k, v in rows}
-            amount = w.get("amount", 0)
-            ts = w.get("ts", 0)
-            settled = w.get("settled", 1)
-            if settled or amount <= 0 or (_t.time() - ts) > max_age_seconds:
-                conn.rollback()
-                return {"ok": False, "error": "no_loss"}
-            _ensure_house_wallet(conn, guild_id)
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
-                (guild_id, user_id, STARTING_COINS),
-            )
-            house_row = conn.execute(
-                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                (guild_id, house_id),
-            ).fetchone()
-            house_coins = house_row[0] if house_row else 0
-            if house_coins < amount:
-                conn.rollback()
-                return {"ok": False, "error": "house_broke"}
-            conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
-                (amount, guild_id, house_id),
-            )
-            conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
-                (amount, guild_id, user_id),
-            )
-            conn.execute(
-                "UPDATE cog_kv SET value=1 WHERE guild_id=? AND user_id=? AND namespace=? AND key='settled'",
-                (guild_id, user_id, _WAGER_NS),
-            )
-            conn.commit()
-            return {"ok": True, "refunded": amount}
-    except sqlite3.Error as e:
-        logger.error(f"Database error in refund_last_loss: {e}")
-        return {"ok": False, "error": "db"}
 
 
 def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> dict:
@@ -1806,7 +1746,7 @@ def record_den(guild_id, user_id, won): record_game(guild_id, user_id, "den", wo
 _CLEAR_ECONOMY_TABLES = (
     "wallets",
     "jail",
-    "cog_kv",          # inventory, wager, any future feature state
+    "cog_kv",          # inventory, any future feature state
     "house_reserve",
     "bounty_log",
     "loot_cooldowns",
@@ -1815,9 +1755,9 @@ _CLEAR_ECONOMY_TABLES = (
 
 def clear_economy(guild_id: int) -> dict:
     """Hard-reset the economy for one guild. Wipes wallets, the house pot
-    (on-hand + reserve), all jail sentences, the cog_kv store (inventory,
-    Loaded Dice wager, any cog-owned state), the bounty rate-limit log, and
-    loot cooldowns. PRESERVES `game_stats` so leaderboards aren't erased.
+    (on-hand + reserve), all jail sentences, the cog_kv store (inventory and
+    any cog-owned state), the bounty rate-limit log, and loot cooldowns.
+    PRESERVES `game_stats` so leaderboards aren't erased.
 
     All deletions run in a single transaction — either every table clears or
     none do. Returns a dict {table_name: rows_deleted}.

@@ -13,10 +13,9 @@ cogs/lootdrop_card.py. It's a pure data module — no Discord, no DB.
 JAIL_CARD = "jail_card"
 BONUS_SPIN = "bonus_spin"
 HEIST_SHIELD = "heist_shield"
-LOADED_DICE = "loaded_dice"
 
 # Catalog. `use` is how a player triggers the item:
-#   "command" — an explicit command (/use for jail_card & loaded_dice,
+#   "command" — an explicit command (/use for jail_card,
 #               /freespin for bonus_spin)
 #   "passive" — fires automatically when relevant (heist_shield on a heist)
 # `price` is the shop cost in coins; buying destroys those coins (a sink).
@@ -48,15 +47,6 @@ ITEMS = {
         "flavor": "A wall of pure paperwork. Thieves hate it.",
         "use": "passive",
         "loot_weight": 15,
-    },
-    LOADED_DICE: {
-        "name": "Loaded Dice",
-        "emoji": "🎲",
-        "price": 2_000_000,
-        "blurb": "Refunds a bet you lost outright in the last 10 minutes. Use `/use`.",
-        "flavor": "They roll how you need them to. Allegedly.",
-        "use": "command",
-        "loot_weight": 25,
     },
 }
 
