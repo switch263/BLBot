@@ -553,6 +553,22 @@ HOUSE_HEIST_MAX_PCT = 0.90
 GREEN_JACKPOT_MIN_PCT = 0.75
 GREEN_JACKPOT_MAX_PCT = 0.90
 
+# Starting balance for a freshly-created house wallet — applied on the first
+# INSERT OR IGNORE (i.e. the first time any cog touches the house, including
+# right after a clear_economy wipe). Keeps the bot from being bankrupted on a
+# single bet out of the gate.
+HOUSE_STARTING_COINS = 100_000_000
+
+
+def _ensure_house_wallet(conn: sqlite3.Connection, guild_id: int):
+    """Idempotent: create the house wallet at HOUSE_STARTING_COINS if it
+    doesn't exist. INSERT OR IGNORE is a no-op once the row is present, so
+    this is safe to call from every code path that touches the house."""
+    conn.execute(
+        "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+        (guild_id, get_house_id(), HOUSE_STARTING_COINS),
+    )
+
 
 def _normalize_house(conn: sqlite3.Connection, guild_id: int):
     """Apply accrued interest to the safe-harbor reserve. Idempotent. Caller is
@@ -631,10 +647,7 @@ def memorial_tithe(guild_id: int, amount: int) -> int:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             pay = _memorial_house_tithe(conn, guild_id, amount)
             conn.commit()
             return pay
@@ -659,10 +672,7 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS),
             )
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             sender_row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
@@ -702,6 +712,57 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
         return {"ok": False, "error": "db"}
 
 
+def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
+    """Atomic transfer from a player's wallet straight into the house's
+    safe-harbor reserve — bypassing on-hand and the memorial tithe.
+
+    Used by the kev2tall smite: seized coins go into the protected pot
+    (untouchable by heist/jackpot drains, available only to backstop
+    casino_payout). Balance-checked; broke senders get a `broke` error.
+
+    Returns the standard transfer-style result dict:
+      {"ok": True, "sender_balance": X}
+      {"ok": False, "error": "broke", "have": X, "need": Y}
+      {"ok": False, "error": "invalid_amount" | "db"}
+    """
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) "
+                "VALUES (?, 0, 0)",
+                (guild_id,),
+            )
+            row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            sender_coins = row[0] if row else 0
+            if sender_coins < amount:
+                conn.rollback()
+                return {"ok": False, "error": "broke",
+                        "have": sender_coins, "need": amount}
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, user_id),
+            )
+            conn.execute(
+                "UPDATE house_reserve SET coins = coins + ? WHERE guild_id = ?",
+                (amount, guild_id),
+            )
+            conn.commit()
+            return {"ok": True, "sender_balance": sender_coins - amount}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in transfer_to_reserve: {e}")
+        return {"ok": False, "error": "db"}
+
+
 def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
     """Pay a casino win from the house to a player.
 
@@ -717,10 +778,7 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS),
@@ -1065,10 +1123,7 @@ def refund_last_loss(guild_id: int, user_id: int, max_age_seconds: int = 600) ->
             if settled or amount <= 0 or (_t.time() - ts) > max_age_seconds:
                 conn.rollback()
                 return {"ok": False, "error": "no_loss"}
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS),
@@ -1420,10 +1475,7 @@ def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
                 (bail_amount, guild_id, payer_user_id),
             )
             house_id = get_house_id()
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             conn.execute(
                 "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
                 (bail_amount, guild_id, house_id),
@@ -1511,10 +1563,7 @@ def extend_jail(guild_id: int, jailed_user_id: int, payer_user_id: int,
                 (cost, guild_id, payer_user_id),
             )
             house_id = get_house_id()
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             conn.execute(
                 "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
                 (cost, guild_id, house_id),
@@ -1611,10 +1660,7 @@ def place_jail_bounty(guild_id: int, placer_user_id: int, target_user_id: int,
                 (bet, guild_id, placer_user_id),
             )
             house_id = get_house_id()
-            conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
-                (guild_id, house_id),
-            )
+            _ensure_house_wallet(conn, guild_id)
             conn.execute(
                 "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
                 (bet, guild_id, house_id),

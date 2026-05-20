@@ -12,7 +12,6 @@ from discord import app_commands
 from discord.ext import commands
 
 import economy
-from config import ADMIN_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -230,48 +229,35 @@ class Bounty(commands.Cog):
         )
 
     async def _smite_for_memorial_bounty(self, guild: discord.Guild, placer: discord.Member) -> str:
-        """kev2tall is a memorial player. Putting a bounty on him is a desecration:
-        half the placer's wallet is torn loose and split evenly among the mortals
-        of the admin channel, and kev2tall makes his displeasure known."""
+        """kev2tall is a memorial player. Putting a bounty on him is a
+        desecration: half the placer's wallet is torn loose and locked away
+        in the house's safe-harbor reserve (untouchable), and kev2tall makes
+        his displeasure known."""
         balance = economy.get_coins(guild.id, placer.id)
         smite_amount = balance // 2
 
-        # Recipients: non-bot members who can see the admin channel, minus the
-        # placer themselves and the memorial.
-        recipients: list[discord.Member] = []
-        admin_channel = guild.get_channel(ADMIN_CHANNEL_ID)
-        if admin_channel is not None:
-            recipients = [
-                m for m in admin_channel.members
-                if not m.bot and m.id != placer.id and not economy.is_memorial(m.id)
-            ]
+        seized = 0
+        if smite_amount > 0:
+            result = economy.transfer_to_reserve(guild.id, placer.id, smite_amount)
+            if result.get("ok"):
+                seized = smite_amount
 
-        distributed = 0
-        if smite_amount > 0 and recipients:
-            share = smite_amount // len(recipients)
-            if share > 0:
-                result = economy.disburse(
-                    guild.id, placer.id, [(m.id, share) for m in recipients],
-                )
-                if result.get("ok"):
-                    distributed = result.get("total", share * len(recipients))
-
-        lobster = " 🦞 "
+        crab = " 🦀 "
         msg = (
-            f"🕊️🦞 **WHO DARES.**\n"
+            f"🕊️🦀 **WHO DARES.**\n"
             f"{placer.mention} put a bounty on **kev2tall**. The memorial does not rest so lightly.\n"
-            f"*\"You disturb my peace{lobster}for COIN?{lobster}I was a MEMBER here.\"*\n"
+            f"*\"You disturb my peace{crab}for COIN?{crab}I was a MEMBER here.\"*\n"
         )
-        if distributed > 0:
+        if seized > 0:
             msg += (
-                f"kev2tall reaches up from the offering and tears **{distributed:,} coins** — half of "
-                f"{placer.mention}'s wallet — loose, scattering them among the **{len(recipients)}** "
-                f"mortals of the admin channel.{lobster}Let this be a lesson."
+                f"kev2tall tears **{seized:,} coins** — half of {placer.mention}'s wallet — "
+                f"loose and locks them away in the house's safe-harbor reserve.{crab}"
+                f"Untouchable now. Let this be a lesson."
             )
         else:
             msg += (
                 f"kev2tall reaches for {placer.mention}'s wallet and finds it bare. "
-                f"The smite lands on empty pockets.{lobster}Consider yourself warned."
+                f"The smite lands on empty pockets.{crab}Consider yourself warned."
             )
         return msg
 
