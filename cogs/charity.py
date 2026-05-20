@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 MIN_RECIPIENTS = 3
 MAX_RECIPIENTS = 7
 
+# Once-per-week cooldown — can't have people being too generous.
+CHARITY_COOLDOWN_SECONDS = 7 * 24 * 60 * 60
+
 CHARITY_TITLES = [
     "🎁 Charity Drive",
     "💸 Random Acts of Wealth",
@@ -74,6 +77,26 @@ class Charity(commands.Cog):
         if amount <= 0:
             return discord.Embed(description="Donate at least **1** coin.", color=discord.Color.red())
 
+        # Once-per-week cooldown — can't have people being too generous. State
+        # lives in the generic cog_kv store (namespace "charity").
+        import time as _t
+        now = _t.time()
+        last_ts = economy.kv_get(guild_id, giver.id, "charity", "last_ts", 0) or 0
+        elapsed = now - last_ts
+        if elapsed < CHARITY_COOLDOWN_SECONDS:
+            remaining = int(CHARITY_COOLDOWN_SECONDS - elapsed)
+            days, rem = divmod(remaining, 86400)
+            hours, _rem = divmod(rem, 3600)
+            wait = f"{days}d {hours}h" if days else f"{hours}h"
+            return discord.Embed(
+                title="⏳ Charity Cooldown",
+                description=(
+                    f"You've already done your charitable deed this week. "
+                    f"Open hand again in **{wait}**."
+                ),
+                color=discord.Color.red(),
+            )
+
         pool = _eligible_recipients(channel, giver.id)
         if not pool:
             return discord.Embed(
@@ -101,6 +124,8 @@ class Charity(commands.Cog):
                     color=discord.Color.red(),
                 )
             return discord.Embed(description="Charity drive failed. Try again.", color=discord.Color.red())
+        # Stamp the cooldown only after a successful disburse.
+        economy.kv_set(guild_id, giver.id, "charity", "last_ts", now)
         new_bal = result["sender_balance"]
         title = random.choice(CHARITY_TITLES)
         flavor = random.choice(CHARITY_FLAVOR).format(giver=giver.display_name)

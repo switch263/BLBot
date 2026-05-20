@@ -30,10 +30,6 @@ class Admin(commands.Cog):
             await ctx.send("Amount must be positive!")
             return
 
-        if amount > 1000000:
-            await ctx.send("That's too many coins! Maximum is 1,000,000 per grant.")
-            return
-
         # Grant the coins
         guild_id = ctx.guild.id
         economy.award_coins(guild_id, user.id, amount)

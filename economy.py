@@ -553,20 +553,28 @@ HOUSE_HEIST_MAX_PCT = 0.90
 GREEN_JACKPOT_MIN_PCT = 0.75
 GREEN_JACKPOT_MAX_PCT = 0.90
 
-# Starting balance for a freshly-created house wallet — applied on the first
-# INSERT OR IGNORE (i.e. the first time any cog touches the house, including
-# right after a clear_economy wipe). Keeps the bot from being bankrupted on a
-# single bet out of the gate.
+# Starting balance seeded into the house's safe-harbor RESERVE on first
+# touch (and after any clear_economy wipe). It lives in the reserve — not
+# on-hand — so it can't be drained by a heist or a green-jackpot roll; it
+# can only ever leave the house via casino_payout's reserve fallback when
+# on-hand is short. That's the "can't bankrupt the bot on the first bet"
+# guarantee.
 HOUSE_STARTING_COINS = 100_000_000
 
 
 def _ensure_house_wallet(conn: sqlite3.Connection, guild_id: int):
-    """Idempotent: create the house wallet at HOUSE_STARTING_COINS if it
-    doesn't exist. INSERT OR IGNORE is a no-op once the row is present, so
-    this is safe to call from every code path that touches the house."""
+    """Idempotent: create the house's wallet row (on-hand starts at 0) and
+    seed the safe-harbor reserve with HOUSE_STARTING_COINS. INSERT OR IGNORE
+    on both, so this is a no-op once either row exists — safe to call from
+    every code path that touches the house."""
     conn.execute(
-        "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
-        (guild_id, get_house_id(), HOUSE_STARTING_COINS),
+        "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+        (guild_id, get_house_id()),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) "
+        "VALUES (?, ?, 0)",
+        (guild_id, HOUSE_STARTING_COINS),
     )
 
 
@@ -576,8 +584,9 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
     import time as _t
     now = _t.time()
     conn.execute(
-        "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) VALUES (?, 0, ?)",
-        (guild_id, now),
+        "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) "
+        "VALUES (?, ?, ?)",
+        (guild_id, HOUSE_STARTING_COINS, now),
     )
     row = conn.execute(
         "SELECT coins, last_interest_ts FROM house_reserve WHERE guild_id = ?",
@@ -736,8 +745,8 @@ def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
             )
             conn.execute(
                 "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) "
-                "VALUES (?, 0, 0)",
-                (guild_id,),
+                "VALUES (?, ?, 0)",
+                (guild_id, HOUSE_STARTING_COINS),
             )
             row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
