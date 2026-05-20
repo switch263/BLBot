@@ -88,13 +88,15 @@ def roll_offer(round_num: int) -> float:
             weights=[10, 25, 30, 25, 10],
         )[0]
     if round_num == 2:
+        # Mults scaled 0.78× from the original — round-2 EV 1.34 → 1.05.
         return random.choices(
-            [0.25, 0.75, 1.0, 1.5, 2.0, 3.0],
+            [0.2, 0.6, 0.8, 1.2, 1.6, 2.4],
             weights=[12, 18, 20, 25, 15, 10],
         )[0]
-    # round 3
+    # Round 3 — mults scaled 0.49× from the original — round-3 EV 2.15 → 1.05.
+    # Still the widest spread of the three rounds (big jackpot OR bust).
     return random.choices(
-        [0.0, 0.5, 1.0, 2.0, 4.0, 8.0],
+        [0.0, 0.2, 0.5, 1.0, 2.0, 3.9],
         weights=[15, 20, 15, 25, 15, 10],
     )[0]
 

@@ -5,6 +5,7 @@ import random
 import logging
 import time
 import economy
+from items import HEIST_SHIELD
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +598,25 @@ class Heist(commands.Cog):
             warning = self._build_bot_heist_warning(thief, victim, accomplice)
             view = BotHeistConfirmView(self, guild_id, thief, victim, accomplice)
             return warning, view
+
+        # Heist Shield: a victim's shield auto-blocks one heist, then is spent.
+        # Checked only here — after every other validation passed and a real
+        # heist is about to resolve — so a shield is never wasted on a heist
+        # that would have been rejected anyway.
+        if economy.consume_item(guild_id, victim.id, HEIST_SHIELD):
+            embed = discord.Embed(
+                title="🛡️ Heist Blocked!",
+                description=(
+                    f"{thief.mention} crept up on **{victim.display_name}** — and walked "
+                    f"straight into a **Heist Shield**. The attempt fizzles and the shield "
+                    f"is spent."
+                ),
+                color=discord.Color.blue(),
+            )
+            self._set_cooldown(guild_id, thief.id)
+            if accomplice is not None:
+                self._set_cooldown(guild_id, accomplice.id)
+            return embed, None
 
         is_duo = accomplice is not None
         success_rate = DUO_SUCCESS_RATE if is_duo else SOLO_SUCCESS_RATE

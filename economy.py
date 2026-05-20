@@ -230,6 +230,23 @@ def _init_db():
                     last_interest_ts REAL NOT NULL DEFAULT 0
                 )
             ''')
+            # cog_kv: the generic per-(guild,user) key-value store. ONE table
+            # backs every bit of cog/feature state that isn't a core economy
+            # concept — inventory, the Loaded Dice wager, future cooldowns and
+            # flags. A cog stores under its own `namespace` via the kv_* /
+            # feature helpers and never needs its own table or SQLite handle.
+            # `value` is typed per-row (SQLite stores int/real/text as-is).
+            # Guild-scoped (not per-user) state uses user_id = 0.
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS cog_kv (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    namespace TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value,
+                    PRIMARY KEY (guild_id, user_id, namespace, key)
+                )
+            ''')
             # Migrations: add columns if missing (safe on existing DBs)
             for col, decl in [
                 ("last_daily", "TEXT DEFAULT ''"),
@@ -664,9 +681,11 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
             )
             sender_balance = sender_coins - amount
             _normalize_house(conn, guild_id)
-            # Memorial tithe: 1.5% of the bet (the loss side), house → kev2tall.
+            # Memorial tithe (1.5% of the bet, the loss side) and the Loaded
+            # Dice wager record — both skip the memorial player.
             if not is_memorial(user_id):
                 _memorial_house_tithe(conn, guild_id, amount)
+                _record_wager(conn, guild_id, user_id, amount)
             recv_row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
@@ -743,10 +762,12 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 "WHERE guild_id = ? AND user_id = ?",
                 (pay, pay, guild_id, user_id),
             )
-            # Memorial tithe: 1.5% of the win, paid by the house on top — the
-            # winner keeps 100% of `pay`.
+            # Memorial tithe (1.5% of the win, paid by the house on top — the
+            # winner keeps 100% of `pay`) and the Loaded Dice settle: a payout
+            # landed, so this round is no longer a refundable loss.
             if not is_memorial(user_id):
                 _memorial_house_tithe(conn, guild_id, pay)
+                _settle_wager(conn, guild_id, user_id)
             conn.commit()
             return pay
     except sqlite3.Error as e:
@@ -778,6 +799,305 @@ def get_house_state(guild_id: int) -> dict:
     except sqlite3.Error as e:
         logger.error(f"Database error in get_house_state: {e}")
         return {"on_hand": 0, "reserve": 0, "apr": HOUSE_INTEREST_APR}
+
+
+# --- Generic key-value store ----------------------------------------------
+# One table (`cog_kv`) holds every bit of per-(guild,user) state that isn't a
+# core economy concept: inventory, the Loaded Dice wager, and whatever future
+# cogs need. A cog picks a `namespace` and stores under it — no new table, no
+# SQLite handle of its own, no economy.py change. Removing a cog? Delete its
+# file; its rows are harmless orphans, or wipe them with kv_clear_namespace.
+# Guild-scoped (not per-user) state uses user_id = 0.
+
+def kv_get(guild_id: int, user_id: int, namespace: str, key: str, default=None):
+    """Read one value, or `default` if the key is unset."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, namespace, key),
+            ).fetchone()
+            return row[0] if row else default
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_get: {e}")
+        return default
+
+
+def kv_set(guild_id: int, user_id: int, namespace: str, key: str, value):
+    """Write one value (int, float or str), overwriting any previous value."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=?",
+                (guild_id, user_id, namespace, key, value, value),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_set: {e}")
+
+
+def kv_incr(guild_id: int, user_id: int, namespace: str, key: str, by: int = 1):
+    """Atomically add `by` to a numeric value (an unset key counts as 0) and
+    return the new total. `by` may be negative."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value = value + ?",
+                (guild_id, user_id, namespace, key, by, by),
+            )
+            row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, namespace, key),
+            ).fetchone()
+            conn.commit()
+            return row[0] if row else by
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_incr: {e}")
+        return 0
+
+
+def kv_delete(guild_id: int, user_id: int, namespace: str, key: str):
+    """Delete one key."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "DELETE FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, namespace, key),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_delete: {e}")
+
+
+def kv_get_all(guild_id: int, user_id: int, namespace: str) -> dict:
+    """Every {key: value} a player holds in `namespace`."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=?",
+                (guild_id, user_id, namespace),
+            ).fetchall()
+            return {k: v for k, v in rows}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_get_all: {e}")
+        return {}
+
+
+def kv_clear_namespace(guild_id: int, namespace: str):
+    """Delete every row in a namespace for a guild — cleanup for when a cog is
+    retired. economy.py itself is untouched."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "DELETE FROM cog_kv WHERE guild_id=? AND namespace=?",
+                (guild_id, namespace),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_clear_namespace: {e}")
+
+
+# --- Inventory / shop items -----------------------------------------------
+# Items (shop purchases, loot-drop cards) live in the cog_kv store under the
+# "inventory" namespace, keyed item → qty. The catalog (names, prices, effects)
+# is items.py; economy.py only moves the counts.
+_INV_NS = "inventory"
+
+
+def grant_item(guild_id: int, user_id: int, item: str, qty: int = 1):
+    """Add `qty` of `item` to a player's inventory."""
+    if qty <= 0:
+        return
+    kv_incr(guild_id, user_id, _INV_NS, item, qty)
+
+
+def consume_item(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
+    """Atomically remove `qty` of `item` if the player holds at least that many.
+    Returns True if consumed, False if they were short."""
+    if qty <= 0:
+        return False
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, _INV_NS, item),
+            ).fetchone()
+            have = row[0] if row else 0
+            if have < qty:
+                conn.rollback()
+                return False
+            remaining = have - qty
+            if remaining > 0:
+                conn.execute(
+                    "UPDATE cog_kv SET value=? WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                    (remaining, guild_id, user_id, _INV_NS, item),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                    (guild_id, user_id, _INV_NS, item),
+                )
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logger.error(f"Database error in consume_item: {e}")
+        return False
+
+
+def item_qty(guild_id: int, user_id: int, item: str) -> int:
+    """How many of `item` a player holds."""
+    return int(kv_get(guild_id, user_id, _INV_NS, item, 0) or 0)
+
+
+def get_inventory(guild_id: int, user_id: int) -> dict:
+    """Returns {item: qty} for every item the player holds (qty > 0)."""
+    return {k: v for k, v in kv_get_all(guild_id, user_id, _INV_NS).items() if v > 0}
+
+
+def release_from_jail(guild_id: int, user_id: int) -> bool:
+    """Clear a player's jail sentence — the Get Out of Jail Free card. Returns
+    True if they were actually jailed (so the caller knows the card did work)."""
+    import time as _t
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT until_ts FROM jail WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            jailed = bool(row and row[0] > _t.time())
+            conn.execute(
+                "DELETE FROM jail WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            )
+            conn.commit()
+            return jailed
+    except sqlite3.Error as e:
+        logger.error(f"Database error in release_from_jail: {e}")
+        return False
+
+
+# --- Wager tracking (Loaded Dice mulligan) --------------------------------
+# A player's most recent bet lives in cog_kv under the "wager" namespace as
+# three keys — amount, ts, settled. `settled` flips to 1 once a payout lands;
+# an unsettled, recent wager is a refundable loss.
+_WAGER_NS = "wager"
+
+
+def _record_wager(conn: sqlite3.Connection, guild_id: int, user_id: int, amount: int):
+    """Within an open transaction: stamp this as the player's most recent,
+    unsettled wager. Called from transfer_to_house; slots/coinflip use the
+    standalone record_wager()."""
+    import time as _t
+    now = _t.time()
+    for k, v in (("amount", amount), ("ts", now), ("settled", 0)):
+        conn.execute(
+            "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=?",
+            (guild_id, user_id, _WAGER_NS, k, v, v),
+        )
+
+
+def _settle_wager(conn: sqlite3.Connection, guild_id: int, user_id: int):
+    """Within an open transaction: mark the player's last wager settled — a
+    payout landed, so it is no longer a refundable loss."""
+    conn.execute(
+        "UPDATE cog_kv SET value=1 WHERE guild_id=? AND user_id=? AND namespace=? AND key='settled'",
+        (guild_id, user_id, _WAGER_NS),
+    )
+
+
+def record_wager(guild_id: int, user_id: int, amount: int):
+    """Standalone wager record for games that settle outside transfer_to_house
+    (slots, coinflip). Pair with settle_wager() on a win."""
+    if amount <= 0:
+        return
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _record_wager(conn, guild_id, user_id, amount)
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error in record_wager: {e}")
+
+
+def settle_wager(guild_id: int, user_id: int):
+    """Standalone wager settle (a win) for slots/coinflip. See _settle_wager."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _settle_wager(conn, guild_id, user_id)
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Database error in settle_wager: {e}")
+
+
+def refund_last_loss(guild_id: int, user_id: int, max_age_seconds: int = 600) -> dict:
+    """Loaded Dice mulligan: if the player has a recent, unsettled losing
+    wager, refund it from the house and mark it settled (no double-claims).
+
+    Returns:
+      {"ok": True, "refunded": X}
+      {"ok": False, "error": "no_loss"}      # nothing recent and unsettled
+      {"ok": False, "error": "house_broke"}  # house can't cover the refund
+      {"ok": False, "error": "db"}
+    """
+    import time as _t
+    house_id = get_house_id()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT key, value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=?",
+                (guild_id, user_id, _WAGER_NS),
+            ).fetchall()
+            w = {k: v for k, v in rows}
+            amount = w.get("amount", 0)
+            ts = w.get("ts", 0)
+            settled = w.get("settled", 1)
+            if settled or amount <= 0 or (_t.time() - ts) > max_age_seconds:
+                conn.rollback()
+                return {"ok": False, "error": "no_loss"}
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+                (guild_id, house_id),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            house_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, house_id),
+            ).fetchone()
+            house_coins = house_row[0] if house_row else 0
+            if house_coins < amount:
+                conn.rollback()
+                return {"ok": False, "error": "house_broke"}
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, house_id),
+            )
+            conn.execute(
+                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, user_id),
+            )
+            conn.execute(
+                "UPDATE cog_kv SET value=1 WHERE guild_id=? AND user_id=? AND namespace=? AND key='settled'",
+                (guild_id, user_id, _WAGER_NS),
+            )
+            conn.commit()
+            return {"ok": True, "refunded": amount}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in refund_last_loss: {e}")
+        return {"ok": False, "error": "db"}
 
 
 def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> dict:
@@ -1421,6 +1741,52 @@ def jail_message(guild_id: int, user_id: int) -> str | None:
 
 
 def record_den(guild_id, user_id, won): record_game(guild_id, user_id, "den", won)
+
+
+# --- Admin: hard-reset the economy ----------------------------------------
+
+# Tables wiped by clear_economy(); `game_stats` is deliberately omitted so
+# leaderboards (play counts / win counts) survive a reset. Edit this list if
+# the caller wants a different blast radius.
+_CLEAR_ECONOMY_TABLES = (
+    "wallets",
+    "jail",
+    "cog_kv",          # inventory, wager, any future feature state
+    "house_reserve",
+    "bounty_log",
+    "loot_cooldowns",
+)
+
+
+def clear_economy(guild_id: int) -> dict:
+    """Hard-reset the economy for one guild. Wipes wallets, the house pot
+    (on-hand + reserve), all jail sentences, the cog_kv store (inventory,
+    Loaded Dice wager, any cog-owned state), the bounty rate-limit log, and
+    loot cooldowns. PRESERVES `game_stats` so leaderboards aren't erased.
+
+    All deletions run in a single transaction — either every table clears or
+    none do. Returns a dict {table_name: rows_deleted}.
+
+    Callers should require human approval before invoking — there is no undo.
+    """
+    counts: dict[str, int] = {}
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for tbl in _CLEAR_ECONOMY_TABLES:
+                try:
+                    cur = conn.execute(
+                        f"DELETE FROM {tbl} WHERE guild_id = ?", (guild_id,),
+                    )
+                    counts[tbl] = cur.rowcount
+                except sqlite3.OperationalError:
+                    # Table not present in this DB — log and continue.
+                    counts[tbl] = 0
+            conn.commit()
+            return counts
+    except sqlite3.Error as e:
+        logger.error(f"Database error in clear_economy: {e}")
+        return {}
 
 
 # Initialize DB on import

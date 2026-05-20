@@ -5,8 +5,13 @@ import random
 import sqlite3
 import logging
 import economy
+from items import BONUS_SPIN
 
 logger = logging.getLogger(__name__)
+
+# Notional bet a Bonus Spin item plays at — winnings scale off this, but the
+# player risks nothing.
+FREE_SPIN_BET = 25_000
 
 SYMBOLS = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "7️⃣", "🍀"]
 
@@ -124,8 +129,50 @@ class Slots(commands.Cog):
         economy.update_wallet(guild_id, user_id, net, is_jackpot)
         # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
         economy.memorial_tithe(guild_id, bet)
+        # Loaded Dice mulligan: record the wager; a win settles it (no refund).
+        economy.record_wager(guild_id, user_id, bet)
+        if payout_mult > 0:
+            economy.settle_wager(guild_id, user_id)
 
         return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
+
+    async def _freespin(self, guild_id: int, user_id: int) -> discord.Embed:
+        """Play one Bonus Spin item — a free spin at FREE_SPIN_BET notional.
+        Winnings are kept; nothing is risked."""
+        jmsg = economy.jail_message(guild_id, user_id)
+        if jmsg:
+            return discord.Embed(title="🚔 Jailed", description=jmsg, color=discord.Color.red())
+        if not economy.consume_item(guild_id, user_id, BONUS_SPIN):
+            return discord.Embed(
+                title="🎰 No Bonus Spins",
+                description="You don't have a 🎰 **Bonus Spin**. Buy one with `/buy` or find one in a loot drop.",
+                color=discord.Color.red(),
+            )
+        reels = self._spin()
+        payout_mult, desc = self._calculate_payout(reels)
+        is_jackpot = payout_mult >= 100
+        winnings = payout_mult * FREE_SPIN_BET
+        if winnings > 0:
+            economy.update_wallet(guild_id, user_id, winnings, is_jackpot)
+            # Memorial tithe: 1.5% of the win, paid by the house to kev2tall.
+            economy.memorial_tithe(guild_id, winnings)
+
+        reel_display = f"**[ {reels[0]} | {reels[1]} | {reels[2]} ]**"
+        if winnings > 0:
+            color = discord.Color.gold() if payout_mult >= 50 else discord.Color.green()
+            result_text = f"{desc} You won **{winnings:,}** coins — and risked nothing!"
+        else:
+            color = discord.Color.dark_grey()
+            result_text = f"{desc} No win — but a free spin costs you nothing."
+        embed = discord.Embed(
+            title="🎰 Bonus Spin 🎰",
+            description=f"{reel_display}\n\n{result_text}",
+            color=color,
+        )
+        balance = economy.get_coins(guild_id, user_id)
+        left = economy.item_qty(guild_id, user_id, BONUS_SPIN)
+        embed.set_footer(text=f"Balance: {balance} coins | Bonus Spins left: {left}")
+        return embed
 
     # (game_key, embed_label_with_emoji, plays_word, wins_word)
     _GAME_DISPLAY = [
@@ -291,6 +338,18 @@ class Slots(commands.Cog):
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message("No one has played slots yet!")
+
+
+    @commands.command(name="freespin")
+    @commands.guild_only()
+    async def freespin_prefix(self, ctx):
+        embed = await self._freespin(ctx.guild.id, ctx.author.id)
+        await ctx.send(embed=embed)
+
+    @app_commands.command(name="freespin", description="Use a Bonus Spin item — a free slots spin")
+    async def freespin_slash(self, interaction: discord.Interaction):
+        embed = await self._freespin(interaction.guild_id, interaction.user.id)
+        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

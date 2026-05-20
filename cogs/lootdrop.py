@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 import logging
 import economy
 from cogs.lootdrop_card import render_card, pick_species, _OBJECT_DISPLAY_NAMES
+from items import ITEMS, ALL_ITEMS
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ RARITIES = [
     # Codex" card (which scans to a friendly Rickroll). Weight 1 keeps it rare.
     ("Divine",    discord.Color.from_rgb(255, 240, 200), (100_000_000, 150_000_000), 1, "✨"),
 ]
+
+# Fraction of loot drops that yield an item card instead of coins.
+ITEM_DROP_CHANCE = 0.25
 
 ITEM_PREFIXES = [
     "Enchanted", "Cursed", "Blessed", "Rusty", "Golden", "Haunted", "Forbidden",
@@ -204,6 +208,10 @@ class LootDrop(commands.Cog):
             )
             return embed, None
 
+        # Roll: this drop is either an item card or the usual coin haul.
+        if random.random() < ITEM_DROP_CHANCE:
+            return await self._open_item_drop(guild_id, user, next_reset_ts)
+
         rarity_name, item_name, coins, color, emoji, species = self._generate_loot()
         economy.add_coins(guild_id, user.id, coins)
 
@@ -250,6 +258,59 @@ class LootDrop(commands.Cog):
             embed.add_field(name="Slot", value=slot.upper(), inline=True)
             embed.set_footer(text=flavor)
 
+        return embed, card_file
+
+    async def _open_item_drop(
+        self, guild_id: int, user: discord.Member, next_reset_ts: int
+    ) -> tuple[discord.Embed, discord.File | None]:
+        """An item-card loot drop: grant a random shop item and render it as a
+        card through the same engine the coin drops use."""
+        # Pick which item, weighted by each item's loot_weight.
+        keys = list(ALL_ITEMS)
+        item_key = random.choices(
+            keys, weights=[ITEMS[k]["loot_weight"] for k in keys], k=1
+        )[0]
+        meta = ITEMS[item_key]
+        economy.grant_item(guild_id, user.id, item_key)
+
+        # Roll a rarity purely for card flair — color, frame, sparkle density.
+        # Divine is excluded; it's reserved for the special coin-card tier.
+        flair_tiers = [r for r in RARITIES if r[0] != "Divine"]
+        rarity_name, color, _coin_range, _w, _emoji = random.choices(
+            flair_tiers, weights=[r[3] for r in flair_tiers], k=1
+        )[0]
+
+        embed = discord.Embed(
+            title=f"{meta['emoji']} Item Card Drop! {meta['emoji']}",
+            description=(
+                f"**{meta['name']}**\n{meta['blurb']}\n\n"
+                f"Added to your inventory — check it with `/inventory`."
+            ),
+            color=color,
+        )
+        embed.add_field(name="Next Drop", value=f"<t:{next_reset_ts}:R>", inline=True)
+
+        card_file: discord.File | None = None
+        try:
+            buf = await asyncio.to_thread(
+                render_card,
+                rarity_name=rarity_name,
+                item_name=meta["name"],
+                coins=0,
+                color=color,
+                flavor=meta["flavor"],
+                is_mythic=(rarity_name == "Mythic"),
+                minted_by=user.display_name,
+                minted_at=datetime.utcnow().strftime("%Y-%m-%d"),
+                species=pick_species(),
+                value_text="◆ ITEM CARD ◆",
+                name_prefix=False,
+            )
+            card_file = discord.File(buf, filename="lootcard.png")
+            embed.set_image(url="attachment://lootcard.png")
+        except Exception as e:
+            logger.error(f"Item card render failed, falling back to text embed: {e}")
+            embed.set_footer(text=meta["flavor"])
         return embed, card_file
 
     @commands.command(aliases=['lootdrop', 'drop'])

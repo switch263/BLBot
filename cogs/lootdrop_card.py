@@ -415,6 +415,8 @@ def render_card(
     minted_by: str | None = None,
     minted_at: str | None = None,
     species: str | None = None,
+    value_text: str | None = None,
+    name_prefix: bool = True,
 ) -> io.BytesIO:
     """Render a unique trading-card PNG and return as a BytesIO ready for upload.
 
@@ -484,7 +486,9 @@ def render_card(
         item_name = item_name.replace("{species}", pretty)
     # Prepend the procedural nickname so the title reads like a proper TCG
     # card: "Bilpoboclaw the Quantum Common Beach Ball of Dubious Origin".
-    item_name = f"{creature_nickname} the {item_name}"
+    # Item cards pass name_prefix=False so their real name renders verbatim.
+    if name_prefix:
+        item_name = f"{creature_nickname} the {item_name}"
 
     # Sparkle overlay — denser for higher tiers
     sparkle_count = {
@@ -647,7 +651,8 @@ def render_card(
     val_y = max(name_y + 4, ART_Y + ART_H + 70)
     draw.rectangle((24, val_y, CARD_W - 24, val_y + 42), fill=(28, 28, 36), outline=rgb, width=2)
     val_font = _font(22)
-    val_text = f"{coins:,} coins"
+    # Item cards pass an explicit value_text ("ITEM CARD"); loot cards show coins.
+    val_text = value_text if value_text else f"{coins:,} coins"
     bbox = draw.textbbox((0, 0), val_text, font=val_font)
     tw = bbox[2] - bbox[0]
     draw.text(((CARD_W - tw) // 2, val_y + 8), val_text, font=val_font, fill=(255, 215, 80))

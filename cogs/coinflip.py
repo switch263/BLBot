@@ -83,6 +83,10 @@ class CoinFlip(commands.Cog):
 
         # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
         economy.memorial_tithe(guild_id, bet)
+        # Loaded Dice mulligan: record the wager; a win settles it (no refund).
+        economy.record_wager(guild_id, user_id, bet)
+        if won:
+            economy.settle_wager(guild_id, user_id)
 
         embed.set_footer(text=f"Balance: {new_bal} coins")
         return embed

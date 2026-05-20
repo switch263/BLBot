@@ -114,6 +114,183 @@ class Admin(commands.Cog):
 
         logger.info(f"Admin {ctx.author} removed {actually_removed} coins from {user} in guild {guild_id}")
 
+    # ----------------------------------------------------------------------
+    # !clear_economy — PR-style approval flow for a full economy wipe.
+    # ----------------------------------------------------------------------
+    @commands.command(name="clear_economy")
+    @commands.guild_only()
+    async def clear_economy(self, ctx):
+        """Wipe the entire economy for this server. Requires two approvals from
+        OTHER admin-channel members before it runs. Admin channel only."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return  # Silently ignore — admin channel only.
+        view = ClearEconomyView(
+            initiator=ctx.author,
+            guild=ctx.guild,
+            channel=ctx.channel,
+            required_approvals=2,
+        )
+        msg = await ctx.send(view.status_text(), view=view)
+        view.message = msg
+        logger.info(
+            f"clear_economy requested by {ctx.author} in guild {ctx.guild.id} "
+            f"(awaiting {view.required_approvals} approvals)"
+        )
+
+
+# --------------------------------------------------------------------------
+# ClearEconomyView — PR-style approval gate for the irreversible wipe.
+# --------------------------------------------------------------------------
+
+class ClearEconomyView(discord.ui.View):
+    """Posts in the admin channel. Two distinct admin-channel members (not the
+    initiator) must click Approve before the wipe runs. The initiator — or any
+    admin-channel member — can cancel. 5-minute timeout."""
+
+    def __init__(self, initiator: discord.Member, guild: discord.Guild,
+                 channel: discord.TextChannel, required_approvals: int = 2):
+        super().__init__(timeout=300)
+        self.initiator = initiator
+        self.guild = guild
+        self.channel = channel
+        self.required_approvals = required_approvals
+        self.approvers: set[int] = set()
+        self.message: discord.Message | None = None
+        self.resolved = False
+
+    # ---- eligibility & rendering --------------------------------------
+    def _is_admin_channel_member(self, user_id: int) -> bool:
+        return any(m.id == user_id and not m.bot for m in self.channel.members)
+
+    def _approver_names(self) -> str:
+        if not self.approvers:
+            return "—"
+        names = []
+        for uid in self.approvers:
+            m = self.guild.get_member(uid)
+            names.append(m.display_name if m else f"<{uid}>")
+        return ", ".join(names)
+
+    def status_text(self) -> str:
+        return (
+            f"🚨 **ECONOMY CLEAR REQUESTED**\n"
+            f"{self.initiator.mention} wants to **wipe the economy** for this server. "
+            f"There is no undo.\n\n"
+            f"**This will reset:**\n"
+            f"• every player wallet (back to fresh)\n"
+            f"• the house pot — on-hand AND safe-harbor reserve\n"
+            f"• all active jail sentences\n"
+            f"• every item-card inventory and the Loaded Dice wager\n"
+            f"• loot-drop cooldowns (AM/PM)\n"
+            f"• jail-bounty rate-limit history\n\n"
+            f"**Preserved:** game stats (play counts, win counts) — leaderboards survive.\n\n"
+            f"**{self.required_approvals} approvals required** from other admin-channel "
+            f"members. The initiator's request does not count.\n"
+            f"**Approvals: {len(self.approvers)}/{self.required_approvals}**  ({self._approver_names()})"
+        )
+
+    async def _refresh(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(content=self.status_text(), view=self)
+
+    def _disable_all(self):
+        for child in self.children:
+            child.disabled = True
+
+    # ---- buttons -------------------------------------------------------
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅")
+    async def approve_button(self, interaction: discord.Interaction,
+                              button: discord.ui.Button):
+        if self.resolved:
+            await interaction.response.send_message(
+                "This request is already resolved.", ephemeral=True)
+            return
+        user = interaction.user
+        if user.id == self.initiator.id:
+            await interaction.response.send_message(
+                "🚫 You started this request — someone else has to approve.",
+                ephemeral=True)
+            return
+        if not self._is_admin_channel_member(user.id):
+            await interaction.response.send_message(
+                "🚫 Only admin-channel members can approve.", ephemeral=True)
+            return
+        if user.id in self.approvers:
+            await interaction.response.send_message(
+                "You already approved.", ephemeral=True)
+            return
+        self.approvers.add(user.id)
+
+        if len(self.approvers) >= self.required_approvals:
+            await self._execute(interaction)
+        else:
+            await self._refresh(interaction)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="✖️")
+    async def cancel_button(self, interaction: discord.Interaction,
+                             button: discord.ui.Button):
+        if self.resolved:
+            await interaction.response.send_message(
+                "This request is already resolved.", ephemeral=True)
+            return
+        # Initiator OR any admin-channel member can cancel.
+        if (interaction.user.id != self.initiator.id
+                and not self._is_admin_channel_member(interaction.user.id)):
+            await interaction.response.send_message(
+                "🚫 Only admin-channel members can cancel.", ephemeral=True)
+            return
+        self.resolved = True
+        self._disable_all()
+        self.stop()
+        await interaction.response.edit_message(
+            content=(
+                f"❌ **Economy clear cancelled** by {interaction.user.mention}.\n"
+                f"Initiator was {self.initiator.mention}; "
+                f"approvals at cancel: {len(self.approvers)}/{self.required_approvals}."
+            ),
+            view=self,
+        )
+
+    # ---- execution & timeout ------------------------------------------
+    async def _execute(self, interaction: discord.Interaction):
+        self.resolved = True
+        self._disable_all()
+        self.stop()
+        result = economy.clear_economy(self.guild.id)
+        rows_summary = "\n".join(
+            f"• `{tbl}`: **{n}** rows" for tbl, n in result.items()
+        ) or "_(no rows reported)_"
+        await interaction.response.edit_message(
+            content=(
+                f"💥 **ECONOMY CLEARED** — fresh slate.\n"
+                f"Initiator: {self.initiator.mention}\n"
+                f"Approved by: {self._approver_names()}\n\n"
+                f"**Deleted:**\n{rows_summary}\n\n"
+                f"Game stats preserved. Everyone starts over."
+            ),
+            view=self,
+        )
+        logger.warning(
+            f"ECONOMY CLEARED in guild {self.guild.id} by {self.initiator} "
+            f"with approvals from {self.approvers}; rows deleted: {result}"
+        )
+
+    async def on_timeout(self):
+        if self.resolved or self.message is None:
+            return
+        self.resolved = True
+        self._disable_all()
+        try:
+            await self.message.edit(
+                content=(
+                    f"⏰ **Economy clear expired** without enough approvals "
+                    f"({len(self.approvers)}/{self.required_approvals} after 5 min). "
+                    f"Request: {self.initiator.mention}."
+                ),
+                view=self,
+            )
+        except Exception as e:
+            logger.error(f"Failed to edit on clear_economy timeout: {e}")
+
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
