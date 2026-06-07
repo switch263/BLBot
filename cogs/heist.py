@@ -558,9 +558,20 @@ class Heist(commands.Cog):
         if victim.bot and not targeting_house:
             return discord.Embed(description="You can't rob that bot. No wallet, no dice.", color=discord.Color.red()), None
 
-        # kev2tall is a memorial player — exempt from heists entirely.
+        # kev2tall is a memorial player. Trying to heist him doesn't rob him —
+        # it backfires: the would-be thief's entire wallet is emptied into his
+        # balance as penance. Framed as a "logic error" for flavor.
         if economy.is_memorial(victim.id):
-            return discord.Embed(description="kev2tall rests easy. You don't rob the memorial. 🕊️", color=discord.Color.red()), None
+            bal = economy.get_coins(guild_id, thief.id)
+            if bal > 0:
+                economy.transfer_coins(guild_id, thief.id, economy.MEMORIAL_USER_ID, bal)
+            return discord.Embed(
+                description=(
+                    "There was a logic error trying to complete the heist against kev2tall. "
+                    "I've gone ahead and taken care of your wallet. 🕊️"
+                ),
+                color=discord.Color.red(),
+            ), None
         if economy.is_memorial(thief.id) or (accomplice and economy.is_memorial(accomplice.id)):
             return discord.Embed(description="kev2tall doesn't run heists anymore. Rest easy, brother. 🕊️", color=discord.Color.red()), None
 
