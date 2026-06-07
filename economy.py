@@ -1098,6 +1098,51 @@ def release_from_jail(guild_id: int, user_id: int) -> bool:
         return False
 
 
+def adjust_jail_sentence(guild_id: int, user_id: int, delta_seconds: int) -> dict:
+    """Atomically shift a jailed user's release deadline by delta_seconds
+    (negative shortens, positive extends). If the new deadline lands at or
+    before now, the sentence is cleared (released). Preserves the row's
+    reason / bail_amount / channel_id — only until_ts changes.
+
+    Returns {'ok': bool, 'released': bool, 'remaining': int}:
+      - ok False       → the user wasn't actively jailed; nothing changed.
+      - released True   → the shift dropped them to freedom (row deleted).
+      - remaining       → seconds left after the change (0 if released).
+
+    The memorial player is never jailed, so this is naturally a no-op for him.
+    Used by /jailbreak to extend or shorten a sentence in one transaction
+    rather than composing release_from_jail + jail_user non-atomically."""
+    import time as _t
+    now = _t.time()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT until_ts FROM jail WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            if not row or row[0] <= now:
+                conn.rollback()
+                return {"ok": False, "released": False, "remaining": 0}
+            new_until = row[0] + delta_seconds
+            if new_until <= now:
+                conn.execute(
+                    "DELETE FROM jail WHERE guild_id = ? AND user_id = ?",
+                    (guild_id, user_id),
+                )
+                conn.commit()
+                return {"ok": True, "released": True, "remaining": 0}
+            conn.execute(
+                "UPDATE jail SET until_ts = ? WHERE guild_id = ? AND user_id = ?",
+                (new_until, guild_id, user_id),
+            )
+            conn.commit()
+            return {"ok": True, "released": False, "remaining": int(new_until - now)}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in adjust_jail_sentence: {e}")
+        return {"ok": False, "released": False, "remaining": 0}
+
+
 def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> dict:
     """Atomically transfer from `from_id` to many recipients in one transaction.
 
