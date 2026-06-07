@@ -13,100 +13,100 @@ logger = logging.getLogger(__name__)
 SOLO_SUCCESS_RATE = 0.35  # 35% chance to succeed alone
 
 SOLO_SUCCESS_MESSAGES = [
-    "snuck in through the back door and grabbed {amount} coins from {victim}'s wallet!",
-    "distracted {victim} with a meme and swiped {amount} coins!",
-    "hacked into {victim}'s account and transferred {amount} coins!",
-    "pickpocketed {amount} coins from {victim} while they were AFK!",
-    "found {victim}'s password written on a sticky note and took {amount} coins!",
-    "used social engineering to convince {victim}'s bank to wire {amount} coins!",
-    "crawled through the ventilation ducts and escaped with {amount} coins from {victim}!",
-    "deployed a trojan horse meme to siphon {amount} coins from {victim}!",
-    "posed as {victim}'s therapist and billed {amount} coins per session (one session long)!",
-    "slid a fake QR code into {victim}'s DMs. They scanned it during a Zoom meeting. {amount} coins richer.",
-    "returned {victim}'s own delivery package back to Amazon for a refund. {amount} coins and zero shame.",
-    "put on a high-vis vest and walked into {victim}'s house like they worked there. Out with {amount} coins.",
-    "forged {victim}'s signature on a birthday card, said it was 'IOU'. It worked. {amount} coins.",
-    "booked a fake wedding with {victim} as guest of honor. They RSVP'd 'YES (w/ gift)'. {amount} coins.",
-    "convinced {victim} they owed back-HOA fees. Billed them {amount} coins. They paid. They always do.",
-    "sold {victim}'s own laptop back to them at a discount. {amount} coins. Classic.",
-    "impersonated {victim}'s dentist and 'charged' them {amount} for a fictional root canal.",
-    "called {victim} posing as their own cousin Terry 'in a jam.' Terry does not exist. {amount} coins.",
-    "swapped {victim}'s garage door opener with theirs. Took {amount} coins of stuff while {victim} was at work.",
-    "set up a GoFundMe titled 'Help {victim} Through This Tough Time' — {victim} didn't know. {amount} coins raised.",
-    "intercepted {victim}'s lottery ticket after it won. {amount} coins. Diabolical.",
-    "enrolled {victim} in a Columbia House CD club circa 1997 with a forged signature. Pocketed {amount} coins.",
-    "convinced {victim} their coins needed to be 'aired out.' Put them in the yard. Took them. {amount} coins.",
-    "sold {victim} a timeshare to their own kitchen. {amount} coins later — confusing, but profitable.",
+    "snuck in through the back door and grabbed {amount:,} coins from {victim}'s wallet!",
+    "distracted {victim} with a meme and swiped {amount:,} coins!",
+    "hacked into {victim}'s account and transferred {amount:,} coins!",
+    "pickpocketed {amount:,} coins from {victim} while they were AFK!",
+    "found {victim}'s password written on a sticky note and took {amount:,} coins!",
+    "used social engineering to convince {victim}'s bank to wire {amount:,} coins!",
+    "crawled through the ventilation ducts and escaped with {amount:,} coins from {victim}!",
+    "deployed a trojan horse meme to siphon {amount:,} coins from {victim}!",
+    "posed as {victim}'s therapist and billed {amount:,} coins per session (one session long)!",
+    "slid a fake QR code into {victim}'s DMs. They scanned it during a Zoom meeting. {amount:,} coins richer.",
+    "returned {victim}'s own delivery package back to Amazon for a refund. {amount:,} coins and zero shame.",
+    "put on a high-vis vest and walked into {victim}'s house like they worked there. Out with {amount:,} coins.",
+    "forged {victim}'s signature on a birthday card, said it was 'IOU'. It worked. {amount:,} coins.",
+    "booked a fake wedding with {victim} as guest of honor. They RSVP'd 'YES (w/ gift)'. {amount:,} coins.",
+    "convinced {victim} they owed back-HOA fees. Billed them {amount:,} coins. They paid. They always do.",
+    "sold {victim}'s own laptop back to them at a discount. {amount:,} coins. Classic.",
+    "impersonated {victim}'s dentist and 'charged' them {amount:,} for a fictional root canal.",
+    "called {victim} posing as their own cousin Terry 'in a jam.' Terry does not exist. {amount:,} coins.",
+    "swapped {victim}'s garage door opener with theirs. Took {amount:,} coins of stuff while {victim} was at work.",
+    "set up a GoFundMe titled 'Help {victim} Through This Tough Time' — {victim} didn't know. {amount:,} coins raised.",
+    "intercepted {victim}'s lottery ticket after it won. {amount:,} coins. Diabolical.",
+    "enrolled {victim} in a Columbia House CD club circa 1997 with a forged signature. Pocketed {amount:,} coins.",
+    "convinced {victim} their coins needed to be 'aired out.' Put them in the yard. Took them. {amount:,} coins.",
+    "sold {victim} a timeshare to their own kitchen. {amount:,} coins later — confusing, but profitable.",
 ]
 
 SOLO_FAIL_MESSAGES = [
-    "tripped the alarm and got caught! Fined **{fine}** coins.",
-    "got recognized by {victim}'s security cameras! Fined **{fine}** coins.",
-    "accidentally robbed themselves somehow. Lost **{fine}** coins.",
-    "slipped on a banana peel during the getaway. Fined **{fine}** coins.",
-    "forgot to wear a mask. {victim} recognized them immediately. Fined **{fine}** coins.",
-    "got distracted by a cat video mid-heist. Busted! Fined **{fine}** coins.",
-    "left their ID at the crime scene. Amateur hour. Fined **{fine}** coins.",
-    "was caught when their phone rang during the heist. Fined **{fine}** coins.",
-    "tried to bribe a guard dog. The dog was not only incorruptible, it tipped off the feds. Fined **{fine}**.",
-    "used 'password' as the password guess. {victim} uses '12345'. Close, but no. **{fine}** coins gone.",
-    "fell into a koi pond during the getaway. Drenched. Busted. **{fine}** coins fined.",
-    "dropped a crumpled CVS receipt with their name on it. Fined **{fine}** coins.",
-    "accidentally filmed the entire heist on iPhone vertical mode and posted it to TikTok. Fined **{fine}** coins. 2.3M likes.",
-    "stepped on a squeaky toy in {victim}'s hallway. Dog barked. SWAT arrived. **{fine}** fine.",
-    "tried to rob a SmartHome. It called {victim}'s mother. She was worse than the cops. **{fine}** coins.",
-    "misjudged the roof drop. Landed directly on {victim}'s Ring camera. It's on the news. **{fine}**.",
-    "asked Siri how to commit a heist. Siri told a cop. **{fine}** coins.",
-    "brought the wrong duffel bag. It's full of rejected fan mail. Lose **{fine}**.",
-    "forgot to bring a bag. Lost everything carrying coins in their pants. Fined **{fine}**.",
-    "tried to escape through a doggy door. Not a dog. Fined **{fine}** coins.",
-    "left a trail of Hot Cheeto dust straight to their apartment. Fined **{fine}**.",
-    "wore a mask that said their full name in Comic Sans across the forehead. Fined **{fine}**.",
-    "lockpicked the wrong house. Neighbors were VERY welcoming. Fined **{fine}** in awkward conversation.",
-    "triggered the panic room FROM INSIDE the panic room. Fined **{fine}**.",
+    "tripped the alarm and got caught! Fined **{fine:,}** coins.",
+    "got recognized by {victim}'s security cameras! Fined **{fine:,}** coins.",
+    "accidentally robbed themselves somehow. Lost **{fine:,}** coins.",
+    "slipped on a banana peel during the getaway. Fined **{fine:,}** coins.",
+    "forgot to wear a mask. {victim} recognized them immediately. Fined **{fine:,}** coins.",
+    "got distracted by a cat video mid-heist. Busted! Fined **{fine:,}** coins.",
+    "left their ID at the crime scene. Amateur hour. Fined **{fine:,}** coins.",
+    "was caught when their phone rang during the heist. Fined **{fine:,}** coins.",
+    "tried to bribe a guard dog. The dog was not only incorruptible, it tipped off the feds. Fined **{fine:,}**.",
+    "used 'password' as the password guess. {victim} uses '12345'. Close, but no. **{fine:,}** coins gone.",
+    "fell into a koi pond during the getaway. Drenched. Busted. **{fine:,}** coins fined.",
+    "dropped a crumpled CVS receipt with their name on it. Fined **{fine:,}** coins.",
+    "accidentally filmed the entire heist on iPhone vertical mode and posted it to TikTok. Fined **{fine:,}** coins. 2.3M likes.",
+    "stepped on a squeaky toy in {victim}'s hallway. Dog barked. SWAT arrived. **{fine:,}** fine.",
+    "tried to rob a SmartHome. It called {victim}'s mother. She was worse than the cops. **{fine:,}** coins.",
+    "misjudged the roof drop. Landed directly on {victim}'s Ring camera. It's on the news. **{fine:,}**.",
+    "asked Siri how to commit a heist. Siri told a cop. **{fine:,}** coins.",
+    "brought the wrong duffel bag. It's full of rejected fan mail. Lose **{fine:,}**.",
+    "forgot to bring a bag. Lost everything carrying coins in their pants. Fined **{fine:,}**.",
+    "tried to escape through a doggy door. Not a dog. Fined **{fine:,}** coins.",
+    "left a trail of Hot Cheeto dust straight to their apartment. Fined **{fine:,}**.",
+    "wore a mask that said their full name in Comic Sans across the forehead. Fined **{fine:,}**.",
+    "lockpicked the wrong house. Neighbors were VERY welcoming. Fined **{fine:,}** in awkward conversation.",
+    "triggered the panic room FROM INSIDE the panic room. Fined **{fine:,}**.",
 ]
 
 # Heist outcomes with ACCOMPLICE
 DUO_SUCCESS_RATE = 0.55  # 55% chance with a partner
 
 DUO_SUCCESS_MESSAGES = [
-    "{thief} created a distraction while {accomplice} grabbed {amount} coins from {victim}!",
-    "{thief} and {accomplice} pulled off a classic bait-and-switch on {victim} for {amount} coins!",
-    "{thief} hacked the mainframe while {accomplice} downloaded {amount} coins from {victim}!",
-    "{accomplice} drove the getaway car while {thief} snagged {amount} coins from {victim}!",
-    "{thief} and {accomplice} executed a flawless Ocean's Two heist on {victim} for {amount} coins!",
-    "{accomplice} cut the power while {thief} raided {victim}'s vault for {amount} coins!",
-    "{thief} posed as IT support while {accomplice} cleaned out {victim}'s account for {amount} coins!",
-    "{thief} and {accomplice} tunneled into {victim}'s vault and escaped with {amount} coins!",
-    "{thief} dressed as a pizza guy. {accomplice} dressed as a second pizza guy. {victim} took both pizzas AND paid {amount}.",
-    "{thief} and {accomplice} staged a fake flash mob outside {victim}'s window. Emptied the place. {amount} coins.",
-    "{accomplice} faked a medical emergency outside {victim}'s door. {thief} walked out with {amount} under a lab coat.",
-    "{thief} started a HOA meeting across town. {accomplice} looted {victim}'s place at leisure. {amount} coins.",
-    "{thief} befriended {victim}'s dog. {accomplice} befriended {victim}. Took {amount} under no one's nose.",
-    "{thief} did a Tom Cruise dangle. {accomplice} held the rope AND a burrito. {amount} coins.",
-    "{thief} and {accomplice} staged a kids' lemonade stand outside {victim}'s house as a front. {amount} in 'donations.'",
-    "{accomplice} impersonated {victim} at the bank. {thief} impersonated {victim}'s accountant. Wired out {amount}.",
-    "{thief} hosted a surprise birthday party for {victim}. Half the neighbors showed up. {accomplice} robbed the house during cake. {amount} coins.",
-    "{thief} replaced every clock in {victim}'s house with one 3 hours fast. {accomplice} helped clean up the confusion. {amount} coins.",
+    "{thief} created a distraction while {accomplice} grabbed {amount:,} coins from {victim}!",
+    "{thief} and {accomplice} pulled off a classic bait-and-switch on {victim} for {amount:,} coins!",
+    "{thief} hacked the mainframe while {accomplice} downloaded {amount:,} coins from {victim}!",
+    "{accomplice} drove the getaway car while {thief} snagged {amount:,} coins from {victim}!",
+    "{thief} and {accomplice} executed a flawless Ocean's Two heist on {victim} for {amount:,} coins!",
+    "{accomplice} cut the power while {thief} raided {victim}'s vault for {amount:,} coins!",
+    "{thief} posed as IT support while {accomplice} cleaned out {victim}'s account for {amount:,} coins!",
+    "{thief} and {accomplice} tunneled into {victim}'s vault and escaped with {amount:,} coins!",
+    "{thief} dressed as a pizza guy. {accomplice} dressed as a second pizza guy. {victim} took both pizzas AND paid {amount:,}.",
+    "{thief} and {accomplice} staged a fake flash mob outside {victim}'s window. Emptied the place. {amount:,} coins.",
+    "{accomplice} faked a medical emergency outside {victim}'s door. {thief} walked out with {amount:,} under a lab coat.",
+    "{thief} started a HOA meeting across town. {accomplice} looted {victim}'s place at leisure. {amount:,} coins.",
+    "{thief} befriended {victim}'s dog. {accomplice} befriended {victim}. Took {amount:,} under no one's nose.",
+    "{thief} did a Tom Cruise dangle. {accomplice} held the rope AND a burrito. {amount:,} coins.",
+    "{thief} and {accomplice} staged a kids' lemonade stand outside {victim}'s house as a front. {amount:,} in 'donations.'",
+    "{accomplice} impersonated {victim} at the bank. {thief} impersonated {victim}'s accountant. Wired out {amount:,}.",
+    "{thief} hosted a surprise birthday party for {victim}. Half the neighbors showed up. {accomplice} robbed the house during cake. {amount:,} coins.",
+    "{thief} replaced every clock in {victim}'s house with one 3 hours fast. {accomplice} helped clean up the confusion. {amount:,} coins.",
 ]
 
 DUO_FAIL_MESSAGES = [
-    "{thief} and {accomplice} couldn't agree on the plan and got caught! Both fined **{fine}** coins.",
-    "{accomplice} sneezed during the heist, alerting {victim}. Both fined **{fine}** coins.",
-    "{thief} accidentally texted the plan to {victim}. Busted! Both fined **{fine}** coins.",
-    "{accomplice} locked the keys in the getaway car. Both fined **{fine}** coins.",
-    "{thief} and {accomplice} showed up wearing matching outfits. Instantly suspicious. Both fined **{fine}** coins.",
-    "{accomplice} livestreamed the heist by accident. Both fined **{fine}** coins.",
-    "{thief} tried to high-five {accomplice} mid-heist and knocked over a shelf. Both fined **{fine}** coins.",
-    "{accomplice} got hungry and stopped at the victim's fridge. Both caught! Fined **{fine}** coins.",
-    "{thief} and {accomplice} started arguing about who should hold the flashlight. Got caught mid-argument. Fined **{fine}**.",
-    "{accomplice} live-tweeted the heist 'for the memes.' Both fined **{fine}** coins.",
-    "{thief} had earbuds in. Didn't hear the alarm. {accomplice} was trying to get their attention. Both fined **{fine}**.",
-    "{accomplice} was allergic to {victim}'s cat. Sneezed 41 times in a row. Both fined **{fine}**.",
-    "{thief} tried to vault over {victim}'s fence. It was chain link. It was ~2 feet tall. Both fined **{fine}**.",
-    "{accomplice} accidentally voted in a local election during the heist. Left a paper trail. Both fined **{fine}**.",
-    "{thief} and {accomplice} both went in through the same small window at the same time. Got stuck. Fined **{fine}**.",
-    "{accomplice} brought their mom. {victim}'s mom happened to be home. They became friends. Heist abandoned. Fined **{fine}**.",
+    "{thief} and {accomplice} couldn't agree on the plan and got caught! Both fined **{fine:,}** coins.",
+    "{accomplice} sneezed during the heist, alerting {victim}. Both fined **{fine:,}** coins.",
+    "{thief} accidentally texted the plan to {victim}. Busted! Both fined **{fine:,}** coins.",
+    "{accomplice} locked the keys in the getaway car. Both fined **{fine:,}** coins.",
+    "{thief} and {accomplice} showed up wearing matching outfits. Instantly suspicious. Both fined **{fine:,}** coins.",
+    "{accomplice} livestreamed the heist by accident. Both fined **{fine:,}** coins.",
+    "{thief} tried to high-five {accomplice} mid-heist and knocked over a shelf. Both fined **{fine:,}** coins.",
+    "{accomplice} got hungry and stopped at the victim's fridge. Both caught! Fined **{fine:,}** coins.",
+    "{thief} and {accomplice} started arguing about who should hold the flashlight. Got caught mid-argument. Fined **{fine:,}**.",
+    "{accomplice} live-tweeted the heist 'for the memes.' Both fined **{fine:,}** coins.",
+    "{thief} had earbuds in. Didn't hear the alarm. {accomplice} was trying to get their attention. Both fined **{fine:,}**.",
+    "{accomplice} was allergic to {victim}'s cat. Sneezed 41 times in a row. Both fined **{fine:,}**.",
+    "{thief} tried to vault over {victim}'s fence. It was chain link. It was ~2 feet tall. Both fined **{fine:,}**.",
+    "{accomplice} accidentally voted in a local election during the heist. Left a paper trail. Both fined **{fine:,}**.",
+    "{thief} and {accomplice} both went in through the same small window at the same time. Got stuck. Fined **{fine:,}**.",
+    "{accomplice} brought their mom. {victim}'s mom happened to be home. They became friends. Heist abandoned. Fined **{fine:,}**.",
 ]
 
 # Steal 5-15% of victim's coins on success, fine is 10-20% of thief's coins on fail
@@ -590,7 +590,7 @@ class Heist(commands.Cog):
         thief_coins = economy.get_coins(guild_id, thief.id)
 
         if victim_coins < MIN_VICTIM_COINS:
-            return discord.Embed(description=f"{victim.display_name} only has **{victim_coins}** coins. Not worth the risk!", color=discord.Color.red()), None
+            return discord.Embed(description=f"{victim.display_name} only has **{victim_coins:,}** coins. Not worth the risk!", color=discord.Color.red()), None
 
         # --- Robbing the house (the bot itself) ---
         # Don't auto-execute — surface the risk and require confirmation. The view will call _execute_bot_heist on confirm.
@@ -638,7 +638,7 @@ class Heist(commands.Cog):
 
                 msg_template = random.choice(DUO_SUCCESS_MESSAGES)
                 msg = msg_template.format(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, amount=stolen)
-                msg += f"\n\n{thief.display_name} keeps **{thief_take}** coins, {accomplice.display_name} gets a **{cut}** coin cut ({int(cut_pct * 100)}%)."
+                msg += f"\n\n{thief.display_name} keeps **{thief_take:,}** coins, {accomplice.display_name} gets a **{cut:,}** coin cut ({int(cut_pct * 100)}%)."
             else:
                 msg_template = random.choice(SOLO_SUCCESS_MESSAGES)
                 msg = f"{thief.mention} " + msg_template.format(victim=victim.display_name, amount=stolen)
@@ -659,7 +659,7 @@ class Heist(commands.Cog):
 
                 msg_template = random.choice(DUO_FAIL_MESSAGES)
                 msg = msg_template.format(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, fine=fine)
-                msg += f"\n\n{accomplice.display_name} was also fined **{accomplice_fine}** coins."
+                msg += f"\n\n{accomplice.display_name} was also fined **{accomplice_fine:,}** coins."
             else:
                 msg_template = random.choice(SOLO_FAIL_MESSAGES)
                 msg = f"{thief.mention} " + msg_template.format(victim=victim.display_name, fine=fine)

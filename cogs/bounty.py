@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import economy
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -301,10 +302,16 @@ class Bounty(commands.Cog):
 
     @commands.command(name="bounty")
     @commands.guild_only()
-    async def bounty_prefix(self, ctx, target: discord.Member = None, bet: int = 0):
+    async def bounty_prefix(self, ctx, target: discord.Member = None, bet: str = ""):
         """Place a coin bounty for a chance to jail another user. Fails put YOU in jail."""
         channel_id = ctx.channel.id if ctx.channel else 0
-        msg = await self._run_bounty(ctx.guild, channel_id, ctx.author, target, bet)
+        parsed_bet = None
+        if bet:
+            parsed_bet = parse_amount(bet)
+            if parsed_bet is None:
+                await ctx.send(amount_error(bet))
+                return
+        msg = await self._run_bounty(ctx.guild, channel_id, ctx.author, target, parsed_bet)
         await ctx.send(msg)
 
     @app_commands.command(name="bounty", description=f"Pay ≥ {MIN_BOUNTY:,} coins for a chance to jail someone. Fails put YOU in jail.")
@@ -312,9 +319,13 @@ class Bounty(commands.Cog):
         target="The user you want jailed",
         bet="How many coins to put up (min 100,000,000)",
     )
-    async def bounty_slash(self, interaction: discord.Interaction, target: discord.Member, bet: int):
+    async def bounty_slash(self, interaction: discord.Interaction, target: discord.Member, bet: str):
         channel_id = interaction.channel_id or 0
-        msg = await self._run_bounty(interaction.guild, channel_id, interaction.user, target, bet)
+        parsed_bet = parse_amount(bet)
+        if parsed_bet is None:
+            await interaction.response.send_message(amount_error(bet), ephemeral=True)
+            return
+        msg = await self._run_bounty(interaction.guild, channel_id, interaction.user, target, parsed_bet)
         await interaction.response.send_message(msg)
 
 

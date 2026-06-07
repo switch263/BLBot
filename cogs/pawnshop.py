@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_message, record_pawnshop, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class PawnView(discord.ui.View):
     def _refresh(self):
         g = self.game
         payout = int(g.bet * g.current_mult)
-        self.accept_button.label = f"Accept ({g.current_mult:.2f}× = {payout})"
+        self.accept_button.label = f"Accept ({g.current_mult:.2f}× = {payout:,})"
         self.hold_button.disabled = g.round >= MAX_ROUNDS
         if g.round >= MAX_ROUNDS:
             self.hold_button.label = "Walk Away (lose it all)"
@@ -136,7 +137,7 @@ class PawnView(discord.ui.View):
             child.disabled = True
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         final = (
-            f"🤝 **Deal.** The broker counts out **{paid}** coins.{short}\n"
+            f"🤝 **Deal.** The broker counts out **{paid:,}** coins.{short}\n"
             f"Net: **{net:+,}**.\n"
             f"Balance: **{get_coins(g.guild_id, g.user_id)}**"
         )
@@ -179,13 +180,13 @@ class PawnShop(commands.Cog):
 
     def _render(self, g: PawnGame, footer: str | None = None) -> str:
         lines = [
-            f"🏪 **The Pawn Shop** — {g.user_name} brought in **a {g.item_name}** (cost basis: **{g.bet}** coins).",
+            f"🏪 **The Pawn Shop** — {g.user_name} brought in **a {g.item_name}** (cost basis: **{g.bet:,}** coins).",
         ]
         for rnd, mult in g.history:
             flavor = random.choice(BROKER_OFFERS) if rnd == g.round else ""
             if rnd == g.round and not g.ended:
                 lines.append(f"**Round {rnd}:** The broker {flavor}")
-                lines.append(f"➡️ Offer: **{mult:.2f}×** ({int(g.bet * mult)} coins)")
+                lines.append(f"➡️ Offer: **{mult:.2f}×** ({int(g.bet * mult):,} coins)")
             else:
                 lines.append(f"Round {rnd} offer: **{mult:.2f}×** (passed)")
         if not g.history:
@@ -196,7 +197,7 @@ class PawnShop(commands.Cog):
             lines.append(footer)
         return "\n".join(lines)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -210,6 +211,11 @@ class PawnShop(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -223,7 +229,7 @@ class PawnShop(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
@@ -239,12 +245,12 @@ class PawnShop(commands.Cog):
 
     @commands.command(name="pawn", aliases=["pawnshop"])
     @commands.guild_only()
-    async def pawn_prefix(self, ctx, bet: int):
+    async def pawn_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="pawn", description="Hawk a cursed item at the pawn shop. Accept an offer or hold out for better (or worse).")
-    @app_commands.describe(bet="Value of the item you're pawning")
-    async def pawn_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Value of the item you're pawning — supports 1k, 5m, 100,000")
+    async def pawn_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

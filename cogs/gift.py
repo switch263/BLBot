@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 import economy
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class Gift(commands.Cog):
             err = result.get("error")
             if err == "broke":
                 return discord.Embed(
-                    description=f"You only have **{result.get('have', 0)}** coins!",
+                    description=f"You only have **{result.get('have', 0):,}** coins!",
                     color=discord.Color.red(),
                 )
             if err == "invalid_amount":
@@ -37,25 +38,35 @@ class Gift(commands.Cog):
 
         embed = discord.Embed(
             title="Gift Sent!",
-            description=f"{sender.mention} gifted **{amount}** coins to {recipient.mention}!",
+            description=f"{sender.mention} gifted **{amount:,}** coins to {recipient.mention}!",
             color=discord.Color.green()
         )
-        embed.add_field(name=f"{sender.display_name}'s Balance", value=f"{result['sender_balance']} coins", inline=True)
-        embed.add_field(name=f"{recipient.display_name}'s Balance", value=f"{result['receiver_balance']} coins", inline=True)
+        embed.add_field(name=f"{sender.display_name}'s Balance", value=f"{result['sender_balance']:,} coins", inline=True)
+        embed.add_field(name=f"{recipient.display_name}'s Balance", value=f"{result['receiver_balance']:,} coins", inline=True)
         return embed
 
     @commands.command(aliases=['give', 'send'])
-    async def gift(self, ctx, recipient: discord.Member = None, amount: int = None):
+    async def gift(self, ctx, recipient: discord.Member = None, amount: str = None):
         """Gift coins to another user. Usage: !gift @user amount"""
         if recipient is None or amount is None:
             await ctx.send("Usage: `!gift @user amount`")
             return
+        amt = parse_amount(amount)
+        if amt is None:
+            await ctx.send(amount_error(amount))
+            return
+        amount = amt
         embed = await self._do_gift(ctx.guild.id, ctx.author, recipient, amount)
         await ctx.send(embed=embed)
 
     @app_commands.command(name="gift", description="Gift coins to another user")
     @app_commands.describe(recipient="Who to send coins to", amount="How many coins to give")
-    async def gift_slash(self, interaction: discord.Interaction, recipient: discord.Member, amount: int):
+    async def gift_slash(self, interaction: discord.Interaction, recipient: discord.Member, amount: str):
+        amt = parse_amount(amount)
+        if amt is None:
+            await interaction.response.send_message(amount_error(amount), ephemeral=True)
+            return
+        amount = amt
         embed = await self._do_gift(interaction.guild_id, interaction.user, recipient, amount)
         await interaction.response.send_message(embed=embed)
 

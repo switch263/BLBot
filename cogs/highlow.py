@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_message, record_highlow, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +101,9 @@ class CashOutButton(discord.ui.Button):
             child.disabled = True
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         footer = (
-            f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{paid}** coins "
+            f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{paid:,}** coins "
             f"(net **{net:+,}**).{short} Streak: **{g.streak}**.\n"
-            f"Balance: **{get_coins(g.guild_id, g.user_id)}**"
+            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
         )
         await interaction.response.edit_message(content=view.cog._render(g, footer), view=view)
 
@@ -190,14 +191,14 @@ class HigherOrLower(commands.Cog):
         for child in view.children:
             child.disabled = True
         footer = (
-            f"💀 **BUSTED** at streak **{g.streak}**. Lost **{g.bet}** coins.\n"
-            f"Balance: **{get_coins(g.guild_id, g.user_id)}**"
+            f"💀 **BUSTED** at streak **{g.streak}**. Lost **{g.bet:,}** coins.\n"
+            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
         )
         await interaction.response.edit_message(content=self._render(g, footer), view=view)
 
     def _render(self, g: HighLowGame, footer: str | None = None) -> str:
         lines = [
-            f"🃏 **{g.user_name}'s Higher or Lower** — bet **{g.bet}**",
+            f"🃏 **{g.user_name}'s Higher or Lower** — bet **{g.bet:,}**",
             f"Current card: **{suit_wrap(g.current_rank_idx, g.current_suit)}**",
             f"Streak: **{g.streak}** | Multiplier: **{g.multiplier:.2f}×**",
         ]
@@ -214,7 +215,7 @@ class HigherOrLower(commands.Cog):
             lines.append(footer)
         return "\n".join(lines)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -228,6 +229,11 @@ class HigherOrLower(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -241,7 +247,7 @@ class HigherOrLower(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
@@ -252,12 +258,12 @@ class HigherOrLower(commands.Cog):
 
     @commands.command(name="highlow", aliases=["hilo", "higher", "lower"])
     @commands.guild_only()
-    async def highlow_prefix(self, ctx, bet: int):
+    async def highlow_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="highlow", description="Higher or Lower — predict the next card. Streak builds multiplier.")
-    @app_commands.describe(bet="Coins to risk")
-    async def highlow_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Coins to risk — supports 1k, 5m, 100,000")
+    async def highlow_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

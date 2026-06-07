@@ -7,6 +7,7 @@ import asyncio
 import time
 
 from economy import get_coins, add_coins, deduct_coins, jail_message, MAX_BET, memorial_tithe
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ class PigButton(discord.ui.Button):
         balance = get_coins(d.guild_id, interaction.user.id)
         if balance < d.buy_in:
             await interaction.response.send_message(
-                f"Too broke for the buy-in **{d.buy_in}**. Balance: **{balance}**", ephemeral=True)
+                f"Too broke for the buy-in **{d.buy_in:,}**. Balance: **{balance:,}**", ephemeral=True)
             return
         deduct_coins(d.guild_id, interaction.user.id, d.buy_in)
         d.bets.append(Bet(interaction.user, self.idx, d.buy_in))
@@ -270,7 +271,7 @@ class PigDerby(commands.Cog):
 
     def _render_lobby(self, d: Derby) -> str:
         lines = [
-            f"🏁 **Pig Derby** — buy-in **{d.buy_in}** per player",
+            f"🏁 **Pig Derby** — buy-in **{d.buy_in:,}** per player",
             f"Race starts <t:{int(d.lobby_deadline)}:R>. Pick a pig:",
         ]
         # Summary of bets per pig
@@ -312,7 +313,7 @@ class PigDerby(commands.Cog):
         if winners:
             lines.append("**Payouts:**")
             for b, pay in winners:
-                lines.append(f"• {b.user.display_name}: bet **{b.amount}** → **+{pay - b.amount}** (total **{pay}**)")
+                lines.append(f"• {b.user.display_name}: bet **{b.amount:,}** → **+{pay - b.amount:,}** (total **{pay:,}**)")
         if losers:
             loser_names = ", ".join(b.user.display_name for b, _ in losers)
             lines.append(f"**Lost:** {loser_names}")
@@ -320,7 +321,7 @@ class PigDerby(commands.Cog):
 
     # ---------- Flow ----------
 
-    async def _start_derby(self, ctx_or_interaction, bet: int):
+    async def _start_derby(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         channel = ctx_or_interaction.channel
@@ -335,6 +336,11 @@ class PigDerby(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -349,7 +355,7 @@ class PigDerby(commands.Cog):
             await reply("A pig derby is already running in this channel.")
             return
         if get_coins(guild.id, user.id) < bet:
-            await reply(f"You're too broke. Balance: **{get_coins(guild.id, user.id)}**")
+            await reply(f"You're too broke. Balance: **{get_coins(guild.id, user.id):,}**")
             return
 
         d = Derby(guild.id, channel.id, user.id, bet)
@@ -437,12 +443,12 @@ class PigDerby(commands.Cog):
 
     @commands.command(name="pigderby", aliases=["pigs", "derby"])
     @commands.guild_only()
-    async def derby_prefix(self, ctx, bet: int):
+    async def derby_prefix(self, ctx, bet: str):
         await self._start_derby(ctx, bet)
 
     @app_commands.command(name="pigderby", description="Start a multi-player pig race with fixed-odds betting")
-    @app_commands.describe(bet="Buy-in amount every bettor locks in")
-    async def derby_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Buy-in amount every bettor locks in — supports 1k, 5m, 100,000")
+    async def derby_slash(self, interaction: discord.Interaction, bet: str):
         await self._start_derby(interaction, bet)
 
 

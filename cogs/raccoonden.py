@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, record_den, jail_message, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ class BinButton(discord.ui.Button):
                 child.disabled = True
             record_den(g.guild_id, g.user_id, won=False)
             scream = random.choice(RACCOON_SCREAMS)
-            content = view.cog._render(g, f"🦝 **BITTEN!** {scream}\nYou lose **{g.bet}** coins.")
+            content = view.cog._render(g, f"🦝 **BITTEN!** {scream}\nYou lose **{g.bet:,}** coins.")
             await interaction.response.edit_message(content=content, view=view)
             return
 
@@ -243,7 +244,7 @@ class DenView(discord.ui.View):
         mult = self.game.get_multiplier()
         payout = int(self.game.bet * mult)
         net = payout - self.game.bet
-        self.cashout.label = f"Climb Out ({mult:.2f}×, +{net})"
+        self.cashout.label = f"Climb Out ({mult:.2f}×, +{net:,})"
 
     def _apply_bonus_effect(self):
         g = self.game
@@ -296,19 +297,19 @@ class RaccoonDen(commands.Cog):
         if g.bonus_triggered and g.bonus_type:
             mult_label += f" {g.bonus_type['label']}"
         lines = [
-            f"🦝 **{g.user_name}'s Raccoon Den** — bet **{g.bet}** coins",
+            f"🦝 **{g.user_name}'s Raccoon Den** — bet **{g.bet:,}** coins",
             f"{NUM_RACCOONS} feral raccoons hide in {GRID_SIZE} bins. "
             f"Revealed: **{len(g.revealed)}/{safe_possible}** | Multiplier: {mult_label}",
         ]
         if not g.ended:
-            lines.append(f"Click bins to dig. Climb Out any time to bank **{int(g.bet * mult)}** coins.")
+            lines.append(f"Click bins to dig. Climb Out any time to bank **{int(g.bet * mult):,}** coins.")
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id)}**")
+            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
         return "\n".join(lines)
 
-    async def _start_game(self, ctx_or_interaction, bet: int):
+    async def _start_game(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -322,6 +323,11 @@ class RaccoonDen(commands.Cog):
         if not guild:
             await reply("Can only dig in a server.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -335,7 +341,7 @@ class RaccoonDen(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
@@ -345,12 +351,12 @@ class RaccoonDen(commands.Cog):
 
     @commands.command(name="dig", aliases=["den", "raccoon"])
     @commands.guild_only()
-    async def dig_prefix(self, ctx, bet: int):
+    async def dig_prefix(self, ctx, bet: str):
         await self._start_game(ctx, bet)
 
     @app_commands.command(name="dig", description="Dig through a raccoon den — avoid the raccoons, grab the loot.")
     @app_commands.describe(bet="Coins to risk on the dig")
-    async def dig_slash(self, interaction: discord.Interaction, bet: int):
+    async def dig_slash(self, interaction: discord.Interaction, bet: str):
         await self._start_game(interaction, bet)
 
 

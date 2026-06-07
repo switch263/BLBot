@@ -6,6 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, add_coins, deduct_coins, jail_message, MAX_BET, memorial_tithe
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class ChallengeView(discord.ui.View):
             return
         if get_coins(c.guild_id, c.opponent.id) < c.bet:
             await interaction.response.send_message(
-                f"You can't cover the **{c.bet}** bet.", ephemeral=True)
+                f"You can't cover the **{c.bet:,}** bet.", ephemeral=True)
             return
         if get_coins(c.guild_id, c.challenger.id) < c.bet:
             # Challenger went broke in the meantime
@@ -125,7 +126,7 @@ class CockroachFightClub(commands.Cog):
         intro = (
             f"🪳 **COCKROACH FIGHT CLUB** 🪳\n"
             f"{c.challenger.mention}'s **{roach_a}** vs {c.opponent.mention}'s **{roach_b}**\n"
-            f"Pot: **{c.bet * 2}** coins. The rules are simple: there are no rules."
+            f"Pot: **{c.bet * 2:,}** coins. The rules are simple: there are no rules."
         )
         msg = await channel.send(intro)
         await asyncio.sleep(2)
@@ -162,7 +163,7 @@ class CockroachFightClub(commands.Cog):
 
         final = (
             f"\n💀 **{winner_roach}** {flourish}\n"
-            f"🏆 **{winner_member.mention}** wins the pot of **{payout}** coins. "
+            f"🏆 **{winner_member.mention}** wins the pot of **{payout:,}** coins. "
             f"{loser_roach} has gone to the great garbage disposal in the sky."
         )
         try:
@@ -170,7 +171,7 @@ class CockroachFightClub(commands.Cog):
         except discord.HTTPException:
             await channel.send(final)
 
-    async def _start(self, ctx_or_interaction, opponent: discord.Member, bet: int):
+    async def _start(self, ctx_or_interaction, opponent: discord.Member, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         channel = ctx_or_interaction.channel
@@ -191,6 +192,11 @@ class CockroachFightClub(commands.Cog):
         if opponent.bot:
             await reply("Bots don't fight. They just judge.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -202,29 +208,29 @@ class CockroachFightClub(commands.Cog):
             await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
             return
         if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke for this bout. Balance: **{get_coins(guild.id, user.id)}**")
+            await reply(f"Too broke for this bout. Balance: **{get_coins(guild.id, user.id):,}**")
             return
         if get_coins(guild.id, opponent.id) < bet:
-            await reply(f"{opponent.display_name} can't cover the **{bet}** bet.")
+            await reply(f"{opponent.display_name} can't cover the **{bet:,}** bet.")
             return
 
         challenge = RoachChallenge(user, opponent, bet, guild.id, channel.id)
         view = ChallengeView(self, challenge)
         content = (
             f"🪳 **{user.display_name}** wants to settle this in the **Cockroach Fight Club**.\n"
-            f"{opponent.mention}, you have 60s to accept a bout for **{bet}** coins a side. "
-            f"Winner takes **{bet * 2}**."
+            f"{opponent.mention}, you have 60s to accept a bout for **{bet:,}** coins a side. "
+            f"Winner takes **{bet * 2:,}**."
         )
         await reply(content, view=view)
 
     @commands.command(name="roach", aliases=["cockroach", "fightclub"])
     @commands.guild_only()
-    async def roach_prefix(self, ctx, opponent: discord.Member, bet: int):
+    async def roach_prefix(self, ctx, opponent: discord.Member, bet: str):
         await self._start(ctx, opponent, bet)
 
     @app_commands.command(name="roach", description="Challenge another user to a cockroach fight. Winner takes the pot.")
-    @app_commands.describe(opponent="Who you're calling out", bet="Coins each side antes up")
-    async def roach_slash(self, interaction: discord.Interaction, opponent: discord.Member, bet: int):
+    @app_commands.describe(opponent="Who you're calling out", bet="Coins each side antes up — supports 1k, 5m, 100,000")
+    async def roach_slash(self, interaction: discord.Interaction, opponent: discord.Member, bet: str):
         await self._start(interaction, opponent, bet)
 
 

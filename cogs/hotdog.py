@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class HotDogContest(commands.Cog):
         next_risk = HURL_START + HURL_INCREMENT * g.eaten
         next_risk = min(next_risk, 0.99)
         lines = [
-            f"🌭 **{g.user_name}'s Hot Dog Eating Contest** — buy-in **{g.bet}**",
+            f"🌭 **{g.user_name}'s Hot Dog Eating Contest** — buy-in **{g.bet:,}**",
             f"Dogs eaten: **{g.eaten}/{MAX_DOGS}** | Multiplier: **{g.multiplier:.2f}×**",
         ]
         if not g.ended:
@@ -204,10 +205,10 @@ class HotDogContest(commands.Cog):
             lines.extend(g.log[-6:])
         if final:
             lines.append("")
-            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id)}**")
+            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
         return "\n".join(lines)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -221,6 +222,11 @@ class HotDogContest(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -234,7 +240,7 @@ class HotDogContest(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
@@ -245,12 +251,12 @@ class HotDogContest(commands.Cog):
 
     @commands.command(name="dogs", aliases=["hotdog", "hotdogs"])
     @commands.guild_only()
-    async def dogs_prefix(self, ctx, bet: int):
+    async def dogs_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="dogs", description="Hot dog eating contest. Each dog = bigger multiplier, bigger risk.")
-    @app_commands.describe(bet="Buy-in coins for the contest")
-    async def dogs_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Buy-in coins for the contest — supports 1k, 5m, 100,000")
+    async def dogs_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

@@ -5,6 +5,7 @@ import random
 import logging
 
 import economy
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +71,16 @@ class Burn(commands.Cog):
 
     @commands.command(name="burn")
     @commands.guild_only()
-    async def burn_prefix(self, ctx, amount: int = None, mode: str = "house"):
+    async def burn_prefix(self, ctx, amount: str = None, mode: str = "house"):
         """Burn coins. Usage: !burn <amount> [house|vanish]"""
         if amount is None:
             await ctx.send("Usage: `!burn <amount> [house|vanish]` — defaults to **house**.")
             return
+        amt = parse_amount(amount)
+        if amt is None:
+            await ctx.send(amount_error(amount))
+            return
+        amount = amt
         vanish = mode.lower() in ("vanish", "void", "destroy", "burn")
         embed = await self._do_burn(ctx.guild.id, ctx.author, amount, vanish)
         await ctx.send(embed=embed)
@@ -84,10 +90,15 @@ class Burn(commands.Cog):
         amount="Coins to burn",
         vanish="Destroy coins entirely instead of donating to the house (default False).",
     )
-    async def burn_slash(self, interaction: discord.Interaction, amount: int, vanish: bool = False):
+    async def burn_slash(self, interaction: discord.Interaction, amount: str, vanish: bool = False):
         if not interaction.guild_id:
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
+        amt = parse_amount(amount)
+        if amt is None:
+            await interaction.response.send_message(amount_error(amount), ephemeral=True)
+            return
+        amount = amt
         embed = await self._do_burn(interaction.guild_id, interaction.user, amount, vanish)
         await interaction.response.send_message(embed=embed)
 

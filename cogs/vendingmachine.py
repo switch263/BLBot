@@ -6,6 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,7 @@ class VendingMachine(commands.Cog):
             casino_payout(gid, uid, bet)
             return f"😐 **Break even.** The can is empty but the coin fell back out. Weird."
         if outcome == "nothing":
-            return f"💀 **Nothing drops.** The machine takes your **{bet}** and whistles innocently."
+            return f"💀 **Nothing drops.** The machine takes your **{bet:,}** and whistles innocently."
         if outcome == "extra_loss":
             extra_target = bet // 2
             extra = 0
@@ -183,8 +184,8 @@ class VendingMachine(commands.Cog):
                 if extra_result.get("ok"):
                     extra = extra_target
             if extra > 0:
-                return f"🪦 **The machine charges a processing fee.** Lost **{bet}** + an extra **{extra}**."
-            return f"🪦 **Processing fee attempted, but you're broke.** Lost **{bet}**."
+                return f"🪦 **The machine charges a processing fee.** Lost **{bet:,}** + an extra **{extra:,}**."
+            return f"🪦 **Processing fee attempted, but you're broke.** Lost **{bet:,}**."
         if outcome == "pay_channel":
             recent = []
             try:
@@ -198,12 +199,12 @@ class VendingMachine(commands.Cog):
             except discord.HTTPException:
                 pass
             if not recent:
-                return f"🏚️ **The machine dispenses a pity handful of receipts.** Lose **{bet}**."
+                return f"🏚️ **The machine dispenses a pity handful of receipts.** Lose **{bet:,}**."
             per = max(1, bet // len(recent))
             for u in recent:
                 casino_payout(gid, u.id, per)
             names = ", ".join(u.display_name for u in recent)
-            return f"🎁 **The machine is generous... to others.** {names} each get **{per}** from your **{bet}**."
+            return f"🎁 **The machine is generous... to others.** {names} each get **{per:,}** from your **{bet:,}**."
         if outcome == "cursed_nick":
             nick = random.choice(CURSED_NICKS)
             member = guild.get_member(uid)
@@ -212,16 +213,16 @@ class VendingMachine(commands.Cog):
                 try:
                     await member.edit(nick=nick, reason="Vending Machine curse")
                     asyncio.create_task(self._restore_nickname(member, old, 3600))
-                    return f"🤡 **Branded!** You are **{nick}** for 1 hour. Also lose **{bet}**."
+                    return f"🤡 **Branded!** You are **{nick}** for 1 hour. Also lose **{bet:,}**."
                 except discord.Forbidden:
                     pass
-            return f"🤡 Tried to brand you **{nick}** but couldn't. Lose **{bet}** anyway."
+            return f"🤡 Tried to brand you **{nick}** but couldn't. Lose **{bet:,}** anyway."
         if outcome == "insult_dm":
             try:
                 await user.send(f"💌 A wet receipt slides out of a nearby machine. It reads: *{random.choice(INSULTS)}*")
             except discord.Forbidden:
                 pass
-            return f"📃 **A receipt slides out. It is not kind.** Lose **{bet}**. Check DMs."
+            return f"📃 **A receipt slides out. It is not kind.** Lose **{bet:,}**. Check DMs."
         if outcome == "explosion":
             extra_target = bet
             extra = 0
@@ -237,7 +238,7 @@ class VendingMachine(commands.Cog):
                             extra = have
             return (
                 f"💥 **THE MACHINE EXPLODES.** Glass, soda, and regret everywhere. "
-                f"Lose **{bet}** + **{extra}** in damages. You are also wet."
+                f"Lose **{bet:,}** + **{extra:,}** in damages. You are also wet."
             )
         return "???"
 
@@ -258,11 +259,11 @@ class VendingMachine(commands.Cog):
             f"🎛️ **{interaction.user.display_name}** {pick_line}.\n"
             f"_{flavor}_\n"
             f"{result}\n"
-            f"Balance: **{get_coins(interaction.guild.id, interaction.user.id)}**"
+            f"Balance: **{get_coins(interaction.guild.id, interaction.user.id):,}**"
         )
         await interaction.response.edit_message(content=text, view=view)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -276,6 +277,11 @@ class VendingMachine(commands.Cog):
         if not guild:
             await reply("Only in a server, weirdo.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -289,25 +295,25 @@ class VendingMachine(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
         view = VendingView(self, user.id, bet)
         content = (
-            f"🤖 **THE VENDING MACHINE FROM HELL** accepts **{user.display_name}**'s offering of **{bet}** coins.\n"
+            f"🤖 **THE VENDING MACHINE FROM HELL** accepts **{user.display_name}**'s offering of **{bet:,}** coins.\n"
             f"Pick a slot. You probably shouldn't."
         )
         await reply(content, view=view)
 
     @commands.command(name="vend", aliases=["vendingmachine", "hellvend"])
     @commands.guild_only()
-    async def vend_prefix(self, ctx, bet: int):
+    async def vend_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="vend", description="Feed the Vending Machine From Hell. It does not like you.")
-    @app_commands.describe(bet="Coins to offer the machine")
-    async def vend_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Coins to offer the machine — supports 1k, 5m, 100,000")
+    async def vend_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

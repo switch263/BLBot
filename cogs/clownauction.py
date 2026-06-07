@@ -85,7 +85,7 @@ class BidButton(discord.ui.Button):
         balance = get_coins(a.guild_id, interaction.user.id)
         if balance < need:
             await interaction.response.send_message(
-                f"Too broke — need another **{need}**. Balance: **{balance}**.", ephemeral=True)
+                f"Too broke — need another **{need:,}**. Balance: **{balance:,}**.", ephemeral=True)
             return
 
         # Deduct the incremental escrow
@@ -122,7 +122,7 @@ class WithdrawButton(discord.ui.Button):
             return
         add_coins(a.guild_id, interaction.user.id, amount)
         await interaction.response.send_message(
-            f"Withdrew **{amount}** coins. You're out of the bidding.", ephemeral=True)
+            f"Withdrew **{amount:,}** coins. You're out of the bidding.", ephemeral=True)
 
 
 class AuctionView(discord.ui.View):
@@ -151,7 +151,7 @@ class ClownAuction(commands.Cog):
         lines = [
             f"🎪 **MYSTERY BOX AUCTION** 🎪",
             f"A clown drags a cardboard box into the center of the room. It smells.",
-            f"Starting bid: **{a.starting_bid}** | Current top bid: **{a.current_bid}**"
+            f"Starting bid: **{a.starting_bid:,}** | Current top bid: **{a.current_bid:,}**"
             + (f" by **{a.current_bidder.display_name}**" if a.current_bidder else ""),
             f"Ends <t:{int(a.deadline)}:R>. Each new bid extends the timer by {EXTENSION_SECONDS}s.",
         ]
@@ -160,7 +160,7 @@ class ClownAuction(commands.Cog):
             lines.append("")
             lines.append("**Bids:**")
             for name, amt in last:
-                lines.append(f"• {name}: **{amt}**")
+                lines.append(f"• {name}: **{amt:,}**")
         if footer:
             lines.append("")
             lines.append(footer)
@@ -211,11 +211,11 @@ class ClownAuction(commands.Cog):
         net = payout - winning_bid
 
         result_lines = [
-            f"🔨 **SOLD** to **{winner.display_name}** for **{winning_bid}** coins.",
+            f"🔨 **SOLD** to **{winner.display_name}** for **{winning_bid:,}** coins.",
             f"The clown yanks the box open:",
             f"{flavor}",
-            f"Payout multiplier on winning bid: **{mult:.2f}×** → **{payout}** coins.",
-            f"Net for **{winner.display_name}**: **{'+'if net >= 0 else ''}{net}**.",
+            f"Payout multiplier on winning bid: **{mult:.2f}×** → **{payout:,}** coins.",
+            f"Net for **{winner.display_name}**: **{'+'if net >= 0 else ''}{net:,}**.",
         ]
         try:
             await a.message.edit(content="\n".join(result_lines), view=None)

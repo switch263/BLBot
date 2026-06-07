@@ -5,6 +5,7 @@ import random
 import logging
 
 import economy
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -146,20 +147,30 @@ class Charity(commands.Cog):
 
     @commands.command(name="charity", aliases=["donate", "alms"])
     @commands.guild_only()
-    async def charity_prefix(self, ctx, amount: int = None):
+    async def charity_prefix(self, ctx, amount: str = None):
         """Disperse coins to random non-bot members of this channel."""
         if amount is None:
             await ctx.send("Usage: `!charity <amount>`")
             return
+        amt = parse_amount(amount)
+        if amt is None:
+            await ctx.send(amount_error(amount))
+            return
+        amount = amt
         embed = await self._do_charity(ctx.guild.id, ctx.channel, ctx.author, amount)
         await ctx.send(embed=embed)
 
     @app_commands.command(name="charity", description="Disperse coins to random non-bot members of this channel.")
     @app_commands.describe(amount="Total coins to give away")
-    async def charity_slash(self, interaction: discord.Interaction, amount: int):
+    async def charity_slash(self, interaction: discord.Interaction, amount: str):
         if not interaction.guild_id or not isinstance(interaction.channel, discord.abc.GuildChannel):
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
+        amt = parse_amount(amount)
+        if amt is None:
+            await interaction.response.send_message(amount_error(amount), ephemeral=True)
+            return
+        amount = amt
         embed = await self._do_charity(
             interaction.guild_id, interaction.channel, interaction.user, amount
         )

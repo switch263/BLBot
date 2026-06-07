@@ -12,6 +12,7 @@ from economy import (
     GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT,
     HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT,
 )
+from amount import parse_amount, amount_error
 
 
 class CasinoRoulette(commands.Cog):
@@ -21,16 +22,22 @@ class CasinoRoulette(commands.Cog):
         self.black_numbers = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35]
 
     # Logic shared by both command types to keep code clean
-    async def run_bet(self, ctx_or_interaction, bet_type: str, amount: int):
+    async def run_bet(self, ctx_or_interaction, bet_type: str, amount):
         # Determine if this is a Prefix context or a Slash interaction
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        
+
         guild = ctx_or_interaction.guild if not is_slash else ctx_or_interaction.guild
         user = ctx_or_interaction.author if not is_slash else ctx_or_interaction.user
 
         if not guild:
             msg = "This command can only be used in a server."
             return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
+
+        amt = parse_amount(amount)
+        if amt is None:
+            msg = amount_error(amount)
+            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+        amount = amt
 
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
@@ -48,7 +55,7 @@ class CasinoRoulette(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, amount)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                msg = f"You're too broke. Balance: **{bet_result.get('have', 0)}**"
+                msg = f"You're too broke. Balance: **{bet_result.get('have', 0):,}**"
             else:
                 msg = "Bet failed. Try again in a moment."
             return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
@@ -56,7 +63,7 @@ class CasinoRoulette(commands.Cog):
         winning_number = random.randint(0, 36)
         color = "🟢 GREEN" if winning_number == 0 else ("🔴 RED" if winning_number in self.red_numbers else "⚫ BLACK")
         
-        start_msg = f"🎰 **{user.display_name}** bets **{amount}** on **{bet_type}**... Spinning!"
+        start_msg = f"🎰 **{user.display_name}** bets **{amount:,}** on **{bet_type}**... Spinning!"
         
         if is_slash:
             await ctx_or_interaction.response.send_message(start_msg)
@@ -116,18 +123,18 @@ class CasinoRoulette(commands.Cog):
 
         record_roulette(guild.id, user.id, won)
 
-        await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild.id, user.id)}**")
+        await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild.id, user.id):,}**")
 
     # --- PREFIX COMMAND ---
     @commands.command(name="bet")
     @commands.guild_only()
-    async def bet_prefix(self, ctx, bet_type: str, amount: int):
+    async def bet_prefix(self, ctx, bet_type: str, amount: str):
         await self.run_bet(ctx, bet_type, amount)
 
     # --- SLASH COMMAND ---
     @app_commands.command(name="bet", description="Bet your hard-earned coins on the roulette wheel")
     @app_commands.describe(bet_type="red, black, even, odd, or a number 0-36", amount="How much you're willing to lose")
-    async def bet_slash(self, interaction: discord.Interaction, bet_type: str, amount: int):
+    async def bet_slash(self, interaction: discord.Interaction, bet_type: str, amount: str):
         await self.run_bet(interaction, bet_type, amount)
 
     # --- POT ---

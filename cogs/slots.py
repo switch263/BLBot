@@ -73,10 +73,10 @@ class Slots(commands.Cog):
         if payout_mult > 0:
             color = discord.Color.gold() if payout_mult >= 50 else discord.Color.green()
             winnings = payout_mult * bet
-            result_text = f"{desc} You won **{winnings}** coins!"
+            result_text = f"{desc} You won **{winnings:,}** coins!"
         else:
             color = discord.Color.dark_grey()
-            result_text = f"Better luck next time! You lost **{bet}** coins."
+            result_text = f"Better luck next time! You lost **{bet:,}** coins."
 
         embed = discord.Embed(
             title="🎰 Slot Machine 🎰",
@@ -85,7 +85,7 @@ class Slots(commands.Cog):
         )
 
         new_balance = wallet["coins"] + net
-        embed.set_footer(text=f"Balance: {new_balance} coins | Bet: {bet}")
+        embed.set_footer(text=f"Balance: {new_balance:,} coins | Bet: {bet:,}")
 
         return embed
 
@@ -113,7 +113,7 @@ class Slots(commands.Cog):
         if wallet["coins"] < bet:
             return discord.Embed(
                 title="🎰 Broke!",
-                description=f"You only have **{wallet['coins']}** coins but tried to bet **{bet}**.\nUse `!slots daily` or `/slots_daily` for a daily bonus!",
+                description=f"You only have **{wallet['coins']:,}** coins but tried to bet **{bet:,}**.\nUse `!slots daily` or `/slots_daily` for a daily bonus!",
                 color=discord.Color.red()
             )
 
@@ -167,7 +167,7 @@ class Slots(commands.Cog):
         )
         balance = economy.get_coins(guild_id, user_id)
         left = economy.item_qty(guild_id, user_id, BONUS_SPIN)
-        embed.set_footer(text=f"Balance: {balance} coins | Bonus Spins left: {left}")
+        embed.set_footer(text=f"Balance: {balance:,} coins | Bonus Spins left: {left}")
         return embed
 
     # (game_key, embed_label_with_emoji, plays_word, wins_word)
@@ -188,11 +188,11 @@ class Slots(commands.Cog):
             title=f"🪙 {user.display_name}'s Wallet",
             color=discord.Color.blurple()
         )
-        embed.add_field(name="Balance", value=f"**{wallet['coins']}** coins", inline=True)
-        embed.add_field(name="Total Won", value=f"{wallet['total_won']} coins", inline=True)
-        embed.add_field(name="Total Lost", value=f"{wallet['total_lost']} coins", inline=True)
+        embed.add_field(name="Balance", value=f"🪙 **{wallet['coins']:,}**", inline=True)
+        embed.add_field(name="Total Won", value=f"🪙 {wallet['total_won']:,}", inline=True)
+        embed.add_field(name="Total Lost", value=f"🪙 {wallet['total_lost']:,}", inline=True)
         net = wallet['total_won'] - wallet['total_lost']
-        embed.add_field(name="Net Profit", value=f"{'+'if net >= 0 else ''}{net} coins", inline=True)
+        embed.add_field(name="Net Profit", value=f"🪙 {'+' if net >= 0 else ''}{net:,}", inline=True)
 
         embed.add_field(
             name="🎰 Slots",
@@ -257,7 +257,7 @@ class Slots(commands.Cog):
             jackpots = row[5] if len(row) > 5 else 0
             member = guild.get_member(uid)
             name = member.display_name if member else f"User {uid}"
-            desc += f"{medals[i]} **{name}** - {coins} coins ({jackpots} jackpots)\n"
+            desc += f"{medals[i]} **{name}** - {coins:,} coins ({jackpots} jackpots)\n"
         return discord.Embed(title="🎰 Slots Leaderboard", description=desc, color=discord.Color.gold())
 
     # --- Prefix Commands ---
@@ -268,10 +268,10 @@ class Slots(commands.Cog):
         if action.lower() == "daily":
             success, amount, new_balance = self._give_daily(ctx.guild.id, ctx.author.id)
             if success:
-                msg = f"🎁 You received **{amount}** coins!"
+                msg = f"🎁 You received 🪙 **{amount:,}** coins!"
                 if amount == 5000:
-                    msg = f"🎉🎉🎉 MEGA BONUS! You received **{amount}** coins! 🎉🎉🎉"
-                await ctx.send(f"{msg} New balance: **{new_balance}** coins.")
+                    msg = f"🎉🎉🎉 MEGA BONUS! You received 🪙 **{amount:,}** coins! 🎉🎉🎉"
+                await ctx.send(f"{msg} New balance: 🪙 **{new_balance:,}**.")
             else:
                 await ctx.send("You already claimed your daily bonus today! Come back tomorrow.")
         elif action.lower() in ("balance", "bal"):
@@ -305,10 +305,10 @@ class Slots(commands.Cog):
     async def slots_daily_slash(self, interaction: discord.Interaction):
         success, amount, new_balance = self._give_daily(interaction.guild_id, interaction.user.id)
         if success:
-            msg = f"🎁 You received **{amount}** coins!"
+            msg = f"🎁 You received 🪙 **{amount:,}** coins!"
             if amount == 5000:
-                msg = f"🎉🎉🎉 MEGA BONUS! You received **{amount}** coins! 🎉🎉🎉"
-            await interaction.response.send_message(f"{msg} New balance: **{new_balance}** coins.")
+                msg = f"🎉🎉🎉 MEGA BONUS! You received 🪙 **{amount:,}** coins! 🎉🎉🎉"
+            await interaction.response.send_message(f"{msg} New balance: 🪙 **{new_balance:,}**.")
         else:
             await interaction.response.send_message("You already claimed your daily bonus today! Come back tomorrow.")
 

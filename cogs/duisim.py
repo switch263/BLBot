@@ -6,6 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class DUISimulator(commands.Cog):
 
     def _render(self, g: DUIGame, header: str) -> str:
         lines = [
-            f"🚗 **{g.user_name}'s DUI Simulator** — bet **{g.bet}**",
+            f"🚗 **{g.user_name}'s DUI Simulator** — bet **{g.bet:,}**",
             f"Round **{g.round}/{ROUNDS}** | Multiplier: **{g.multiplier:.2f}×**",
             "",
             header,
@@ -190,17 +191,17 @@ class DUISimulator(commands.Cog):
                 final = (
                     f"🏁 **{random.choice(COMPLETE_FLAVOR)}**\n"
                     f"Final multiplier: **{game.multiplier:.2f}×** → **{net:+,}** coins.{short}\n"
-                    f"Balance: **{get_coins(game.guild_id, game.user_id)}**"
+                    f"Balance: **{get_coins(game.guild_id, game.user_id):,}**"
                 )
             elif game.end_reason == "early":
                 final = (
                     f"{random.choice(EARLY_MESSAGES)}\n"
-                    f"Lost **{game.bet}**. Balance: **{get_coins(game.guild_id, game.user_id)}**"
+                    f"Lost **{game.bet:,}**. Balance: **{get_coins(game.guild_id, game.user_id):,}**"
                 )
             else:  # asleep
                 final = (
                     f"{random.choice(ASLEEP_MESSAGES)}\n"
-                    f"Lost **{game.bet}**. Balance: **{get_coins(game.guild_id, game.user_id)}**"
+                    f"Lost **{game.bet:,}**. Balance: **{get_coins(game.guild_id, game.user_id):,}**"
                 )
 
             for item in view.children:
@@ -213,7 +214,7 @@ class DUISimulator(commands.Cog):
         except Exception as e:
             logger.exception(f"DUI sim error: {e}")
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -227,6 +228,11 @@ class DUISimulator(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -240,14 +246,14 @@ class DUISimulator(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke for gas. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke for gas. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
         game = DUIGame(guild.id, user.id, user.display_name, bet)
         view = DUIView(self, game)
         intro = (
-            f"🚗 **{user.display_name}** fires up the engine. Bet: **{bet}**.\n"
+            f"🚗 **{user.display_name}** fires up the engine. Bet: **{bet:,}**.\n"
             f"**Rules:** Wait for 🟢 **PRESS NOW** then tap HIT GAS within **{CUE_WINDOW:.1f}s**.\n"
             f"Click too early = ditch. Too late = asleep. **{ROUNDS}** rounds.\n"
             f"Each successful round adds +{MULT_PER_HIT:.1f}× to the multiplier."
@@ -258,12 +264,12 @@ class DUISimulator(commands.Cog):
 
     @commands.command(name="dui", aliases=["drive", "drunk"])
     @commands.guild_only()
-    async def dui_prefix(self, ctx, bet: int):
+    async def dui_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="dui", description="DUI reflex simulator. Tap HIT GAS when prompted. Do not crash.")
-    @app_commands.describe(bet="How much gas money you're risking")
-    async def dui_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="How much gas money you're risking — supports 1k, 5m, 100,000")
+    async def dui_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

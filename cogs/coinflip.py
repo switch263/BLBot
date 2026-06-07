@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import logging
 import economy
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +50,13 @@ class CoinFlip(commands.Cog):
             return discord.Embed(description="Pick **heads** or **tails**!", color=discord.Color.red())
 
         if bet < MIN_BET:
-            return discord.Embed(description=f"Bet must be at least **{MIN_BET}** coin.", color=discord.Color.red())
+            return discord.Embed(description=f"Bet must be at least **{MIN_BET:,}** coin.", color=discord.Color.red())
         if bet > economy.MAX_BET:
             return discord.Embed(description=f"Easy, high roller — max bet is **{economy.MAX_BET:,}** coins.", color=discord.Color.red())
 
         balance = economy.get_coins(guild_id, user_id)
         if balance < bet:
-            return discord.Embed(description=f"You only have **{balance}** coins!", color=discord.Color.red())
+            return discord.Embed(description=f"You only have **{balance:,}** coins!", color=discord.Color.red())
 
         # Normalize call
         call_full = "heads" if call in ("heads", "h") else "tails"
@@ -69,7 +70,7 @@ class CoinFlip(commands.Cog):
             new_bal = balance + bet
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and won **{bet}** coins! {random.choice(WIN_MESSAGES)}",
+                description=f"You called **{call_full}** and won **{bet:,}** coins! {random.choice(WIN_MESSAGES)}",
                 color=discord.Color.green()
             )
         else:
@@ -77,22 +78,27 @@ class CoinFlip(commands.Cog):
             new_bal = balance - bet
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and lost **{bet}** coins. {random.choice(LOSE_MESSAGES)}",
+                description=f"You called **{call_full}** and lost **{bet:,}** coins. {random.choice(LOSE_MESSAGES)}",
                 color=discord.Color.red()
             )
 
         # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
         economy.memorial_tithe(guild_id, bet)
 
-        embed.set_footer(text=f"Balance: {new_bal} coins")
+        embed.set_footer(text=f"Balance: {new_bal:,} coins")
         return embed
 
     @commands.command(aliases=['flip', 'cf'])
-    async def coinflip(self, ctx, bet: int = None, call: str = None):
+    async def coinflip(self, ctx, bet: str = None, call: str = None):
         """Flip a coin! Usage: !coinflip <bet> <heads/tails>"""
         if bet is None or call is None:
             await ctx.send("Usage: `!coinflip 50 heads` or `!cf 100 tails`")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await ctx.send(amount_error(bet))
+            return
+        bet = amt
         embed = await self._flip(ctx.guild.id, ctx.author.id, bet, call)
         await ctx.send(embed=embed)
 
@@ -102,7 +108,12 @@ class CoinFlip(commands.Cog):
         app_commands.Choice(name="Heads", value="heads"),
         app_commands.Choice(name="Tails", value="tails"),
     ])
-    async def coinflip_slash(self, interaction: discord.Interaction, bet: int, call: app_commands.Choice[str]):
+    async def coinflip_slash(self, interaction: discord.Interaction, bet: str, call: app_commands.Choice[str]):
+        amt = parse_amount(bet)
+        if amt is None:
+            await interaction.response.send_message(amount_error(bet), ephemeral=True)
+            return
+        bet = amt
         embed = await self._flip(interaction.guild_id, interaction.user.id, bet, call.value)
         await interaction.response.send_message(embed=embed)
 

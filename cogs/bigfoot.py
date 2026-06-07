@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class HexButton(discord.ui.Button):
                         child.label = "🦍"
                 child.disabled = True
             narrative = random.choice(BEAR_NARRATIVES)
-            content = view.cog._render(g, f"🐻 **MAULED!** {narrative}\nYou lose **{g.bet}** coins.")
+            content = view.cog._render(g, f"🐻 **MAULED!** {narrative}\nYou lose **{g.bet:,}** coins.")
             await interaction.response.edit_message(content=content, view=view)
             return
 
@@ -223,7 +224,7 @@ class BigfootExpedition(commands.Cog):
     def _render(self, g: Expedition, footer: str | None = None) -> str:
         mult = current_multiplier(g.footprints_found)
         lines = [
-            f"🌲 **{g.user_name}'s Bigfoot Expedition** — bet **{g.bet}** coins",
+            f"🌲 **{g.user_name}'s Bigfoot Expedition** — bet **{g.bet:,}** coins",
             f"Somewhere in these **{GRID_SIZE}** hexes: **{NUM_BEARS} bears** and **1 Bigfoot** (jackpot ×{BIGFOOT_MULT:.0f}).",
             f"Prints found: **{g.footprints_found}** | Multiplier: **{mult:.2f}×**",
         ]
@@ -232,10 +233,10 @@ class BigfootExpedition(commands.Cog):
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id)}**")
+            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
         return "\n".join(lines)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -249,6 +250,11 @@ class BigfootExpedition(commands.Cog):
         if not guild:
             await reply("Can only hunt cryptids in a server.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -262,7 +268,7 @@ class BigfootExpedition(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke for an expedition. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke for an expedition. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("Bet failed. Try again.")
             return
@@ -272,12 +278,12 @@ class BigfootExpedition(commands.Cog):
 
     @commands.command(name="bigfoot", aliases=["cryptid", "expedition"])
     @commands.guild_only()
-    async def bigfoot_prefix(self, ctx, bet: int):
+    async def bigfoot_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="bigfoot", description="Hunt Bigfoot. Avoid bears. Photograph the myth.")
-    @app_commands.describe(bet="Coins to risk on your expedition")
-    async def bigfoot_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Coins to risk on your expedition — supports 1k, 5m, 100,000")
+    async def bigfoot_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

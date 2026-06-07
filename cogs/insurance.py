@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_message, jail_user, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class Insurance(commands.Cog):
         )
         await interaction.response.edit_message(content=text, view=view)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -199,6 +200,11 @@ class Insurance(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -226,12 +232,12 @@ class Insurance(commands.Cog):
 
     @commands.command(name="insurance", aliases=["claim", "fraud"])
     @commands.guild_only()
-    async def insurance_prefix(self, ctx, bet: int):
+    async def insurance_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="insurance", description="File a fraudulent insurance claim. Pick your scheme. Try not to get caught.")
-    @app_commands.describe(bet="Premium you're paying upfront")
-    async def insurance_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Premium you're paying upfront — supports 1k, 5m, 100,000")
+    async def insurance_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

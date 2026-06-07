@@ -10,6 +10,7 @@ from economy import (
     transfer_to_house, casino_payout,
     MAX_BET,
 )
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +226,7 @@ class TheVaultExtraHard(commands.Cog):
             lines.append(footer)
         return "\n".join(lines)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -239,6 +240,11 @@ class TheVaultExtraHard(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -263,15 +269,15 @@ class TheVaultExtraHard(commands.Cog):
     @commands.command(name="vault_extra_hard",
                       aliases=["vaultextrahard", "veh", "suitcase", "briefcase"])
     @commands.guild_only()
-    async def vault_extra_hard_prefix(self, ctx, bet: int):
+    async def vault_extra_hard_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(
         name="vault_extra_hard",
         description="Suitcase lock: 3 wheels 0-3 (repeats allowed), counts-only hints, 5 tries. Big payouts.",
     )
-    @app_commands.describe(bet="Coins to risk (max bet applies)")
-    async def vault_extra_hard_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Coins to risk (max bet applies) — supports 1k, 5m, 100,000")
+    async def vault_extra_hard_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

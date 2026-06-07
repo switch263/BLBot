@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -142,16 +143,16 @@ class TrollBridge(commands.Cog):
                 if fine_result.get("ok"):
                     extra = fine_target
             if extra > 0:
-                fine_line = f"**Lost {bet}** + **{extra}** fine."
+                fine_line = f"**Lost {bet:,}** + **{extra:,}** fine."
             else:
-                fine_line = f"**Lost {bet}**."
+                fine_line = f"**Lost {bet:,}**."
             result = f"❌ **Wrong!** {random.choice(FAIL_FLAVOR)}\n{fine_line}"
 
         original = interaction.message.content
-        new_content = f"{original}\n\n{result}\nBalance: **{get_coins(guild_id, user_id)}**"
+        new_content = f"{original}\n\n{result}\nBalance: **{get_coins(guild_id, user_id):,}**"
         await interaction.response.edit_message(content=new_content, view=view)
 
-    async def _start(self, ctx_or_interaction, bet: int):
+    async def _start(self, ctx_or_interaction, bet):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -165,6 +166,11 @@ class TrollBridge(commands.Cog):
         if not guild:
             await reply("Server only.")
             return
+        amt = parse_amount(bet)
+        if amt is None:
+            await reply(amount_error(bet))
+            return
+        bet = amt
         jmsg = jail_message(guild.id, user.id)
         if jmsg:
             await reply(jmsg)
@@ -178,7 +184,7 @@ class TrollBridge(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke for the toll. Balance: **{bet_result.get('have', 0)}**")
+                await reply(f"Too broke for the toll. Balance: **{bet_result.get('have', 0):,}**")
             else:
                 await reply("The troll's calculator is on the fritz. Try again.")
             return
@@ -186,7 +192,7 @@ class TrollBridge(commands.Cog):
         view = BridgeView(self, user.id, bet, options, correct_idx)
         text = (
             f"🌉 **{user.display_name}** approaches the bridge. The troll emerges, reeking of bologna.\n"
-            f"The troll demands **{bet}** coins and poses a riddle:\n\n"
+            f"The troll demands **{bet:,}** coins and poses a riddle:\n\n"
             f"**❓ {question}**\n\n"
             f"Pick wisely. Correct = **3×** back. Wrong = lose bet + 50% fine."
         )
@@ -194,12 +200,12 @@ class TrollBridge(commands.Cog):
 
     @commands.command(name="troll", aliases=["bridge", "riddle"])
     @commands.guild_only()
-    async def troll_prefix(self, ctx, bet: int):
+    async def troll_prefix(self, ctx, bet: str):
         await self._start(ctx, bet)
 
     @app_commands.command(name="troll", description="Pay a troll, answer a riddle. Correct triples; wrong costs extra.")
-    @app_commands.describe(bet="Coins the troll demands as toll")
-    async def troll_slash(self, interaction: discord.Interaction, bet: int):
+    @app_commands.describe(bet="Coins the troll demands as toll — supports 1k, 5m, 100,000")
+    async def troll_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 
 

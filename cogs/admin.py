@@ -6,6 +6,7 @@ import economy
 import re
 
 from config import ADMIN_CHANNEL_ID
+from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +20,18 @@ class Admin(commands.Cog):
         logger.info("Admin module has been loaded")
 
     @commands.command(name="coins", aliases=["grantcoins", "addcoins", "cheatchk"])
-    async def grant_coins(self, ctx, user: discord.Member, amount: int):
+    async def grant_coins(self, ctx, user: discord.Member, amount: str):
         """Admin command to grant coins to a user. Only works in the admin channel."""
         # Check if command is in the admin channel
         if ctx.channel.id != ADMIN_CHANNEL_ID:
             return  # Silently ignore if not in admin channel
+
+        # Parse amount
+        amt = parse_amount(amount)
+        if amt is None:
+            await ctx.send(amount_error(amount))
+            return
+        amount = amt
 
         # Validate amount
         if amount <= 0:
@@ -73,7 +81,7 @@ class Admin(commands.Cog):
             await ctx.send(f"{user.display_name} wasn't in jail.")
 
     @commands.command(name="removecoins", aliases=["takecoins", "deductcoins", "subcoins"])
-    async def remove_coins(self, ctx, user: discord.Member, amount: int):
+    async def remove_coins(self, ctx, user: discord.Member, amount: str):
         """Deduct coins from a user. Allowed in the admin channel, OR anywhere for
         a member with the `Admin` role. Clamps at 0 — never produces a negative balance."""
         in_admin_channel = ctx.channel.id == ADMIN_CHANNEL_ID
@@ -82,6 +90,13 @@ class Admin(commands.Cog):
         )
         if not (in_admin_channel or has_admin_role):
             return  # Silently ignore — same gate behavior as unjail.
+
+        # Parse amount
+        amt = parse_amount(amount)
+        if amt is None:
+            await ctx.send(amount_error(amount))
+            return
+        amount = amt
 
         if amount <= 0:
             await ctx.send("Amount must be positive!")

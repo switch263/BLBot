@@ -33,11 +33,11 @@ BANG_MESSAGES = [
 ]
 
 VICTORY_MESSAGES = [
-    "{winner} collects the pot of **{pot}** coins! What a legend.",
-    "{winner} walks away with **{pot}** coins and their dignity intact!",
-    "{winner} survives and pockets **{pot}** coins. Cold blooded.",
-    "{winner} is the last one standing! **{pot}** coins richer!",
-    "{winner} laughs maniacally while collecting **{pot}** coins!",
+    "{winner} collects the pot of **{pot:,}** coins! What a legend.",
+    "{winner} walks away with **{pot:,}** coins and their dignity intact!",
+    "{winner} survives and pockets **{pot:,}** coins. Cold blooded.",
+    "{winner} is the last one standing! **{pot:,}** coins richer!",
+    "{winner} laughs maniacally while collecting **{pot:,}** coins!",
 ]
 
 
@@ -78,8 +78,8 @@ class RussianRoulette(commands.Cog):
                 game["stakes"][author.id] = stake
                 game["pot"] += stake
                 await ctx.send(
-                    f"{author.mention} throws in **{stake}** coins. "
-                    f"({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
+                    f"{author.mention} throws in **{stake:,}** coins. "
+                    f"({len(game['players'])} players, pot: **{game['pot']:,}** coins)\n"
                     f"Type `!roulette` to join. Starter: `!pull` when ready."
                 )
                 return
@@ -106,7 +106,7 @@ class RussianRoulette(commands.Cog):
         embed = discord.Embed(
             title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} anted up **{stake}** coins.\n\n"
+                f"{author.mention} anted up **{stake:,}** coins.\n\n"
                 f"**No buy-in. Ante up to {economy.MAX_BET:,} coins.** Join with `!roulette` — your stake goes into the pot.\n"
                 f"Winner takes everything.\n\n"
                 f"{author.display_name}: type `!pull` when the table's full."
@@ -228,8 +228,8 @@ class RussianRoulette(commands.Cog):
                 game["stakes"][author.id] = stake
                 game["pot"] += stake
                 await interaction.response.send_message(
-                    f"{author.mention} throws in **{stake}** coins. "
-                    f"({len(game['players'])} players, pot: **{game['pot']}** coins)\n"
+                    f"{author.mention} throws in **{stake:,}** coins. "
+                    f"({len(game['players'])} players, pot: **{game['pot']:,}** coins)\n"
                     f"Use `/roulette` to join. Starter: `!pull` when ready."
                 )
                 return
@@ -256,7 +256,7 @@ class RussianRoulette(commands.Cog):
         embed = discord.Embed(
             title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} anted up **{stake}** coins.\n\n"
+                f"{author.mention} anted up **{stake:,}** coins.\n\n"
                 f"**No buy-in. Ante up to {economy.MAX_BET:,} coins.** Join with `!roulette` or `/roulette` — your stake goes in.\n"
                 f"Winner takes everything.\n\n"
                 f"{author.display_name}: type `!pull` when the table's full."
