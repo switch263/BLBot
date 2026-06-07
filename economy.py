@@ -952,6 +952,48 @@ def kv_set(guild_id: int, user_id: int, namespace: str, key: str, value):
         logger.error(f"Database error in kv_set: {e}")
 
 
+def kv_claim(guild_id: int, user_id: int, namespace: str, key: str, value) -> bool:
+    """Atomically set `key` only if it is not already present. Returns True if
+    this call created it (the first claim), False if it already existed.
+
+    For one-shot awards (achievement unlocks) this makes granting idempotent
+    even when two events race to award the same thing — only the first wins, so
+    the caller pays the reward exactly once."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO cog_kv (guild_id, user_id, namespace, key, value) "
+                "VALUES (?,?,?,?,?)",
+                (guild_id, user_id, namespace, key, value),
+            )
+            inserted = cur.rowcount == 1
+            conn.commit()
+            return inserted
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_claim: {e}")
+        return False
+
+
+def kv_all_in_namespace(guild_id: int, namespace: str) -> dict:
+    """Every player's keys in a namespace for one guild, as
+    {user_id: {key: value}}. Used for guild-wide rollups (e.g. an achievement
+    leaderboard) where per-user kv_get_all would mean one query per member."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, key, value FROM cog_kv WHERE guild_id=? AND namespace=?",
+                (guild_id, namespace),
+            ).fetchall()
+            out: dict = {}
+            for user_id, key, value in rows:
+                out.setdefault(user_id, {})[key] = value
+            return out
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_all_in_namespace: {e}")
+        return {}
+
+
 def kv_incr(guild_id: int, user_id: int, namespace: str, key: str, by: int = 1):
     """Atomically add `by` to a numeric value (an unset key counts as 0) and
     return the new total. `by` may be negative."""
