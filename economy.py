@@ -15,14 +15,6 @@ STARTING_COINS = 100
 # house (or another player) in one roll.
 MAX_BET = 100_000
 
-# Vault cooldown range (seconds). Per-user, shared between /vault and
-# /vault_hard. Rolled fresh each play in [MIN, MAX] so the gap isn't
-# predictable. The vault is one of the bigger payout sources — this is the
-# anti-inflation throttle. Bumped here, not in the cogs.
-VAULT_COOLDOWN_MIN_SECONDS = 45 * 60   # 45 min
-VAULT_COOLDOWN_MAX_SECONDS = 60 * 60   # 60 min
-
-
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
     error string if the bet is non-positive or exceeds MAX_BET, else None.
@@ -545,10 +537,10 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
 #            casino_payout will top on-hand up from the reserve when on-hand
 #            is insufficient — so the bank can't go bankrupt on a single big
 #            bet while the investment account still has cash.
-# Annualized rate, compounded continuously on read. 0.001 = 0.1% APR.
+# Annualized rate, compounded continuously on read. 0.05 = 5% APR.
 # Stays scale-invariant: doesn't matter if you read every second or once a month,
 # the effective growth equals the APR exactly.
-HOUSE_INTEREST_APR = 0.001
+HOUSE_INTEREST_APR = 0.05
 _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 
 # Per-event drain caps as random ranges. A successful event rolls uniform(min, max)
@@ -567,6 +559,13 @@ GREEN_JACKPOT_MAX_PCT = 0.90
 # on-hand is short. That's the "can't bankrupt the bot on the first bet"
 # guarantee.
 HOUSE_STARTING_COINS = 100_000_000
+
+# Weekly replenishment: if total house funds (on-hand + reserve) drop below
+# HOUSE_LOW_WATER_PCT of the seed, the upkeep task tops the reserve back up so
+# the combined house funds reach HOUSE_STARTING_COINS again. This is a safety
+# net — under normal play the house grows on its own. Tuned here, read by the
+# house_upkeep cog's weekly loop.
+HOUSE_LOW_WATER_PCT = 0.25
 
 
 def _ensure_house_wallet(conn: sqlite3.Connection, guild_id: int):
@@ -872,6 +871,50 @@ def get_house_state(guild_id: int) -> dict:
         return {"on_hand": 0, "reserve": 0, "apr": HOUSE_INTEREST_APR}
 
 
+def replenish_house_if_low(guild_id: int) -> dict:
+    """Safety net for a near-drained house. If total house funds (on-hand +
+    reserve) have fallen below HOUSE_LOW_WATER_PCT of HOUSE_STARTING_COINS, add
+    coins to the safe-harbor reserve so the combined total is back at the seed.
+    No-op otherwise. Applies reserve interest first (via _normalize_house) so
+    the comparison uses current balances. Atomic under BEGIN IMMEDIATE.
+
+    Returns {'replenished': bool, 'added': int, 'on_hand': X, 'reserve': Y}.
+    Intended to be called on a schedule (see the house_upkeep cog)."""
+    low_water = int(HOUSE_STARTING_COINS * HOUSE_LOW_WATER_PCT)
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _ensure_house_wallet(conn, guild_id)
+            _normalize_house(conn, guild_id)
+            on_hand = (conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, get_house_id()),
+            ).fetchone() or [0])[0] or 0
+            reserve = (conn.execute(
+                "SELECT coins FROM house_reserve WHERE guild_id = ?",
+                (guild_id,),
+            ).fetchone() or [0])[0] or 0
+            total = on_hand + reserve
+            added = 0
+            if total < low_water:
+                added = HOUSE_STARTING_COINS - total
+                reserve += added
+                conn.execute(
+                    "UPDATE house_reserve SET coins = ? WHERE guild_id = ?",
+                    (reserve, guild_id),
+                )
+            conn.commit()
+            return {
+                "replenished": added > 0,
+                "added": added,
+                "on_hand": on_hand,
+                "reserve": reserve,
+            }
+    except sqlite3.Error as e:
+        logger.error(f"Database error in replenish_house_if_low: {e}")
+        return {"replenished": False, "added": 0, "on_hand": 0, "reserve": 0}
+
+
 # --- Generic key-value store ----------------------------------------------
 # One table (`cog_kv`) holds every bit of per-(guild,user) state that isn't a
 # core economy concept: inventory, and whatever future cogs need. A cog picks
@@ -972,55 +1015,6 @@ def kv_clear_namespace(guild_id: int, namespace: str):
             conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error in kv_clear_namespace: {e}")
-
-
-# --- Vault cooldown -------------------------------------------------------
-# Per-user, shared between /vault and /vault_hard — playing either gates both
-# for a rolled cooldown in [VAULT_COOLDOWN_MIN_SECONDS, VAULT_COOLDOWN_MAX_SECONDS].
-# The next-allowed unix timestamp lives in cog_kv under "vault_cd"/"until".
-# Throttles vault grinding without touching the game's payout table.
-_VAULT_CD_NS = "vault_cd"
-
-
-def vault_cooldown_remaining(guild_id: int, user_id: int) -> int:
-    """Seconds left on this user's vault cooldown (0 if ready to play).
-    Shared between /vault and /vault_hard."""
-    import time as _t
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute(
-                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key='until'",
-                (guild_id, user_id, _VAULT_CD_NS),
-            ).fetchone()
-            if not row:
-                return 0
-            return max(0, int(row[0] - _t.time()))
-    except sqlite3.Error as e:
-        logger.error(f"Database error in vault_cooldown_remaining: {e}")
-        return 0
-
-
-def arm_vault_cooldown(guild_id: int, user_id: int) -> int:
-    """Roll a cooldown in [VAULT_COOLDOWN_MIN_SECONDS, VAULT_COOLDOWN_MAX_SECONDS]
-    and stamp the next-allowed play time on this user. Returns the rolled
-    cooldown in seconds. Call right after a vault bet is committed so a
-    rage-quit can't dodge the throttle."""
-    import time as _t
-    import random as _r
-    cd = _r.randint(VAULT_COOLDOWN_MIN_SECONDS, VAULT_COOLDOWN_MAX_SECONDS)
-    until = _t.time() + cd
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
-                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=?",
-                (guild_id, user_id, _VAULT_CD_NS, "until", until, until),
-            )
-            conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error in arm_vault_cooldown: {e}")
-    return cd
 
 
 # --- Inventory / shop items -----------------------------------------------

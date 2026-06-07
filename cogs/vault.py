@@ -6,7 +6,7 @@ import logging
 
 from economy import (
     get_coins, jail_message, record_vault, transfer_to_house, casino_payout,
-    vault_cooldown_remaining, arm_vault_cooldown, MAX_BET,
+    MAX_BET,
 )
 
 logger = logging.getLogger(__name__)
@@ -243,14 +243,6 @@ class TheVault(commands.Cog):
         if bet > MAX_BET:
             await reply(f"Easy, high roller — max bet is **{MAX_BET:,}** coins. Payouts cap at **{MAX_PAYOUT:,}**.")
             return
-        cd = vault_cooldown_remaining(guild.id, user.id)
-        if cd > 0:
-            m, s = divmod(cd, 60)
-            await reply(
-                f"🔒 The vault's still cycling its locks for you. Try again in "
-                f"**{m}m {s}s** — applies to both `/vault` and `/vault_hard`."
-            )
-            return
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
@@ -258,7 +250,6 @@ class TheVault(commands.Cog):
             else:
                 await reply("Bet failed. Try again.")
             return
-        arm_vault_cooldown(guild.id, user.id)
         game = VaultGame(guild.id, user.id, user.display_name, bet)
         view = VaultView(self, game)
         await reply(self._render(game), view=view)
