@@ -302,7 +302,7 @@ class LootDrop(commands.Cog):
                 is_mythic=(rarity_name == "Mythic"),
                 minted_by=user.display_name,
                 minted_at=datetime.utcnow().strftime("%Y-%m-%d"),
-                species=pick_species(),
+                species=meta.get("card_species") or pick_species(),
                 value_text="◆ ITEM CARD ◆",
                 name_prefix=False,
             )

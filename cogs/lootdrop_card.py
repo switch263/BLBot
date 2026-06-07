@@ -306,7 +306,6 @@ _OBJECTS = {
     # the card title, so anything verbose blows the 3-line wrap budget.
     "beach_ball":                    "Beach Ball",
     "hot_dog":                       "Hot Dog",
-    "the_don":                       "Don",
     "trojan_horse":                  "Trojan Horse",
     "llama_gorilla":                 "Llamilla",
     "mr_cat_nut":                    "Catnut",
@@ -332,13 +331,14 @@ _OBJECTS = {
     "maple_harvest_beer":            "Maple Harvest Beer",
     "maple_bacon_banana":            "Maple Bacon Banana",
     "mystery_hotdog":                "Mystery Hot Dog",
+    "get_out_of_jail":               "Get Out of Jail Free",  # jail_card item art
     "qr_rickroll":                   "Codex",  # Divine-tier QR card
 }
 
 # Species that the random pool should NEVER roll on its own. They only show
 # up when the caller forces species= explicitly (used for tier-locked cards
-# like the QR-code Divine drop).
-_LOCKED_SPECIES = frozenset({"qr_rickroll"})
+# like the QR-code Divine drop, or item cards that carry their own art).
+_LOCKED_SPECIES = frozenset({"qr_rickroll", "get_out_of_jail"})
 
 # Public API kept under the historical names so the lootdrop cog and any
 # other importer keep working without changes.

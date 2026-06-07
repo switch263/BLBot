@@ -20,6 +20,8 @@ HEIST_SHIELD = "heist_shield"
 #   "passive" — fires automatically when relevant (heist_shield on a heist)
 # `price` is the shop cost in coins; buying destroys those coins (a sink).
 # `loot_weight` is the relative chance of this item on an item loot drop.
+# `card_species` (optional) pins the loot-card art to a specific locked species
+# slug in cogs/lootdrop_card.py; omit it to let the card use random art.
 ITEMS = {
     JAIL_CARD: {
         "name": "Get Out of Jail Free",
@@ -29,6 +31,7 @@ ITEMS = {
         "flavor": "Signed by the warden. Notarized by nobody. Works anyway.",
         "use": "command",
         "loot_weight": 10,
+        "card_species": "get_out_of_jail",
     },
     BONUS_SPIN: {
         "name": "Bonus Spin",
