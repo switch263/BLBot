@@ -133,20 +133,30 @@ BOT_HEIST_JAIL_MAX_SECONDS = 36 * 60 * 60  # 36 hours
 # economy.py so /pot can display the same range without a cross-cog import.
 from economy import HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT
 
-# Bail: someone ELSE pays a random share of the would-be loot to spring you.
+# Bail: someone ELSE pays a random share of the JAILED user's own wallet to
+# spring you — so the bigger your stack, the costlier you are to free.
 # Multiplier grows with prior offenses, capped so it doesn't become unpayable.
 BAIL_PCT_MIN = 0.25
 BAIL_PCT_MAX = 1.00
 BAIL_REPEAT_STEP = 0.25  # +25% per prior offense beyond the first
 BAIL_REPEAT_CAP = 3.0    # 3× the base bail at most
 
+# Jail TIME escalates the same way: a repeat house-robber serves continuously
+# longer, on top of paying more bail. The counter never resets, so a serial
+# offender keeps climbing toward the cap. Capped so a sentence stays servable.
+JAIL_TIME_REPEAT_STEP = 0.5  # +50% of the base sentence per prior offense
+JAIL_TIME_REPEAT_CAP = 4.0   # at most 4× the rolled sentence
+
 # Hard ceiling — bail is capped at the LOWER of:
 #   - BAIL_ECONOMY_CAP_PCT × the guild's total wallet coins (players + house), and
-#   - BAIL_HARD_CAP (absolute ceiling).
-# Stops repeat-offender bails from becoming unpayable in either a rich server
-# (cap kicks in at 100M) or a small one (cap kicks in at 25% of all coins).
+#   - a per-offender ceiling that is NO LONGER FLAT: BAIL_HARD_CAP_BASE scaled by
+#     the same repeat multiplier as the bail itself, so a serial robber's ceiling
+#     climbs (100M → 125M → … up to BAIL_REPEAT_CAP×) instead of being pinned at
+#     a flat 100M for everyone.
+# Stops a first-offense bail from becoming unpayable in either a rich server
+# (cap kicks in near 100M) or a small one (cap kicks in at 25% of all coins).
 BAIL_ECONOMY_CAP_PCT = 0.25
-BAIL_HARD_CAP = 100_000_000
+BAIL_HARD_CAP_BASE = 100_000_000  # first-offense ceiling; scales up with offenses
 
 # Accomplices are slippery — when a bot heist fails, the accomplice (NOT the
 # thief) bolts and avoids jail with this probability. Encourages bringing one.
@@ -458,19 +468,30 @@ class Heist(commands.Cog):
             return 1.0
         return min(BAIL_REPEAT_CAP, 1.0 + BAIL_REPEAT_STEP * (offenses - 1))
 
-    def _roll_bail(self, guild_id: int, vault_size: int, offenses: int) -> int:
-        """Bail = random 25-100% of the vault × repeat multiplier, then capped at
-        the LOWER of BAIL_HARD_CAP and BAIL_ECONOMY_CAP_PCT × total guild economy."""
+    def _roll_bail(self, guild_id: int, wallet_size: int, offenses: int) -> int:
+        """Bail = random 25-100% of the JAILED user's own wallet × repeat
+        multiplier, then capped at the LOWER of the per-offender hard ceiling
+        (BAIL_HARD_CAP_BASE × the same repeat multiplier — dynamic, not a flat
+        100M) and BAIL_ECONOMY_CAP_PCT × total guild economy."""
+        mult = self._bail_multiplier(offenses)
         pct = random.uniform(BAIL_PCT_MIN, BAIL_PCT_MAX)
-        rolled = int(vault_size * pct * self._bail_multiplier(offenses))
+        rolled = int(wallet_size * pct * mult)
+        effective_cap = int(BAIL_HARD_CAP_BASE * mult)
         econ_cap = int(economy.get_total_economy(guild_id) * BAIL_ECONOMY_CAP_PCT)
-        effective_cap = BAIL_HARD_CAP
         if econ_cap > 0:
             effective_cap = min(effective_cap, econ_cap)
         return max(1, min(rolled, effective_cap))
 
-    def _roll_jail_seconds(self) -> int:
-        return random.randint(BOT_HEIST_JAIL_MIN_SECONDS, BOT_HEIST_JAIL_MAX_SECONDS)
+    def _jail_time_multiplier(self, offenses: int) -> float:
+        """Repeat offenders serve longer. Mirrors _bail_multiplier but on time,
+        and keeps climbing with every offense until JAIL_TIME_REPEAT_CAP."""
+        if offenses <= 1:
+            return 1.0
+        return min(JAIL_TIME_REPEAT_CAP, 1.0 + JAIL_TIME_REPEAT_STEP * (offenses - 1))
+
+    def _roll_jail_seconds(self, offenses: int = 1) -> int:
+        base = random.randint(BOT_HEIST_JAIL_MIN_SECONDS, BOT_HEIST_JAIL_MAX_SECONDS)
+        return int(base * self._jail_time_multiplier(offenses))
 
     async def _execute_bot_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member | None, channel_id: int):
         """Run the bot heist after the player has confirmed. Returns (embed, view_or_none).
@@ -497,8 +518,8 @@ class Heist(commands.Cog):
         # Failure: each participant gets their own random sentence + bail amount,
         # both scaled by their own prior bot-heist offenses.
         thief_offenses = economy.increment_bot_heist_offenses(guild_id, thief.id)
-        thief_seconds = self._roll_jail_seconds()
-        thief_bail = self._roll_bail(guild_id, victim_coins, thief_offenses)
+        thief_seconds = self._roll_jail_seconds(thief_offenses)
+        thief_bail = self._roll_bail(guild_id, economy.get_coins(guild_id, thief.id), thief_offenses)
         economy.jail_user(
             guild_id, thief.id, thief_seconds,
             reason="Attempted to rob the house",
@@ -519,8 +540,8 @@ class Heist(commands.Cog):
                 msg += f"\n\n🏃 {escape_line} **{accomplice.display_name}** walks free."
             else:
                 acc_offenses = economy.increment_bot_heist_offenses(guild_id, accomplice.id)
-                acc_seconds = self._roll_jail_seconds()
-                accomplice_bail = self._roll_bail(guild_id, victim_coins, acc_offenses)
+                acc_seconds = self._roll_jail_seconds(acc_offenses)
+                accomplice_bail = self._roll_bail(guild_id, economy.get_coins(guild_id, accomplice.id), acc_offenses)
                 economy.jail_user(
                     guild_id, accomplice.id, acc_seconds,
                     reason="Accomplice in house robbery",

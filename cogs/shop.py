@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 # accident. Plenty for any real purchase.
 MAX_BUY_QTY = 100
 
+# Get Out of Jail Free is rate-limited to one play per day (24h rolling). Last
+# use is tracked per-player in cog_kv under this namespace.
+_JAIL_CARD_NS = "jailcard"
+JAIL_CARD_COOLDOWN_SECONDS = 24 * 60 * 60
+
 # Slash-command dropdown of the catalog — keeps players from typo-guessing keys.
 _ITEM_CHOICES = [
     app_commands.Choice(name=f"{m['emoji']} {m['name']}", value=key)
@@ -162,6 +167,21 @@ class Shop(commands.Cog):
             return
 
         if key == JAIL_CARD:
+            # One Get Out of Jail Free card per day (24h rolling). The cooldown is
+            # checked BEFORE consuming, so a player on cooldown isn't charged a
+            # card; the timestamp is stamped only after a successful release, so a
+            # wasted play (not actually in jail) doesn't burn the daily slot.
+            import time as _t
+            now = _t.time()
+            last = float(economy.kv_get(guild.id, user.id, _JAIL_CARD_NS, "last_use_ts", 0) or 0)
+            wait = JAIL_CARD_COOLDOWN_SECONDS - (now - last)
+            if wait > 0:
+                hrs, mins = int(wait // 3600), int((wait % 3600) // 60)
+                await reply(
+                    f"🃏 You can only play one **Get Out of Jail Free** card per day. "
+                    f"Try again in **{hrs}h {mins}m**."
+                )
+                return
             if not economy.consume_item(guild.id, user.id, JAIL_CARD):
                 await reply(f"You don't own a {m['emoji']} **{m['name']}**.")
                 return
@@ -169,6 +189,7 @@ class Shop(commands.Cog):
                 economy.grant_item(guild.id, user.id, JAIL_CARD)  # wasn't needed
                 await reply("You're not in jail. Card kept — no sense wasting it.")
                 return
+            economy.kv_set(guild.id, user.id, _JAIL_CARD_NS, "last_use_ts", now)
             await reply(
                 f"🃏 **{user.display_name}** plays a **Get Out of Jail Free** card "
                 f"and strolls out of casino jail. The warden is furious."
