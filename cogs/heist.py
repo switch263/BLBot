@@ -123,8 +123,7 @@ ACCOMPLICE_CUT_MAX = 0.50
 MIN_VICTIM_COINS = 50
 
 # Cooldown in seconds (per user per guild)
-HEIST_COOLDOWN = 300  # 5 minutes
-
+HEIST_COOLDOWN = 21600  # 6 hours because 5 minutes is insanely low
 # Rob-the-bot odds and punishment
 BOT_HEIST_SUCCESS_RATE = 0.01  # 1% — 1-in-100 long shot
 BOT_HEIST_JAIL_MIN_SECONDS = 1 * 60 * 60   # 1 hour
