@@ -15,6 +15,37 @@ STARTING_COINS = 100
 # house (or another player) in one roll.
 MAX_BET = 100_000
 
+# --- Weekly winnings tax --------------------------------------------------
+# The economy's main coin sink (cogs/taxes.py). It's an income tax, not a
+# wealth tax: once a week each player is assessed WINNINGS_TAX_PCT of their
+# NET WALLET GROWTH since the last levy (balance now minus the snapshot taken
+# last week). Net losers grow by <= 0 and owe nothing. We use the balance
+# delta rather than total_won/total_lost because those counters are tracked
+# inconsistently across games (transfer_to_house doesn't log a loss;
+# casino_payout logs the gross payout) — the balance delta is robust and
+# game-agnostic. The bill is locked at levy time; players get TAX_GRACE_SECONDS
+# to pay it (coins flow to the house on-hand — a closed loop, not burned). Miss
+# the deadline and you're a tax evader: the house seizes the bill plus a cut of
+# your wallet and jails you (graduated, see the penalty block below). The levy
+# notice posts to the #TAX_CHANNEL_NAME channel and is the ONLY reminder.
+WINNINGS_TAX_PCT = 0.15          # 15% of the week's net winnings
+TAX_PERIOD_SECONDS = 7 * 24 * 3600   # one levy per week
+TAX_GRACE_SECONDS = 24 * 3600        # 24h to pay before enforcement
+TAX_CHANNEL_NAME = "game-spam"       # where the weekly notice posts
+
+# Graduated penalties for missing the deadline (cogs/taxes.py). The seizure is
+# always the unpaid tax bill PLUS a penalty cut of the wallet, capped at what
+# the evader actually holds, and routed to the house (closed loop).
+#   1st offense: bill + 25% of wallet, 48h jail, Get Out of Jail Free works.
+#   2nd+ offense: bill + 50% of wallet, 72h jail, GOOJF card disabled.
+# Offense level decays one tier after TAX_DECAY_WEEKS consecutive on-time pays.
+TAX_PENALTY_PCT_1 = 0.25         # first-offense wallet penalty
+TAX_PENALTY_PCT_2 = 0.50         # repeat-offense wallet penalty
+TAX_JAIL_SECONDS = 48 * 3600         # first-offense sentence
+TAX_JAIL_REPEAT_SECONDS = 72 * 3600  # repeat-offense sentence (GOOJF disabled)
+TAX_DECAY_WEEKS = 4                   # on-time pays needed to drop an offense tier
+
+
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
     error string if the bet is non-positive or exceeds MAX_BET, else None.
@@ -35,13 +66,17 @@ def check_bet(bet: int) -> str | None:
 
 # --- Memorial player ------------------------------------------------------
 # kev2tall is an opt-out, exempt player — a member who has passed away. He is
-# never jailed and never involved in a heist. As a standing offering, 1.5% of
-# every game win and loss is tithed to his wallet, always paid by the house:
-# _memorial_house_tithe runs inside transfer_to_house / casino_payout for
-# games that route through the house wallet; memorial_tithe is the standalone
-# version for games that settle elsewhere (slots, coinflip, roulette, PvP).
+# never jailed and never involved in a heist.
+#
+# The old standing offering (a tithe of every win/loss, paid by the house to
+# his wallet) is RETIRED as of the wealth-tax rebalance: the rate is pinned to
+# 0.0, so _memorial_house_tithe / memorial_tithe short-circuit and every
+# callsite is a no-op. The tithe plumbing is left in place (cheap, harmless,
+# trivially revivable) rather than ripped out of a dozen cogs. Kev's jail/heist
+# exemptions are unaffected — only the offering is gone. See the weekly wealth
+# tax (cogs/taxes.py) for the sink that replaced it.
 MEMORIAL_USER_ID = 361219124979826698  # kev2tall
-MEMORIAL_TITHE_PCT = 0.015  # 1.5%
+MEMORIAL_TITHE_PCT = 0.0  # retired — was 1.5%; see note above
 
 
 def is_memorial(user_id: int) -> bool:
@@ -188,6 +223,7 @@ def _init_db():
                     channel_id INTEGER DEFAULT 0,
                     jailed_at REAL DEFAULT 0,
                     extended_seconds INTEGER DEFAULT 0,
+                    no_release INTEGER DEFAULT 0,
                     PRIMARY KEY (guild_id, user_id)
                 )
             ''')
@@ -280,6 +316,7 @@ def _init_db():
                 ("channel_id", "INTEGER DEFAULT 0"),
                 ("jailed_at", "REAL DEFAULT 0"),
                 ("extended_seconds", "INTEGER DEFAULT 0"),
+                ("no_release", "INTEGER DEFAULT 0"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE jail ADD COLUMN {col} {decl}")
@@ -1117,27 +1154,37 @@ def get_inventory(guild_id: int, user_id: int) -> dict:
     return {k: v for k, v in kv_get_all(guild_id, user_id, _INV_NS).items() if v > 0}
 
 
-def release_from_jail(guild_id: int, user_id: int) -> bool:
-    """Clear a player's jail sentence — the Get Out of Jail Free card. Returns
-    True if they were actually jailed (so the caller knows the card did work)."""
+def release_from_jail(guild_id: int, user_id: int) -> dict:
+    """Try to clear a player's jail sentence — the Get Out of Jail Free card.
+
+    Returns a dict:
+      {"released": True}                 — was jailed, now sprung
+      {"released": False, "blocked": True}   — jailed on a no_release sentence
+                                               (repeat tax evasion); card no-op
+      {"released": False, "blocked": False}  — wasn't actually jailed
+
+    A blocked sentence is left fully intact so the caller can refund the card."""
     import time as _t
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT until_ts FROM jail WHERE guild_id = ? AND user_id = ?",
+                "SELECT until_ts, no_release FROM jail WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
             jailed = bool(row and row[0] > _t.time())
+            if jailed and row[1]:
+                conn.rollback()
+                return {"released": False, "blocked": True}
             conn.execute(
                 "DELETE FROM jail WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             )
             conn.commit()
-            return jailed
+            return {"released": jailed, "blocked": False}
     except sqlite3.Error as e:
         logger.error(f"Database error in release_from_jail: {e}")
-        return False
+        return {"released": False, "blocked": False}
 
 
 def adjust_jail_sentence(guild_id: int, user_id: int, delta_seconds: int) -> dict:
@@ -1266,6 +1313,22 @@ def get_leaderboard(guild_id: int, limit: int = 10) -> list:
         return []
 
 
+def get_all_wallets(guild_id: int) -> list:
+    """Every (user_id, coins) in the guild EXCLUDING the house wallet. Used by
+    the weekly wealth tax to assess every player. The memorial player is left
+    in — the caller filters him out (he's exempt from tax)."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, coins FROM wallets WHERE guild_id = ? AND user_id != ?",
+                (guild_id, get_house_id()),
+            ).fetchall()
+            return [(r[0], r[1]) for r in rows]
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_all_wallets: {e}")
+        return []
+
+
 def get_total_economy(guild_id: int) -> int:
     """Sum of all coins across the guild — every player wallet, the house on-hand,
     AND the house safe-harbor reserve. The reserve is real money even though it
@@ -1329,11 +1392,12 @@ def record_heist(guild_id, user_id, succeeded): record_game(guild_id, user_id, "
 
 
 def jail_user(guild_id: int, user_id: int, duration_seconds: int, reason: str = "",
-              bail_amount: int = 0, channel_id: int = 0):
+              bail_amount: int = 0, channel_id: int = 0, no_release: bool = False):
     """Lock a user out of casino activities for `duration_seconds` from now.
     If already jailed longer, keep the later deadline.
     `bail_amount` and `channel_id` are stored so /bail and the release-message
-    loop can find them later.
+    loop can find them later. `no_release=True` marks the sentence as one no
+    Get Out of Jail Free card can spring (used by repeat tax-evasion jail).
 
     The memorial player (kev2tall) is exempt — jailing him is a silent no-op.
     Since every jail path (heist busts, bounties, /jail, extends) routes
@@ -1353,9 +1417,10 @@ def jail_user(guild_id: int, user_id: int, duration_seconds: int, reason: str = 
                 return  # already jailed longer
             conn.execute(
                 "INSERT OR REPLACE INTO jail "
-                "(guild_id, user_id, until_ts, reason, bail_amount, channel_id, jailed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (guild_id, user_id, until, reason, int(bail_amount), int(channel_id), now),
+                "(guild_id, user_id, until_ts, reason, bail_amount, channel_id, jailed_at, no_release) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (guild_id, user_id, until, reason, int(bail_amount), int(channel_id),
+                 now, 1 if no_release else 0),
             )
             conn.commit()
     except sqlite3.Error as e:
@@ -1368,7 +1433,7 @@ def get_jail_info(guild_id: int, user_id: int) -> dict | None:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(
-                "SELECT until_ts, reason, bail_amount, channel_id, jailed_at "
+                "SELECT until_ts, reason, bail_amount, channel_id, jailed_at, no_release "
                 "FROM jail WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
@@ -1380,6 +1445,7 @@ def get_jail_info(guild_id: int, user_id: int) -> dict | None:
                 "bail_amount": row[2] or 0,
                 "channel_id": row[3] or 0,
                 "jailed_at": row[4] or 0.0,
+                "no_release": bool(row[5]),
             }
     except sqlite3.Error as e:
         logger.error(f"Database error reading jail info: {e}")

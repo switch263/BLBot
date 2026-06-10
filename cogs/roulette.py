@@ -191,7 +191,8 @@ class RussianRoulette(commands.Cog):
         # Winner!
         winner = players[0]
         economy.award_coins(guild_id, winner.id, pot)
-        # Memorial tithe: 1.5% of the pot, paid by the house to kev2tall.
+        # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
+        # pinned to 0 in economy.py. Call left in place, trivially revivable.
         economy.memorial_tithe(guild_id, pot)
         economy.record_rr(guild_id, winner.id, True)
         # Record losses for everyone else who joined

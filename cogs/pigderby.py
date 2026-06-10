@@ -431,7 +431,8 @@ class PigDerby(commands.Cog):
                 payouts.append((b, payout))
             else:
                 payouts.append((b, 0))
-        # Memorial tithe: 1.5% of the total wagered, paid by the house to kev2tall.
+        # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
+        # pinned to 0 in economy.py. Call left in place, trivially revivable.
         memorial_tithe(d.guild_id, sum(b.amount for b in d.bets))
 
         d.phase = Derby.DONE

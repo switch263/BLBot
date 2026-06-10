@@ -119,7 +119,8 @@ class Slots(commands.Cog):
             net = -bet
 
         economy.update_wallet(guild_id, user_id, net, is_jackpot)
-        # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
+        # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
+        # pinned to 0 in economy.py. Call left in place, trivially revivable.
         economy.memorial_tithe(guild_id, bet)
 
         return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
@@ -142,7 +143,7 @@ class Slots(commands.Cog):
         winnings = payout_mult * FREE_SPIN_BET
         if winnings > 0:
             economy.update_wallet(guild_id, user_id, winnings, is_jackpot)
-            # Memorial tithe: 1.5% of the win, paid by the house to kev2tall.
+            # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op.
             economy.memorial_tithe(guild_id, winnings)
 
         reel_display = f"**[ {reels[0]} | {reels[1]} | {reels[2]} ]**"

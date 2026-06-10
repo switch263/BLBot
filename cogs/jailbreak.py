@@ -7,7 +7,7 @@ import logging
 
 from economy import (
     get_coins, jail_remaining, release_from_jail, adjust_jail_sentence,
-    transfer_to_house, record_game, kv_get, kv_set,
+    transfer_to_house, record_game, kv_get, kv_set, get_jail_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,16 @@ class JailBreak(commands.Cog):
         remaining = jail_remaining(guild.id, user.id)
         if remaining <= 0:
             await reply("🔓 You're not in jail. Nothing to break out of — go gamble.")
+            return
+
+        # Repeat tax-evasion sentences are card-proof AND break-proof: no early
+        # out by any route. Serve every second.
+        info = get_jail_info(guild.id, user.id)
+        if info and info.get("no_release"):
+            await reply(
+                "🔒 This is a **tax-evasion** hold — no jailbreak, no bribe, no "
+                "card. Serve every second. Pay your taxes next time."
+            )
             return
 
         # Attempt cooldown.

@@ -185,7 +185,15 @@ class Shop(commands.Cog):
             if not economy.consume_item(guild.id, user.id, JAIL_CARD):
                 await reply(f"You don't own a {m['emoji']} **{m['name']}**.")
                 return
-            if not economy.release_from_jail(guild.id, user.id):
+            res = economy.release_from_jail(guild.id, user.id)
+            if res.get("blocked"):
+                economy.grant_item(guild.id, user.id, JAIL_CARD)  # didn't work — keep it
+                await reply(
+                    "🚔 This is a **tax-evasion** sentence — no card springs you. "
+                    "Sit tight and do your time. Card kept."
+                )
+                return
+            if not res.get("released"):
                 economy.grant_item(guild.id, user.id, JAIL_CARD)  # wasn't needed
                 await reply("You're not in jail. Card kept — no sense wasting it.")
                 return

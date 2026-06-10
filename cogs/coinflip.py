@@ -82,7 +82,8 @@ class CoinFlip(commands.Cog):
                 color=discord.Color.red()
             )
 
-        # Memorial tithe: 1.5% of the stake, paid by the house to kev2tall.
+        # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
+        # pinned to 0 in economy.py. Call left in place, trivially revivable.
         economy.memorial_tithe(guild_id, bet)
 
         embed.set_footer(text=f"Balance: {new_bal:,} coins")
