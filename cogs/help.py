@@ -109,6 +109,8 @@ def _build_pages() -> list[discord.Embed]:
                        description="Single-player push-your-luck and chaos games.",
                        color=discord.Color.purple())
     e6.add_field(name="Push Your Luck", value=(
+        "`/gauntlet` - High-roller ladder: cash out or push your luck (bet scales with the house, no flat 100k cap)\n"
+        "`/mines` - Reveal gems, dodge mines; each gem raises the multiplier, cash out or boom\n"
         "`/dig` - Raccoon Den: dig bins, avoid feral raccoons\n"
         "`/bigfoot` - Hunt Bigfoot, dodge bears, rare ×10 jackpot\n"
         "`/dogs` - Hot Dog Eating Contest — stack multiplier, don't hurl\n"
@@ -137,9 +139,10 @@ def _build_pages() -> list[discord.Embed]:
         "`/auction` - Clown Auction for a mystery box (extending timer)\n"
     ), inline=False)
     e7.add_field(name="PvP & Confrontation", value=(
-        "`/heist` - Rob another user (or the bot — 24h jail if caught)\n"
+        "`/heist` - Rob another user (or the bot — jail if caught)\n"
         "`/roach` - Cockroach Fight Club — 1v1 challenge, winner takes pot\n"
-        "`/jail` - Check casino jail status (blocks all gambling 24h)\n"
+        "`/insure` - Buy heist insurance; `/reclaim` recovers % of a robbery from the bank\n"
+        "`/jail` - Check casino jail status (blocks all gambling)\n"
     ), inline=False)
     pages.append(e7)
 

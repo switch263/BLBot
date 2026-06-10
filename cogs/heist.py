@@ -660,6 +660,10 @@ class Heist(commands.Cog):
             stolen = max(1, int(victim_coins * steal_pct))
 
             economy.transfer_coins(guild_id, victim.id, thief.id, stolen)
+            # Stamp the victim's most recent robbery loss so a heist-insurance
+            # policy can pay out on it (see cogs/heistinsurance.py). Stored as
+            # "amount:unix_ts" — insurance-agnostic; we record it for everyone.
+            economy.kv_set(guild_id, victim.id, "heistins", "last_loss", f"{stolen}:{int(time.time())}")
 
             if is_duo:
                 # Accomplice gets a cut

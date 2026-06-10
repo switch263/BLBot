@@ -3,8 +3,10 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # DejaVu fonts are needed for the lootdrop card renderer (Pillow truetype).
+# tzdata ships the timezone database so a TZ env var (set in docker-compose)
+# actually resolves — without it the container falls back to UTC.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install dependencies first for better layer caching

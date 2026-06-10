@@ -5,7 +5,7 @@ A chaotic Discord bot for the Bored Lunatics gaming server. Built on [discord.py
 ## Features
 
 ### Economy System
-Shared coin wallet across all games. Start with 100 coins. The bot itself is the house — its wallet collects the roulette pot. `/heist @bot` is allowed but has a **0.001%** success rate; failure = **24h casino jail**, blocking every gambling command. Admins can `!unjail @user` (or `!bail` / `!pardon`) in the admin channel.
+Shared coin wallet across all games. Start with 100 coins. The bot itself is the house — its wallet collects the roulette pot. `/heist @bot` is allowed but has a **1%** success rate; failure = **casino jail (1–36h, longer for repeat offenders)**, blocking every gambling command. Admins can `!unjail @user` (or `!bail` / `!pardon`) in the admin channel.
 
 #### 🎲 Classic Casino
 | Command | Description |
@@ -21,6 +21,8 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 #### 🃏 Solo Chaos / Push-Your-Luck
 | Command | Description |
 |---------|-------------|
+| `!gauntlet <bet>` | High-roller ladder — cash out or push your luck; bet scales with the house (no flat 100k cap) |
+| `!mines <bet> [mines]` | 5×4 grid — reveal gems for a rising multiplier, hit a mine and bust; cash out anytime |
 | `!dig <bet>` | Raccoon's Den — 4×4 grid of bins, 3 raccoons bite |
 | `!bigfoot <bet>` | Hunt Bigfoot — 3 bears + 1 Bigfoot jackpot tile |
 | `!dogs <bet>` | Hot Dog Eating Contest — each dog raises mult + hurl risk |
@@ -41,7 +43,8 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!pigderby <bet>` | 5-pig race with fixed-odds betting (2×–15× payouts) |
 | `!auction <bid>` | Clown Auction for a mystery box; timer extends on bids |
 | `!roach @user <bet>` | Cockroach Fight Club — 1v1 duel, winner takes pot |
-| `!heist @victim [@accomplice]` | Rob someone (or the bot at 0.001% odds) |
+| `!heist @victim [@accomplice]` | Rob someone (or the bot at 1% odds) |
+| `!insure` / `!reclaim` | Buy heist insurance; reclaim 60% of a robbery from the bank |
 
 #### 💰 Earning & Economy
 | Command | Description |
