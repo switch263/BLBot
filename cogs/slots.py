@@ -34,14 +34,6 @@ DEFAULT_BET = 10
 MIN_BET = 1
 STARTING_COINS = 100
 
-# Daily bonus: (weight, amount)
-DAILY_REWARDS = [
-    (33, 50),
-    (33, 100),
-    (33, 200),
-    (1, 5000),
-]
-
 
 class Slots(commands.Cog):
     def __init__(self, bot):
@@ -113,7 +105,7 @@ class Slots(commands.Cog):
         if wallet["coins"] < bet:
             return discord.Embed(
                 title="🎰 Broke!",
-                description=f"You only have **{wallet['coins']:,}** coins but tried to bet **{bet:,}**.\nUse `!slots daily` or `/slots_daily` for a daily bonus!",
+                description=f"You only have **{wallet['coins']:,}** coins but tried to bet **{bet:,}**.",
                 color=discord.Color.red()
             )
 
@@ -209,44 +201,6 @@ class Slots(commands.Cog):
             )
         return embed
 
-    def _give_daily(self, guild_id: int, user_id: int) -> tuple[bool, int, int]:
-        """Try to give daily bonus. Returns (success, amount, new_balance)."""
-        from datetime import date
-        today = date.today().isoformat()
-
-        economy.get_wallet(guild_id, user_id)  # ensure wallet exists
-        try:
-            with sqlite3.connect(economy.DB_FILE) as conn:
-                cursor = conn.execute(
-                    "SELECT last_daily FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                last_daily = cursor.fetchone()[0]
-                if last_daily == today:
-                    return False, 0, 0
-
-                # Roll for reward
-                if user_id == 255560298705059841:
-                    amount = 20000
-                else:
-                    weights = [r[0] for r in DAILY_REWARDS]
-                    amounts = [r[1] for r in DAILY_REWARDS]
-                    amount = random.choices(amounts, weights=weights, k=1)[0]
-
-                conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, last_daily = ? WHERE guild_id = ? AND user_id = ?",
-                    (amount, today, guild_id, user_id)
-                )
-                conn.commit()
-                cursor = conn.execute(
-                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-                return True, amount, cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            logger.error(f"Database error giving daily: {e}")
-            return False, 0, 0
-
     def _build_leaderboard_embed(self, guild: discord.Guild, rows: list) -> discord.Embed | None:
         if not rows:
             return None
@@ -264,17 +218,8 @@ class Slots(commands.Cog):
 
     @commands.command()
     async def slots(self, ctx, action: str = "play"):
-        """Play the slot machine! Usage: !slots [amount], !slots daily, !slots balance, !slots leaderboard"""
-        if action.lower() == "daily":
-            success, amount, new_balance = self._give_daily(ctx.guild.id, ctx.author.id)
-            if success:
-                msg = f"🎁 You received 🪙 **{amount:,}** coins!"
-                if amount == 5000:
-                    msg = f"🎉🎉🎉 MEGA BONUS! You received 🪙 **{amount:,}** coins! 🎉🎉🎉"
-                await ctx.send(f"{msg} New balance: 🪙 **{new_balance:,}**.")
-            else:
-                await ctx.send("You already claimed your daily bonus today! Come back tomorrow.")
-        elif action.lower() in ("balance", "bal"):
+        """Play the slot machine! Usage: !slots [amount], !slots balance, !slots leaderboard"""
+        if action.lower() in ("balance", "bal"):
             wallet = economy.get_wallet(ctx.guild.id, ctx.author.id)
             await ctx.send(embed=self._build_balance_embed(ctx.author, wallet))
         elif action.lower() in ("leaderboard", "lb", "top"):
@@ -300,17 +245,6 @@ class Slots(commands.Cog):
     async def slots_slash(self, interaction: discord.Interaction, bet: int = DEFAULT_BET):
         embed = await self._play_slots(interaction.guild_id, interaction.user.id, bet)
         await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="slots_daily", description="Claim your daily slot machine bonus")
-    async def slots_daily_slash(self, interaction: discord.Interaction):
-        success, amount, new_balance = self._give_daily(interaction.guild_id, interaction.user.id)
-        if success:
-            msg = f"🎁 You received 🪙 **{amount:,}** coins!"
-            if amount == 5000:
-                msg = f"🎉🎉🎉 MEGA BONUS! You received 🪙 **{amount:,}** coins! 🎉🎉🎉"
-            await interaction.response.send_message(f"{msg} New balance: 🪙 **{new_balance:,}**.")
-        else:
-            await interaction.response.send_message("You already claimed your daily bonus today! Come back tomorrow.")
 
     @commands.command(aliases=['slots_balance'])
     async def wallet(self, ctx, member: discord.Member = None):

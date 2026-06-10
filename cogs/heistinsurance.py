@@ -235,16 +235,20 @@ class HeistInsurance(commands.Cog):
         await self._status(ctx)
 
     # ---- slash commands -------------------------------------------------
-    @app_commands.command(name="insure", description="Buy heist insurance — reclaim part of a robbery from the bank.")
-    async def insure_slash(self, interaction: discord.Interaction):
+    # All three live under one /insure group (a single top-level slash command
+    # with subcommands) to spend just one slot against Discord's 100-command cap.
+    insure_group = app_commands.Group(name="insure", description="Heist insurance — hedge against being robbed.")
+
+    @insure_group.command(name="buy", description="Buy heist insurance — reclaim part of a robbery from the bank.")
+    async def insure_buy(self, interaction: discord.Interaction):
         await self._buy(interaction)
 
-    @app_commands.command(name="reclaim", description="File a heist-insurance claim after you've been robbed.")
-    async def reclaim_slash(self, interaction: discord.Interaction):
+    @insure_group.command(name="claim", description="File a heist-insurance claim after you've been robbed.")
+    async def insure_claim(self, interaction: discord.Interaction):
         await self._claim(interaction)
 
-    @app_commands.command(name="policy", description="Check your heist-insurance policy and any pending claim.")
-    async def policy_slash(self, interaction: discord.Interaction):
+    @insure_group.command(name="status", description="Check your heist-insurance policy and any pending claim.")
+    async def insure_status(self, interaction: discord.Interaction):
         await self._status(interaction)
 
 

@@ -54,18 +54,14 @@ def _build_pages() -> list[discord.Embed]:
                        color=discord.Color.teal())
     e3.add_field(name="Text Tools", value=(
         "`/clap` - Put 👏 between 👏 every 👏 word\n"
-        "`/vaporwave` - Ｆｕｌｌｗｉｄｔｈ ａｅｓｔｈｅｔｉｃ\n"
-        "`/zalgo` - C̸̛o̷r̶r̵u̸p̵t̷ ̴t̵e̵x̷t̵\n"
         "`/emojify` - Turn text into emoji\n"
-        "`/soup` - Scramble last message\n"
-        "`/gaslight` - Trigger a gaslight sequence\n"
         "`/rekt` - Get Riggity Rekt\n"
     ), inline=False)
     e3.add_field(name="Images & Reactions", value=(
         "`/lasaga` - Lasaga meme\n"
         "`/pineapple` - Pineapple meme\n"
-        "`/ohio` - Express feelings about Ohio\n"
-        "`/hf` - C:\\\\HOTFUCKIN\\\\\n"
+        "`!ohio` - Express feelings about Ohio (prefix only)\n"
+        "`!hf` - C:\\\\HOTFUCKIN\\\\ (prefix only)\n"
     ), inline=False)
     pages.append(e3)
 
@@ -82,7 +78,7 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     e4.add_field(name="Info & Reference", value=(
         "`/chucknorris` - Random Chuck Norris fact\n"
-        "`/tarkov_time` - Escape from Tarkov times\n"
+        "`!tarkov_time` - Escape from Tarkov times (prefix only)\n"
         "`/quote` - Get a quote from the database\n"
         "`/quote_add` - Add a quote\n"
     ), inline=False)
@@ -115,7 +111,6 @@ def _build_pages() -> list[discord.Embed]:
         "`/bigfoot` - Hunt Bigfoot, dodge bears, rare ×10 jackpot\n"
         "`/dogs` - Hot Dog Eating Contest — stack multiplier, don't hurl\n"
         "`/vault` - Mastermind-style 4-digit safecrack\n"
-        "`/pawn` - 3-round pawn shop negotiation\n"
     ), inline=False)
     e6.add_field(name="Pure Chaos", value=(
         "`/wheel` - Wheel of Misfortune — spin for cursed outcomes\n"
@@ -124,7 +119,6 @@ def _build_pages() -> list[discord.Embed]:
         "`/methgator` - You are a gator on meth. Pick a rampage.\n"
         "`/sunnyvale` - A day in Sunnyvale Trailer Park (TPB-themed)\n"
         "`/mayor` - Run for Trailer Park Mayor — 3 rounds of strategy\n"
-        "`/dui` - DUI reflex simulator — tap gas on cue, don't crash\n"
         "`/troll` - Troll Bridge — answer the nonsense riddle\n"
     ), inline=False)
     pages.append(e6)
@@ -136,12 +130,11 @@ def _build_pages() -> list[discord.Embed]:
         "`/blackjack` - 60s buy-in lobby, up to 8 players\n"
         "`/roulette` - Russian Roulette — **ALL IN**, winner takes all\n"
         "`/pigderby` - 5-pig race with odds-based payouts\n"
-        "`/auction` - Clown Auction for a mystery box (extending timer)\n"
     ), inline=False)
     e7.add_field(name="PvP & Confrontation", value=(
         "`/heist` - Rob another user (or the bot — jail if caught)\n"
         "`/roach` - Cockroach Fight Club — 1v1 challenge, winner takes pot\n"
-        "`/insure` - Buy heist insurance; `/reclaim` recovers % of a robbery from the bank\n"
+        "`/insure buy` - Buy heist insurance; `/insure claim` recovers % of a robbery from the bank\n"
         "`/jail` - Check casino jail status (blocks all gambling)\n"
     ), inline=False)
     pages.append(e7)
@@ -149,7 +142,6 @@ def _build_pages() -> list[discord.Embed]:
     e8 = discord.Embed(title="BLBot Help (8/8) - Economy & Quick Reference",
                        color=discord.Color.dark_grey())
     e8.add_field(name="Earn Coins", value=(
-        "`/slots_daily` - Daily bonus (once per day)\n"
         "`/loot` - Daily loot drop with rarity tiers\n"
         "Win at any of the casino games\n"
     ), inline=False)

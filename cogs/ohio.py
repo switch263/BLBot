@@ -21,13 +21,8 @@ class Ohio(commands.Cog):
         else:
             await ctx.send("1-800-FUCK-OHIO!")
 
-    @app_commands.command(name="ohio", description="Express your feelings about Ohio")
-    @app_commands.describe(member="Direct it at someone (optional)")
-    async def ohio_slash(self, interaction: discord.Interaction, member: discord.Member = None):
-        if member:
-            await interaction.response.send_message("1-800-FUCK-OHIO! " + member.mention)
-        else:
-            await interaction.response.send_message("1-800-FUCK-OHIO!")
+    # Slash command removed to stay under Discord's 100-global-command cap.
+    # Still available as the !ohio / !Ohio prefix command.
 
 
 async def setup(bot):

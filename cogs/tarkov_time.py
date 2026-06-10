@@ -40,18 +40,8 @@ class TarkovTime(commands.Cog):
             await ctx.send("An error occurred fetching Tarkov time.")
             logger.error(f"Unexpected error in tarkov_time: {e}")
 
-    @app_commands.command(name="tarkov_time", description="Get current in-game times for Escape from Tarkov")
-    async def tarkov_time_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)
-        try:
-            message = await self._fetch_tarkov_time()
-            await interaction.followup.send(message)
-        except aiohttp.ClientError:
-            await interaction.followup.send("Failed to fetch Tarkov time. Please try again.")
-            logger.error("Network error fetching Tarkov time")
-        except Exception as e:
-            await interaction.followup.send("An error occurred fetching Tarkov time.")
-            logger.error(f"Unexpected error in tarkov_time: {e}")
+    # Slash command removed to stay under Discord's 100-global-command cap.
+    # Still available as the !tarkov_time / !ttime / !tarkovtime prefix command.
 
 
 async def setup(bot):

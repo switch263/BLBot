@@ -26,14 +26,12 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!dig <bet>` | Raccoon's Den — 4×4 grid of bins, 3 raccoons bite |
 | `!bigfoot <bet>` | Hunt Bigfoot — 3 bears + 1 Bigfoot jackpot tile |
 | `!dogs <bet>` | Hot Dog Eating Contest — each dog raises mult + hurl risk |
-| `!pawn <bet>` | Pawn Shop negotiation — 3 widening offer rounds |
 | `!wheel <bet>` | Wheel of Misfortune — 12 chaotic outcomes |
 | `!vend <bet>` | The Vending Machine From Hell — 6 cursed sodas |
 | `!sushi <bet>` | Gas Station Sushi — wide variance, food-poisoning fines |
 | `!methgator <bet>` | You are a gator on meth. Pick one of 8 rampages. |
 | `!sunnyvale <bet>` | A day in Sunnyvale Trailer Park (TPB-themed events) |
 | `!mayor <bet>` | Run for Trailer Park Mayor — 3 rounds vs 3 absurd opponents |
-| `!dui <bet>` | DUI reflex simulator — tap gas on cue, 5 rounds |
 | `!troll <bet>` | Troll Bridge — correct answer to a nonsense riddle = ×3 |
 
 #### 👥 Multiplayer & PvP
@@ -41,7 +39,6 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 |---------|-------------|
 | `!roulette` | Russian Roulette — ALL IN your entire wallet, winner takes all |
 | `!pigderby <bet>` | 5-pig race with fixed-odds betting (2×–15× payouts) |
-| `!auction <bid>` | Clown Auction for a mystery box; timer extends on bids |
 | `!roach @user <bet>` | Cockroach Fight Club — 1v1 duel, winner takes pot |
 | `!heist @victim [@accomplice]` | Rob someone (or the bot at 1% odds) |
 | `!insure` / `!reclaim` | Buy heist insurance; reclaim 60% of a robbery from the bank |
@@ -50,7 +47,6 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | Command | Description |
 |---------|-------------|
 | `!loot` | Daily loot drop with 5 rarity tiers (500–200000 coins) |
-| `!slots daily` | Daily coin bonus (random: 50/100/200/5000) |
 | `!wallet` | Balance + stats across all games |
 | `!gift @user <amount>` | Send coins to another user |
 | `!richest` | Leaderboard & server economy stats |
@@ -75,10 +71,7 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 |---------|-------------|
 | `!mock <text>` | SpOnGeBoB mOcKiNg tExT |
 | `!clap <text>` | Put 👏 between 👏 every 👏 word |
-| `!vaporwave <text>` | Ｆｕｌｌｗｉｄｔｈ ａｅｓｔｈｅｔｉｃ |
-| `!zalgo <text>` | C̸o̷r̶r̵u̸p̵t̷ text (intensity 1-3) |
 | `!emojify <text>` | Turn words into emoji |
-| `!soup` | Scramble the last message into alphabet soup |
 
 ### Social & Interactive
 | Command | Description |

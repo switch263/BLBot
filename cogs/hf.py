@@ -19,9 +19,8 @@ class HF(commands.Cog):
         """ A Special Response for a Special Group Member """
         await ctx.send("C:\\HOTFUCKIN\\")
 
-    @app_commands.command(name="hf", description="A Special Response for a Special Group Member")
-    async def hf_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_message("C:\\HOTFUCKIN\\")
+    # Slash command removed to stay under Discord's 100-global-command cap.
+    # Still available as the !hf / !hotfuckin prefix command.
 
 
 async def setup(bot):
