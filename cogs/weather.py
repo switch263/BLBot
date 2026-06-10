@@ -15,7 +15,7 @@ from discord.ext import commands
 from discord import app_commands
 import aiohttp
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import logging
 
@@ -127,7 +127,10 @@ class WeatherCog(commands.Cog):
             title=f"🌤️ Weather for {data['location'].split(',')[0]}",
             description=data["current"]["weather_description"],
             color=color,
-            timestamp=datetime.utcnow()
+            # Timezone-AWARE UTC. A naive datetime (e.g. datetime.utcnow()) gets
+            # read by discord.py as *local* time and shifted by the host offset,
+            # which renders the footer as "Tomorrow at …" on a non-UTC host.
+            timestamp=datetime.now(timezone.utc)
         )
         
         # Current conditions
