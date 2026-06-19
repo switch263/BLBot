@@ -24,10 +24,9 @@ logger = logging.getLogger(__name__)
 # accident. Plenty for any real purchase.
 MAX_BUY_QTY = 100
 
-# Get Out of Jail Free is rate-limited to one play per day (24h rolling). Last
-# use is tracked per-player in cog_kv under this namespace.
-_JAIL_CARD_NS = "jailcard"
-JAIL_CARD_COOLDOWN_SECONDS = 24 * 60 * 60
+# Heist Shield activation state. Activating stamps today's date here; the shield
+# blocks heists for the rest of that calendar day (see cogs/heist.py).
+_SHIELD_NS = "heistshield"
 
 # Slash-command dropdown of the catalog — keeps players from typo-guessing keys.
 _ITEM_CHOICES = [
@@ -104,6 +103,19 @@ class Shop(commands.Cog):
             await reply(f"Quantity must be between 1 and {MAX_BUY_QTY}.")
             return
         m = item_meta(key)
+
+        # Per-item hold cap (e.g. only 3 jail cards / heist shields on hand).
+        cap = m.get("max_owned")
+        if cap is not None:
+            have_now = economy.item_qty(guild.id, user.id, key)
+            if have_now + qty > cap:
+                room = max(0, cap - have_now)
+                await reply(
+                    f"🚫 You can only hold **{cap}** {m['emoji']} **{m['name']}** at a time. "
+                    f"You have **{have_now}** — room for **{room}** more."
+                )
+                return
+
         total = m["price"] * qty
         if not economy.try_deduct(guild.id, user.id, total):
             have = economy.get_coins(guild.id, user.id)
@@ -113,11 +125,17 @@ class Shop(commands.Cog):
             )
             return
         economy.grant_item(guild.id, user.id, key, qty)
+        if key == BONUS_SPIN:
+            how = "Use it with `/freespin`."
+        elif key == HEIST_SHIELD:
+            how = "Activate it with `/use` to block heists for the rest of the day."
+        elif key == JAIL_CARD:
+            how = "Have a lawyer play it with `/lawyer freecard` while jailed."
+        else:
+            how = "Use it with `/use`."
         await reply(
             f"🛒 {user.display_name} bought {m['emoji']} **{m['name']}** ×{qty} for "
-            f"**{total:,}** coins. Burned to the void. Use it with "
-            f"{'`/freespin`' if key == BONUS_SPIN else '`/use`'} "
-            f"{'(auto-triggers when heisted)' if key == HEIST_SHIELD else ''}".strip()
+            f"**{total:,}** coins. Burned to the void. {how}"
         )
 
     # --- /inventory --------------------------------------------------------
@@ -159,48 +177,33 @@ class Shop(commands.Cog):
         if key == BONUS_SPIN:
             await reply(f"{m['emoji']} Use a Bonus Spin with `/freespin` (or `!freespin`).")
             return
-        if key == HEIST_SHIELD:
+
+        if key == JAIL_CARD:
             await reply(
-                f"{m['emoji']} A Heist Shield can't be used on demand — it triggers "
-                f"automatically the next time someone heists you."
+                f"{m['emoji']} A **Get Out of Jail Free** card isn't played on demand — "
+                f"you hand it to a lawyer to play at your hearing. While jailed, run "
+                f"`/lawyer freecard` (pays a lawyer's fee, ~98% to walk). One per day."
             )
             return
 
-        if key == JAIL_CARD:
-            # One Get Out of Jail Free card per day (24h rolling). The cooldown is
-            # checked BEFORE consuming, so a player on cooldown isn't charged a
-            # card; the timestamp is stamped only after a successful release, so a
-            # wasted play (not actually in jail) doesn't burn the daily slot.
-            import time as _t
-            now = _t.time()
-            last = float(economy.kv_get(guild.id, user.id, _JAIL_CARD_NS, "last_use_ts", 0) or 0)
-            wait = JAIL_CARD_COOLDOWN_SECONDS - (now - last)
-            if wait > 0:
-                hrs, mins = int(wait // 3600), int((wait % 3600) // 60)
+        if key == HEIST_SHIELD:
+            # Activated, not passive: consume one card to raise a shield that
+            # blocks EVERY heist against you for the rest of the calendar day.
+            today = economy.today_str()
+            active = economy.kv_get(guild.id, user.id, _SHIELD_NS, "active_date", "")
+            if active == today:
                 await reply(
-                    f"🃏 You can only play one **Get Out of Jail Free** card per day. "
-                    f"Try again in **{hrs}h {mins}m**."
+                    f"{m['emoji']} Your Heist Shield is already up for the rest of today — "
+                    f"no need to burn another."
                 )
                 return
-            if not economy.consume_item(guild.id, user.id, JAIL_CARD):
+            if not economy.consume_item(guild.id, user.id, HEIST_SHIELD):
                 await reply(f"You don't own a {m['emoji']} **{m['name']}**.")
                 return
-            res = economy.release_from_jail(guild.id, user.id)
-            if res.get("blocked"):
-                economy.grant_item(guild.id, user.id, JAIL_CARD)  # didn't work — keep it
-                await reply(
-                    "🚔 This is a **tax-evasion** sentence — no card springs you. "
-                    "Sit tight and do your time. Card kept."
-                )
-                return
-            if not res.get("released"):
-                economy.grant_item(guild.id, user.id, JAIL_CARD)  # wasn't needed
-                await reply("You're not in jail. Card kept — no sense wasting it.")
-                return
-            economy.kv_set(guild.id, user.id, _JAIL_CARD_NS, "last_use_ts", now)
+            economy.kv_set(guild.id, user.id, _SHIELD_NS, "active_date", today)
             await reply(
-                f"🃏 **{user.display_name}** plays a **Get Out of Jail Free** card "
-                f"and strolls out of casino jail. The warden is furious."
+                f"🛡️ **{user.display_name}** raises a **Heist Shield**. Every heist "
+                f"against you fizzles for the rest of the day. Thieves, despair."
             )
             return
 

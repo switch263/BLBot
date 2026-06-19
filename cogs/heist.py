@@ -5,7 +5,6 @@ import random
 import logging
 import time
 import economy
-from items import HEIST_SHIELD
 
 logger = logging.getLogger(__name__)
 
@@ -630,17 +629,17 @@ class Heist(commands.Cog):
             view = BotHeistConfirmView(self, guild_id, thief, victim, accomplice)
             return warning, view
 
-        # Heist Shield: a victim's shield auto-blocks one heist, then is spent.
-        # Checked only here — after every other validation passed and a real
-        # heist is about to resolve — so a shield is never wasted on a heist
-        # that would have been rejected anyway.
-        if economy.consume_item(guild_id, victim.id, HEIST_SHIELD):
+        # Heist Shield: the victim must have ACTIVATED a shield (via /use) earlier
+        # today. An active shield blocks every heist against them for the rest of
+        # the calendar day — it is NOT consumed per attack and never auto-fires
+        # from inventory. Checked only here, after every other validation passed.
+        if economy.kv_get(guild_id, victim.id, "heistshield", "active_date", "") == economy.today_str():
             embed = discord.Embed(
                 title="🛡️ Heist Blocked!",
                 description=(
                     f"{thief.mention} crept up on **{victim.display_name}** — and walked "
-                    f"straight into a **Heist Shield**. The attempt fizzles and the shield "
-                    f"is spent."
+                    f"straight into an active **Heist Shield**. The attempt fizzles. The "
+                    f"shield holds for the rest of the day."
                 ),
                 color=discord.Color.blue(),
             )

@@ -2,9 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-from datetime import date
 import logging
 import os
+
+import economy
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class FloridaMan(commands.Cog):
         logger.info("Florida Man module has been loaded")
 
     def _generate(self) -> discord.Embed:
-        today = date.today().strftime("%B %d")
+        today = economy.now_local().strftime("%B %d")
 
         if not self.actions:
             embed = discord.Embed(

@@ -15,10 +15,12 @@ BONUS_SPIN = "bonus_spin"
 HEIST_SHIELD = "heist_shield"
 
 # Catalog. `use` is how a player triggers the item:
-#   "command" — an explicit command (/use for jail_card,
-#               /freespin for bonus_spin)
-#   "passive" — fires automatically when relevant (heist_shield on a heist)
+#   "command" — an explicit command (/lawyer plays a jail_card in a hearing,
+#               /freespin for bonus_spin, /use to activate a heist_shield)
+#   "passive" — fires automatically when relevant
 # `price` is the shop cost in coins; buying destroys those coins (a sink).
+# `max_owned` (optional) caps how many a player may hold at once — the shop
+#   refuses a buy that would exceed it. Omit for no cap.
 # `loot_weight` is the relative chance of this item on an item loot drop.
 # `card_species` (optional) pins the loot-card art to a specific locked species
 # slug in cogs/lootdrop_card.py; omit it to let the card use random art.
@@ -26,9 +28,10 @@ ITEMS = {
     JAIL_CARD: {
         "name": "Get Out of Jail Free",
         "emoji": "🃏",
-        "price": 5_000_000,
-        "blurb": "Instantly tears up your own jail sentence.",
-        "flavor": "Signed by the warden. Notarized by nobody. Works anyway.",
+        "price": 25_000_000,
+        "max_owned": 3,
+        "blurb": "Your lawyer plays it at your hearing for a near-certain win. Hire one with `/lawyer freecard` while jailed. One per day.",
+        "flavor": "Signed by the warden. Notarized by nobody. Works 98% of the time.",
         "use": "command",
         "loot_weight": 10,
         "card_species": "get_out_of_jail",
@@ -45,10 +48,11 @@ ITEMS = {
     HEIST_SHIELD: {
         "name": "Heist Shield",
         "emoji": "🛡️",
-        "price": 3_000_000,
-        "blurb": "Automatically blocks the next heist that targets you.",
+        "price": 25_000_000,
+        "max_owned": 3,
+        "blurb": "Activate with `/use` to block ALL heists against you for the rest of the day. Not automatic — you must raise it.",
         "flavor": "A wall of pure paperwork. Thieves hate it.",
-        "use": "passive",
+        "use": "command",
         "loot_weight": 15,
     },
 }

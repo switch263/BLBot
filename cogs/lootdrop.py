@@ -242,7 +242,7 @@ class LootDrop(commands.Cog):
                 flavor=flavor,
                 is_mythic=(rarity_name == "Mythic"),
                 minted_by=user.display_name,
-                minted_at=datetime.utcnow().strftime("%Y-%m-%d"),
+                minted_at=economy.today_str(),
                 species=species,
             )
             card_file = discord.File(buf, filename="lootcard.png")
@@ -301,7 +301,7 @@ class LootDrop(commands.Cog):
                 flavor=meta["flavor"],
                 is_mythic=(rarity_name == "Mythic"),
                 minted_by=user.display_name,
-                minted_at=datetime.utcnow().strftime("%Y-%m-%d"),
+                minted_at=economy.today_str(),
                 species=meta.get("card_species") or pick_species(),
                 value_text="◆ ITEM CARD ◆",
                 name_prefix=False,

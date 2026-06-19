@@ -3,6 +3,7 @@
 import sqlite3
 import os
 import logging
+from datetime import datetime
 from config import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -13,22 +14,23 @@ STARTING_COINS = 100
 # Hard ceiling on a single stake, enforced by every game via check_bet().
 # One bet can never move more than this — keeps a whale from blowing up the
 # house (or another player) in one roll.
-MAX_BET = 100_000
+MAX_BET = 500_000
 
 # --- Weekly winnings tax --------------------------------------------------
-# The economy's main coin sink (cogs/taxes.py). It's an income tax, not a
-# wealth tax: once a week each player is assessed WINNINGS_TAX_PCT of their
-# NET WALLET GROWTH since the last levy (balance now minus the snapshot taken
-# last week). Net losers grow by <= 0 and owe nothing. We use the balance
-# delta rather than total_won/total_lost because those counters are tracked
-# inconsistently across games (transfer_to_house doesn't log a loss;
-# casino_payout logs the gross payout) — the balance delta is robust and
-# game-agnostic. The bill is locked at levy time; players get TAX_GRACE_SECONDS
+# The economy's main coin sink (cogs/taxes.py). It's an income tax on GROSS
+# winnings: once a week each player is assessed WINNINGS_TAX_PCT of everything
+# they won since the last levy (total_won now minus the snapshot taken last
+# week), independent of what they later lost or spent. Win nothing and you owe
+# nothing. We snapshot total_won rather than the wallet-balance delta so that
+# winnings churned back into losses or spending are still taxed — every win
+# path bumps total_won (casino_payout, slots/coinflip update_wallet, roulette
+# award_coins, cockroach/pigderby/loot add_coins), so it's a complete and
+# game-agnostic measure. The bill is locked at levy time; players get TAX_GRACE_SECONDS
 # to pay it (coins flow to the house on-hand — a closed loop, not burned). Miss
 # the deadline and you're a tax evader: the house seizes the bill plus a cut of
 # your wallet and jails you (graduated, see the penalty block below). The levy
 # notice posts to the #TAX_CHANNEL_NAME channel and is the ONLY reminder.
-WINNINGS_TAX_PCT = 0.15          # 15% of the week's net winnings
+WINNINGS_TAX_PCT = 0.15          # 15% of the week's gross winnings
 TAX_PERIOD_SECONDS = 7 * 24 * 3600   # one levy per week
 TAX_GRACE_SECONDS = 24 * 3600        # 24h to pay before enforcement
 TAX_CHANNEL_NAME = "game-spam"       # where the weekly notice posts
@@ -87,6 +89,20 @@ def is_memorial(user_id: int) -> bool:
 # Until that happens, fall back to legacy id 0 so older data still resolves.
 _LEGACY_HOUSE_ID = 0
 _house_id = _LEGACY_HOUSE_ID
+
+
+def now_local() -> datetime:
+    """Current local time as a tz-aware datetime, honoring the standard `TZ`
+    env var. Use this for any 'what day/time is it' logic so day boundaries
+    follow the configured timezone."""
+    return datetime.now().astimezone()
+
+
+def today_str() -> str:
+    """Today's date as 'YYYY-MM-DD' in local time (honors the `TZ` env var).
+    The single source of truth for any 'once per calendar day' / 'good for the
+    rest of the day' gate (jail cards, heist shields)."""
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def get_house_id() -> int:
@@ -1327,6 +1343,29 @@ def get_all_wallets(guild_id: int) -> list:
     except sqlite3.Error as e:
         logger.error(f"Database error in get_all_wallets: {e}")
         return []
+
+
+def get_all_winnings(guild_id: int) -> list:
+    """Every (user_id, total_won) in the guild EXCLUDING the house wallet. This
+    is the lifetime gross-winnings counter; the weekly tax snapshots it and taxes
+    the per-period delta. The memorial player is left in — the caller filters
+    him out (he's exempt from tax)."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, total_won FROM wallets WHERE guild_id = ? AND user_id != ?",
+                (guild_id, get_house_id()),
+            ).fetchall()
+            return [(r[0], r[1] or 0) for r in rows]
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_all_winnings: {e}")
+        return []
+
+
+def get_winnings(guild_id: int, user_id: int) -> int:
+    """Lifetime gross winnings (total_won) for one player. Used by the tax cog to
+    roll a baseline forward after enforcement."""
+    return int(get_wallet(guild_id, user_id).get("total_won", 0) or 0)
 
 
 def get_total_economy(guild_id: int) -> int:
