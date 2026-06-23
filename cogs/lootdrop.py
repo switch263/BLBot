@@ -29,7 +29,7 @@ RARITIES = [
 # Fraction of loot drops that yield an item card instead of coins. Item cards
 # are sellable now (see items.py `sell_value`), so a higher rate means more
 # realizable value per drop, not just more clutter.
-ITEM_DROP_CHANCE = 0.50
+ITEM_DROP_CHANCE = 0.35
 
 # Item-card drops carry Sell / Re-roll buttons. A re-roll burns the card plus
 # this fraction of its sell value, then mints a fresh random card — capped at
