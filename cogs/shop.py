@@ -138,6 +138,38 @@ class Shop(commands.Cog):
             f"**{total:,}** coins. Burned to the void. {how}"
         )
 
+    # --- /sell -------------------------------------------------------------
+    async def _sell(self, ctx_or_interaction, item_text: str, qty: int):
+        _is_slash, guild, user, reply = self._ctx_bits(ctx_or_interaction)
+        if not guild:
+            await reply("Server only.")
+            return
+        key = resolve(item_text)
+        if key is None:
+            await reply(f"No such item: **{item_text}**. Try `/inventory` to see what you own.")
+            return
+        if qty < 1 or qty > MAX_BUY_QTY:
+            await reply(f"Quantity must be between 1 and {MAX_BUY_QTY}.")
+            return
+        m = item_meta(key)
+        unit = m.get("sell_value")
+        if not unit:
+            await reply(f"{m['emoji']} **{m['name']}** can't be sold.")
+            return
+        # Atomic: removes all `qty` at once or none — pay only for a clean pull.
+        if not economy.consume_item(guild.id, user.id, key, qty):
+            have = economy.item_qty(guild.id, user.id, key)
+            await reply(
+                f"You only have **{have}** {m['emoji']} **{m['name']}** — can't sell **{qty}**."
+            )
+            return
+        payout = unit * qty
+        economy.add_coins(guild.id, user.id, payout)
+        await reply(
+            f"💰 {user.display_name} sold {m['emoji']} **{m['name']}** ×{qty} for "
+            f"**{payout:,}** coins."
+        )
+
     # --- /inventory --------------------------------------------------------
     async def _inventory(self, ctx_or_interaction):
         _is_slash, guild, user, reply = self._ctx_bits(ctx_or_interaction)
@@ -155,9 +187,13 @@ class Shop(commands.Cog):
         else:
             for key, count in owned.items():
                 m = ITEMS[key]
+                value = m["blurb"]
+                sell = m.get("sell_value")
+                if sell:
+                    value += f"\n*Sells for {sell:,} coins each via `/sell`.*"
                 embed.add_field(
                     name=f"{m['emoji']} {m['name']} ×{count}",
-                    value=m["blurb"],
+                    value=value,
                     inline=False,
                 )
         await reply(embed=embed)
@@ -222,6 +258,15 @@ class Shop(commands.Cog):
         item_text, qty = _split_item_qty(args)
         await self._buy(ctx, item_text, qty)
 
+    @commands.command(name="sell")
+    @commands.guild_only()
+    async def sell_prefix(self, ctx, *, args: str = ""):
+        if not args:
+            await ctx.send("Usage: `!sell <item> [qty]` — e.g. `!sell heist shield 2`.")
+            return
+        item_text, qty = _split_item_qty(args)
+        await self._sell(ctx, item_text, qty)
+
     @commands.command(name="inventory", aliases=["inv"])
     @commands.guild_only()
     async def inventory_prefix(self, ctx):
@@ -246,6 +291,13 @@ class Shop(commands.Cog):
     async def buy_slash(self, interaction: discord.Interaction,
                         item: app_commands.Choice[str], qty: int = 1):
         await self._buy(interaction, item.value, qty)
+
+    @app_commands.command(name="sell", description="Sell an item card back for coins")
+    @app_commands.describe(item="Which item to sell", qty="How many (default 1)")
+    @app_commands.choices(item=_ITEM_CHOICES)
+    async def sell_slash(self, interaction: discord.Interaction,
+                         item: app_commands.Choice[str], qty: int = 1):
+        await self._sell(interaction, item.value, qty)
 
     @app_commands.command(name="inventory", description="Show the item cards you own")
     async def inventory_slash(self, interaction: discord.Interaction):

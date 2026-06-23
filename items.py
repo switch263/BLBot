@@ -19,6 +19,9 @@ HEIST_SHIELD = "heist_shield"
 #               /freespin for bonus_spin, /use to activate a heist_shield)
 #   "passive" — fires automatically when relevant
 # `price` is the shop cost in coins; buying destroys those coins (a sink).
+# `sell_value` is what `/sell` pays back per item (coins minted into the wallet).
+#   Kept below `price` so buy-then-sell always loses money — no arbitrage. Omit
+#   to make an item unsellable.
 # `max_owned` (optional) caps how many a player may hold at once — the shop
 #   refuses a buy that would exceed it. Omit for no cap.
 # `loot_weight` is the relative chance of this item on an item loot drop.
@@ -29,31 +32,34 @@ ITEMS = {
         "name": "Get Out of Jail Free",
         "emoji": "🃏",
         "price": 25_000_000,
+        "sell_value": 15_000_000,
         "max_owned": 3,
         "blurb": "Your lawyer plays it at your hearing for a near-certain win. Hire one with `/lawyer freecard` while jailed. One per day.",
         "flavor": "Signed by the warden. Notarized by nobody. Works 98% of the time.",
         "use": "command",
-        "loot_weight": 10,
+        "loot_weight": 30,
         "card_species": "get_out_of_jail",
     },
     BONUS_SPIN: {
         "name": "Bonus Spin",
         "emoji": "🎰",
         "price": 40_000,
+        "sell_value": 25_000,
         "blurb": "One free slots spin — keep the winnings, risk nothing. Use `/freespin`.",
         "flavor": "The house is feeling generous. Don't get used to it.",
         "use": "command",
-        "loot_weight": 50,
+        "loot_weight": 25,
     },
     HEIST_SHIELD: {
         "name": "Heist Shield",
         "emoji": "🛡️",
         "price": 25_000_000,
+        "sell_value": 15_000_000,
         "max_owned": 3,
         "blurb": "Activate with `/use` to block ALL heists against you for the rest of the day. Not automatic — you must raise it.",
         "flavor": "A wall of pure paperwork. Thieves hate it.",
         "use": "command",
-        "loot_weight": 15,
+        "loot_weight": 30,
     },
 }
 
