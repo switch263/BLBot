@@ -148,6 +148,36 @@ class Admin(commands.Cog):
             f"(awaiting {view.required_approvals} approvals)"
         )
 
+    # ----------------------------------------------------------------------
+    # !deletewallet — approval-gated wipe of a single player's wallet.
+    # ----------------------------------------------------------------------
+    @commands.command(name="deletewallet", aliases=["resetwallet", "wipewallet"])
+    @commands.guild_only()
+    async def delete_wallet_cmd(self, ctx, *, member: discord.Member):
+        """Wipe ONE player's wallet + economy footprint (game stats preserved).
+        Requires one approval from another admin-channel member. Admin channel only."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return  # Silently ignore — admin channel only.
+        if member.bot:
+            await ctx.send("🚫 Can't delete a bot's wallet — that's the house pot.")
+            return
+        if economy.is_memorial(member.id):
+            await ctx.send("🚫 That's the memorial player (kev2tall). His wallet is protected.")
+            return
+        view = DeleteWalletView(
+            initiator=ctx.author,
+            guild=ctx.guild,
+            channel=ctx.channel,
+            target=member,
+            required_approvals=1,
+        )
+        msg = await ctx.send(view.status_text(), view=view)
+        view.message = msg
+        logger.info(
+            f"deletewallet requested by {ctx.author} for {member} in guild "
+            f"{ctx.guild.id} (awaiting {view.required_approvals} approval)"
+        )
+
 
 # --------------------------------------------------------------------------
 # ClearEconomyView — PR-style approval gate for the irreversible wipe.
@@ -301,6 +331,162 @@ class ClearEconomyView(discord.ui.View):
             )
         except Exception as e:
             logger.error(f"Failed to edit on clear_economy timeout: {e}")
+
+
+# --------------------------------------------------------------------------
+# DeleteWalletView — approval gate for wiping a single player's wallet.
+# --------------------------------------------------------------------------
+
+class DeleteWalletView(discord.ui.View):
+    """Posts in the admin channel. One admin-channel member who is NOT the
+    initiator must click Approve before the target's wallet is wiped. The
+    initiator — or any admin-channel member — can cancel. 5-minute timeout."""
+
+    def __init__(self, initiator: discord.Member, guild: discord.Guild,
+                 channel: discord.TextChannel, target: discord.Member,
+                 required_approvals: int = 1):
+        super().__init__(timeout=300)
+        self.initiator = initiator
+        self.guild = guild
+        self.channel = channel
+        self.target = target
+        self.required_approvals = required_approvals
+        self.approvers: set[int] = set()
+        self.message: discord.Message | None = None
+        self.resolved = False
+
+    # ---- eligibility & rendering --------------------------------------
+    def _is_admin_channel_member(self, user_id: int) -> bool:
+        return any(m.id == user_id and not m.bot for m in self.channel.members)
+
+    def _approver_names(self) -> str:
+        if not self.approvers:
+            return "—"
+        names = []
+        for uid in self.approvers:
+            m = self.guild.get_member(uid)
+            names.append(m.display_name if m else f"<{uid}>")
+        return ", ".join(names)
+
+    def status_text(self) -> str:
+        bal = economy.get_coins(self.guild.id, self.target.id)
+        return (
+            f"🗑️ **WALLET DELETE REQUESTED**\n"
+            f"{self.initiator.mention} wants to **wipe {self.target.mention}'s "
+            f"wallet** (currently **{bal:,}** coins). There is no undo.\n\n"
+            f"**This will reset, for this player only:**\n"
+            f"• their wallet (coins + winnings, back to fresh)\n"
+            f"• any active jail sentence\n"
+            f"• their item-card inventory & cog state (incl. tax baseline)\n"
+            f"• their loot-drop cooldowns and bounty history\n\n"
+            f"**Preserved:** their game stats (play/win counts). The house pot "
+            f"and everyone else are untouched.\n\n"
+            f"**{self.required_approvals} approval required** from another "
+            f"admin-channel member. The initiator's request does not count.\n"
+            f"**Approvals: {len(self.approvers)}/{self.required_approvals}**  "
+            f"({self._approver_names()})"
+        )
+
+    async def _refresh(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(content=self.status_text(), view=self)
+
+    def _disable_all(self):
+        for child in self.children:
+            child.disabled = True
+
+    # ---- buttons -------------------------------------------------------
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅")
+    async def approve_button(self, interaction: discord.Interaction,
+                              button: discord.ui.Button):
+        if self.resolved:
+            await interaction.response.send_message(
+                "This request is already resolved.", ephemeral=True)
+            return
+        user = interaction.user
+        if user.id == self.initiator.id:
+            await interaction.response.send_message(
+                "🚫 You started this request — someone else has to approve.",
+                ephemeral=True)
+            return
+        if not self._is_admin_channel_member(user.id):
+            await interaction.response.send_message(
+                "🚫 Only admin-channel members can approve.", ephemeral=True)
+            return
+        if user.id in self.approvers:
+            await interaction.response.send_message(
+                "You already approved.", ephemeral=True)
+            return
+        self.approvers.add(user.id)
+
+        if len(self.approvers) >= self.required_approvals:
+            await self._execute(interaction)
+        else:
+            await self._refresh(interaction)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="✖️")
+    async def cancel_button(self, interaction: discord.Interaction,
+                             button: discord.ui.Button):
+        if self.resolved:
+            await interaction.response.send_message(
+                "This request is already resolved.", ephemeral=True)
+            return
+        # Initiator OR any admin-channel member can cancel.
+        if (interaction.user.id != self.initiator.id
+                and not self._is_admin_channel_member(interaction.user.id)):
+            await interaction.response.send_message(
+                "🚫 Only admin-channel members can cancel.", ephemeral=True)
+            return
+        self.resolved = True
+        self._disable_all()
+        self.stop()
+        await interaction.response.edit_message(
+            content=(
+                f"❌ **Wallet delete cancelled** by {interaction.user.mention}.\n"
+                f"Target was {self.target.mention}; initiator {self.initiator.mention}."
+            ),
+            view=self,
+        )
+
+    # ---- execution & timeout ------------------------------------------
+    async def _execute(self, interaction: discord.Interaction):
+        self.resolved = True
+        self._disable_all()
+        self.stop()
+        result = economy.delete_wallet(self.guild.id, self.target.id)
+        rows_summary = "\n".join(
+            f"• `{tbl}`: **{n}** rows" for tbl, n in result.items()
+        ) or "_(no rows reported)_"
+        await interaction.response.edit_message(
+            content=(
+                f"💥 **WALLET DELETED** — {self.target.mention} is back to a fresh slate.\n"
+                f"Initiator: {self.initiator.mention}\n"
+                f"Approved by: {self._approver_names()}\n\n"
+                f"**Deleted:**\n{rows_summary}\n\n"
+                f"Game stats preserved."
+            ),
+            view=self,
+        )
+        logger.warning(
+            f"WALLET DELETED for {self.target} in guild {self.guild.id} by "
+            f"{self.initiator} with approvals from {self.approvers}; rows: {result}"
+        )
+
+    async def on_timeout(self):
+        if self.resolved or self.message is None:
+            return
+        self.resolved = True
+        self._disable_all()
+        try:
+            await self.message.edit(
+                content=(
+                    f"⏰ **Wallet delete expired** without approval "
+                    f"({len(self.approvers)}/{self.required_approvals} after 5 min). "
+                    f"Target: {self.target.mention}; request: {self.initiator.mention}."
+                ),
+                view=self,
+            )
+        except Exception as e:
+            logger.error(f"Failed to edit on deletewallet timeout: {e}")
 
 
 async def setup(bot):

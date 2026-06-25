@@ -1978,6 +1978,45 @@ _CLEAR_ECONOMY_TABLES = (
 )
 
 
+def delete_wallet(guild_id: int, user_id: int) -> dict:
+    """Hard-reset ONE player in a guild: deletes their wallet, jail sentence,
+    cog_kv state (inventory, tax baseline/bills, any feature flags), loot
+    cooldowns, and bounty-log history (as placer or target). PRESERVES their
+    game_stats so leaderboards/play counts survive — same policy as
+    clear_economy. The house pot/reserve is untouched (guild-level, not theirs).
+
+    After this, the next wallet read re-creates them fresh with STARTING_COINS.
+    All deletions run in a single transaction. Returns {table: rows_deleted}.
+
+    There is no undo — callers should require human approval before invoking.
+    """
+    counts: dict[str, int] = {}
+    # (table, where-clause, params) — per-user scope.
+    deletions = [
+        ("wallets", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
+        ("jail", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
+        ("cog_kv", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
+        ("loot_cooldowns", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
+        ("bounty_log",
+         "guild_id = ? AND (placer_user_id = ? OR target_user_id = ?)",
+         (guild_id, user_id, user_id)),
+    ]
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for tbl, where, params in deletions:
+                try:
+                    cur = conn.execute(f"DELETE FROM {tbl} WHERE {where}", params)
+                    counts[tbl] = cur.rowcount
+                except sqlite3.OperationalError:
+                    counts[tbl] = 0  # table absent on this DB — skip
+            conn.commit()
+            return counts
+    except sqlite3.Error as e:
+        logger.error(f"Database error in delete_wallet: {e}")
+        return {}
+
+
 def clear_economy(guild_id: int) -> dict:
     """Hard-reset the economy for one guild. Wipes wallets, the house pot
     (on-hand + reserve), all jail sentences, the cog_kv store (inventory and
