@@ -19,8 +19,13 @@ from datetime import datetime, timezone
 from typing import Optional
 import logging
 
+import user_settings
+
 # Configure the API endpoint
 WEATHER_API_URL = "https://discord.flvrtown.com"
+
+# Key for this cog's entry in the shared /set registry.
+LOCATION_SETTING = "location"
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -51,7 +56,25 @@ class WeatherCog(commands.Cog):
             connector=connector,
             raise_for_status=False  # Handle status codes manually
         )
+
+        # Register the saveable "location" preference with the shared /set cog,
+        # so players can `/set location 78704` and then just `/weather`.
+        user_settings.register(
+            key=LOCATION_SETTING,
+            label="Weather location",
+            description="Default city/zip/address for /weather",
+            validate=self._validate_location,
+        )
         logger.info("Weather cog loaded with connection-pooled API session")
+
+    @staticmethod
+    def _validate_location(raw: str) -> str:
+        value = raw.strip()
+        if not value:
+            raise ValueError("Give a real location, e.g. `London`, `78704`, or `New York, NY`.")
+        if len(value) > 100:
+            raise ValueError("That location is too long.")
+        return value
         
     async def cog_unload(self):
         """Close aiohttp session when cog unloads"""
@@ -214,8 +237,34 @@ class WeatherCog(commands.Cog):
         
         return embed
 
+    def _resolve_location(self, invoker: discord.abc.User, location: Optional[str],
+                          target: Optional[discord.abc.User]) -> tuple[Optional[str], Optional[str]]:
+        """Work out which location to fetch. Returns (location, error_message);
+        exactly one is non-None.
+
+        Priority: an explicitly named @user's saved location > a typed location >
+        the invoker's own saved location.
+        """
+        if target is not None:
+            saved = user_settings.get_value(target.id, LOCATION_SETTING)
+            if not saved:
+                who = "You haven't" if target.id == invoker.id else f"**{target.display_name}** hasn't"
+                return None, (f"{who} saved a location. "
+                              f"Set one with `/set location <place>`.")
+            return saved, None
+
+        if location and location.strip():
+            return location.strip(), None
+
+        saved = user_settings.get_value(invoker.id, LOCATION_SETTING)
+        if not saved:
+            return None, ("No location given and you haven't saved one. "
+                          "Try `/weather London`, or save a default with "
+                          "`/set location <place>` and then just `/weather`.")
+        return saved, None
+
     @commands.command(name='weather', aliases=['w', 'forecast'])
-    async def weather_command(self, ctx, *, location: str):
+    async def weather_command(self, ctx, *, location: str = None):
         """
         Get weather information for a location (non-blocking, allows concurrent requests)
         
@@ -227,6 +276,13 @@ class WeatherCog(commands.Cog):
             
         Note: Multiple users can request weather simultaneously without blocking each other
         """
+        # `!weather @someone` → pull their saved location instead of a typed one.
+        target = ctx.message.mentions[0] if ctx.message.mentions else None
+        location, error = self._resolve_location(ctx.author, location, target)
+        if error:
+            await ctx.send(error)
+            return
+
         # Create a task to handle typing indicator without blocking the command
         typing_task = asyncio.create_task(self._handle_typing(ctx))
         
@@ -275,18 +331,30 @@ class WeatherCog(commands.Cog):
         except asyncio.CancelledError:
             pass  # Expected when request completes
 
-    @app_commands.command(name="weather", description="Get weather information for a location")
-    @app_commands.describe(location="City name, zip code, or address (e.g., 'London', '78704', 'New York, NY')")
-    async def weather_slash(self, interaction: discord.Interaction, location: str):
+    @app_commands.command(name="weather", description="Get weather for a location, a saved default, or another member")
+    @app_commands.describe(
+        location="City, zip, or address. Omit to use your saved location.",
+        user="Show this member's saved location instead.",
+    )
+    async def weather_slash(self, interaction: discord.Interaction,
+                            location: Optional[str] = None,
+                            user: Optional[discord.Member] = None):
         """
         Slash command version of weather (non-blocking, supports concurrent requests)
-        
+
         Usage:
             /weather location:London
-            /weather location:78704
-            
+            /weather                 (uses your saved location)
+            /weather user:@someone   (uses their saved location)
+
         Note: Multiple users can request weather simultaneously without blocking each other
         """
+        resolved, error = self._resolve_location(interaction.user, location, user)
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+            return
+        location = resolved
+
         # Defer immediately to prevent timeout (non-blocking)
         await interaction.response.defer(thinking=True)
         
