@@ -31,6 +31,7 @@ _HP_RANGES = {
     "Legendary": (150, 220),
     "Mythic":    (220, 350),
     "Divine":    (700, 999),
+    "Artifact":  (120, 260),  # item-card tier — sits between Epic and Mythic
 }
 _ATK_RANGES = {
     "Common":    (5, 15),
@@ -40,6 +41,7 @@ _ATK_RANGES = {
     "Legendary": (90, 140),
     "Mythic":    (140, 220),
     "Divine":    (400, 666),
+    "Artifact":  (70, 160),  # item-card tier
 }
 
 
@@ -450,6 +452,7 @@ def render_card(
     glow_intensity = {
         "Common": 0.55, "Uncommon": 0.75, "Rare": 0.90,
         "Epic": 1.05, "Legendary": 1.20, "Mythic": 1.35,
+        "Artifact": 1.25,
     }.get(rarity_name, 0.85)
     # Brighten the tier color toward white so darker tiers (e.g., Rare blue)
     # still cast a luminous halo rather than a muddy shadow.
@@ -494,6 +497,7 @@ def render_card(
     sparkle_count = {
         "Common": 6, "Uncommon": 12, "Rare": 24,
         "Epic": 48, "Legendary": 80, "Mythic": 140,
+        "Artifact": 90,
     }.get(rarity_name, 12)
     sparkles = Image.new("RGBA", (ART_W, ART_H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(sparkles)

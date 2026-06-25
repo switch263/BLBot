@@ -31,11 +31,12 @@ RARITIES = [
 # realizable value per drop, not just more clutter.
 ITEM_DROP_CHANCE = 0.35
 
-# Item-card drops carry Sell / Re-roll buttons. A re-roll burns the card plus
-# this fraction of its sell value, then mints a fresh random card — capped at
-# one per player per day (stamped in the _REROLL_NS kv namespace).
-REROLL_COST_FRACTION = 0.75
-_REROLL_NS = "loot_reroll"
+# Item cards no longer roll a random visual tier (Common→Mythic). They all
+# render under their own dedicated "Artifact" tier so an item drop reads as a
+# distinct class of loot rather than a recolored coin card. The renderer in
+# lootdrop_card.py keys glow/sparkle/stat styling on this name.
+ITEM_CARD_RARITY = "Artifact"
+ITEM_CARD_COLOR = discord.Color.from_rgb(0, 206, 209)  # turquoise — unused by any coin tier
 
 ITEM_PREFIXES = [
     "Enchanted", "Cursed", "Blessed", "Rusty", "Golden", "Haunted", "Forbidden",
@@ -135,10 +136,10 @@ def _next_reset() -> datetime:
 
 
 class ItemDropView(discord.ui.View):
-    """Buttons under an item-card drop: sell it for coins, or gamble a re-roll
-    (one per day) for a fresh card. Only the player who opened the drop may act.
+    """Sell button under an item-card drop — cash it in for coins. Only the
+    player who opened the drop may act.
 
-    Buttons go dead after an hour, or once the card is sold/re-rolled away."""
+    The button goes dead after an hour, or once the card is sold."""
 
     def __init__(self, cog: "LootDrop", guild_id: int, owner_id: int, item_key: str):
         super().__init__(timeout=3600)
@@ -150,16 +151,13 @@ class ItemDropView(discord.ui.View):
 
         meta = ITEMS.get(item_key, {})
         sell_value = meta.get("sell_value")
-        # No sell value → nothing to sell or gamble; strip the buttons entirely.
+        # No sell value → nothing to sell; strip the button entirely.
         if not sell_value:
             self.clear_items()
             self.sell_value = 0
-            self.reroll_cost = 0
             return
         self.sell_value = sell_value
-        self.reroll_cost = int(sell_value * REROLL_COST_FRACTION)
         self.sell_button.label = f"Sell · {sell_value:,}"
-        self.reroll_button.label = f"Re-roll · {self.reroll_cost:,}"
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
         """Reject clicks from anyone but the drop's owner."""
@@ -203,36 +201,6 @@ class ItemDropView(discord.ui.View):
             inline=False,
         )
         await interaction.response.edit_message(embed=embed, view=self)
-
-    @discord.ui.button(label="Re-roll", style=discord.ButtonStyle.danger, emoji="🎲")
-    async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self._guard(interaction):
-            return
-        ok, message, drop = await self.cog._reroll_item(
-            self.guild_id, interaction.user, self.item_key, self.reroll_cost
-        )
-        if not ok:
-            await interaction.response.send_message(message, ephemeral=True)
-            return
-        # Original card is spent — kill this message's buttons and note it...
-        self._disable_all()
-        embed = interaction.message.embeds[0]
-        embed.add_field(
-            name="🎲 Re-rolled",
-            value=f"Burned this card + **{self.reroll_cost:,}** coins for a new one below.",
-            inline=False,
-        )
-        await interaction.response.edit_message(embed=embed, view=self)
-        # ...then drop the fresh card as its own message with its own buttons.
-        new_embed, new_card, new_view = drop
-        kwargs = {"embed": new_embed}
-        if new_card:
-            kwargs["file"] = new_card
-        if new_view:
-            kwargs["view"] = new_view
-        sent = await interaction.followup.send(**kwargs)
-        if new_view:
-            new_view.message = sent
 
 
 class LootDrop(commands.Cog):
@@ -374,8 +342,8 @@ class LootDrop(commands.Cog):
         self, guild_id: int, user: discord.Member, next_reset_ts: int
     ) -> tuple[discord.Embed, discord.File | None, discord.ui.View | None]:
         """An item-card loot drop: grant a random shop item and render it as a
-        card through the same engine the coin drops use. Comes with Sell /
-        Re-roll buttons (an ItemDropView)."""
+        card through the same engine the coin drops use. Comes with a Sell
+        button (an ItemDropView)."""
         # Pick which item, weighted by each item's loot_weight.
         keys = list(ALL_ITEMS)
         item_key = random.choices(
@@ -384,12 +352,10 @@ class LootDrop(commands.Cog):
         meta = ITEMS[item_key]
         economy.grant_item(guild_id, user.id, item_key)
 
-        # Roll a rarity purely for card flair — color, frame, sparkle density.
-        # Divine is excluded; it's reserved for the special coin-card tier.
-        flair_tiers = [r for r in RARITIES if r[0] != "Divine"]
-        rarity_name, color, _coin_range, _w, _emoji = random.choices(
-            flair_tiers, weights=[r[3] for r in flair_tiers], k=1
-        )[0]
+        # All item cards share one dedicated tier — they don't roll a random
+        # coin-tier flair anymore.
+        rarity_name = ITEM_CARD_RARITY
+        color = ITEM_CARD_COLOR
 
         sell_value = meta.get("sell_value")
         worth_line = (
@@ -416,7 +382,7 @@ class LootDrop(commands.Cog):
                 coins=0,
                 color=color,
                 flavor=meta["flavor"],
-                is_mythic=(rarity_name == "Mythic"),
+                is_mythic=False,  # Artifact tier has its own flair, no Mythic shimmer
                 minted_by=user.display_name,
                 minted_at=economy.today_str(),
                 species=meta.get("card_species") or pick_species(),
@@ -431,31 +397,6 @@ class LootDrop(commands.Cog):
 
         view = ItemDropView(self, guild_id, user.id, item_key)
         return embed, card_file, view
-
-    async def _reroll_item(
-        self, guild_id: int, user: discord.Member, item_key: str, reroll_cost: int
-    ) -> tuple[bool, str, tuple | None]:
-        """Spend the daily re-roll: burn the card + cost, mint a fresh item drop.
-        Returns (ok, error_message, drop) where drop is the (embed, file, view)
-        tuple for the new card when ok, else None."""
-        today = economy.today_str()
-        if economy.kv_get(guild_id, user.id, _REROLL_NS, "date", "") == today:
-            return False, "🎲 You've already burned your re-roll today. Back tomorrow, gambler.", None
-        # Burn the original card first; bail if it's no longer held.
-        if not economy.consume_item(guild_id, user.id, item_key):
-            return False, "That card's no longer in your inventory.", None
-        # Charge the gambling tax — refund the card if they can't cover it.
-        if not economy.try_deduct(guild_id, user.id, reroll_cost):
-            economy.grant_item(guild_id, user.id, item_key)
-            have = economy.get_coins(guild_id, user.id)
-            return False, (
-                f"Re-roll costs **{reroll_cost:,}** coins — you've only got "
-                f"**{have:,}**. Card kept, no re-roll."
-            ), None
-        economy.kv_set(guild_id, user.id, _REROLL_NS, "date", today)
-        next_reset_ts = int(_next_reset().timestamp())
-        drop = await self._open_item_drop(guild_id, user, next_reset_ts)
-        return True, "", drop
 
     @commands.command(aliases=['lootdrop', 'drop'])
     async def loot(self, ctx):
