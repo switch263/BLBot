@@ -1,18 +1,20 @@
 """Weekly winnings tax — the economy's primary coin sink.
 
-An income tax on GROSS winnings. Once a week the bot assesses
-WINNINGS_TAX_PCT of everything each player won since the previous levy (their
-lifetime total_won now minus the snapshot taken last week) and posts a single
-notice to #game-spam. This taxes all winnings regardless of what the player
-later lost or spent — churn it back into the slots and you still owe the tax.
-Win nothing and you owe nothing. Players have 24h to `/paytax`; the coins flow
-to the house on-hand (a closed loop, not burned). Miss the deadline and you're
-a tax evader: jailed and your entire wallet is forfeited to the house.
+An income tax on NET winnings. Once a week the bot assesses WINNINGS_TAX_PCT of
+each player's net gambling profit since the previous levy (their net_won now
+minus the snapshot taken last week) and posts a single notice to #game-spam.
+net_won is payouts minus stakes, so a break-even or losing week nets <= 0 and
+owes nothing — only coins you actually came out ahead on are taxed. (This
+replaced an older GROSS basis that counted returned stakes too, which let
+churn inflate a bill past the player's wallet.) Players have 24h to `/paytax`;
+the coins flow to the house on-hand (a closed loop, not burned). Miss the
+deadline and you're a tax evader: jailed and your wallet is forfeited.
 
 All state lives in economy's cog_kv store (namespace "tax"), so the levy/
 collect/enforce cycle survives restarts:
   guild-scoped (user_id=0):  last_levy_ts, due_ts  (due_ts == 0 -> idle)
-  per-user:                  base  (total_won snapshot at the last levy)
+                             schema_v  (migration guard; see _migrate_once)
+  per-user:                  net_base  (net_won snapshot at the last levy)
                              owed  (the locked bill; deleted once paid)
 
 All tuning knobs (rate, period, grace, jail length, channel) live in economy.py.
@@ -31,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 _NS = "tax"
 _MAX_LIST = 30  # cap how many bills/evaders we spell out in one message
+# Bump to force _migrate_once to clear stale bill state on next loop. v2 = the
+# gross→net winnings basis change.
+_SCHEMA_VERSION = 2
 
 
 class Taxes(commands.Cog):
@@ -73,6 +78,7 @@ class Taxes(commands.Cog):
         now = time.time()
         for guild in list(self.bot.guilds):
             try:
+                self._migrate_once(guild)
                 last, due = self._guild_state(guild.id)
                 if due > 0:
                     # A collection window is open — enforce once it lapses.
@@ -93,28 +99,50 @@ class Taxes(commands.Cog):
     async def _before(self):
         await self.bot.wait_until_ready()
 
-    def _seed_baselines(self, guild: discord.Guild):
-        """Record everyone's current gross-winnings counter as their starting
-        baseline, so the first levy taxes only what they win after this point."""
+    def _migrate_once(self, guild: discord.Guild):
+        """One-time cleanup when the tax basis changed from gross winnings
+        (total_won) to net winnings (net_won). The old basis over-charged players
+        — churned coins inflated the bill past their wallet. Clear the transient
+        bill state (every open `owed` plus the due window) so nobody is enforced
+        on a stale, inflated bill. Offense/streak history is preserved.
+        Baselines re-seed lazily: _levy now reads the new `net_base` key, so the
+        first levy after this taxes nothing and starts the clock fresh."""
+        ver = int(economy.kv_get(guild.id, 0, _NS, "schema_v", 0) or 0)
+        if ver >= _SCHEMA_VERSION:
+            return
+        economy.kv_set(guild.id, 0, _NS, "due_ts", 0)  # close any open window
         house_id = economy.get_house_id()
-        for uid, won in economy.get_all_winnings(guild.id):
+        for uid, _coins in economy.get_all_wallets(guild.id):
+            if uid == house_id:
+                continue
+            economy.kv_delete(guild.id, uid, _NS, "owed")
+        economy.kv_set(guild.id, 0, _NS, "schema_v", _SCHEMA_VERSION)
+        logger.info("taxes: migrated guild %s to net-winnings basis; "
+                    "cleared stale bills.", guild.id)
+
+    def _seed_baselines(self, guild: discord.Guild):
+        """Record everyone's current net-winnings counter as their starting
+        baseline, so the first levy taxes only what they net after this point."""
+        house_id = economy.get_house_id()
+        for uid, net in economy.get_all_net_winnings(guild.id):
             if uid == house_id or economy.is_memorial(uid):
                 continue
-            economy.kv_set(guild.id, uid, _NS, "base", won)
+            economy.kv_set(guild.id, uid, _NS, "net_base", net)
 
     async def _levy(self, guild: discord.Guild, now: float):
-        """Assess each player's gross winnings since their baseline, lock the
-        bills, roll baselines forward, open the 24h window, and announce."""
+        """Assess each player's NET winnings since their baseline, lock the
+        bills, roll baselines forward, open the 24h window, and announce. A
+        break-even or losing week nets <= 0, so nothing is owed."""
         house_id = economy.get_house_id()
         bills: list[tuple[int, int]] = []
-        for uid, won in economy.get_all_winnings(guild.id):
+        for uid, net in economy.get_all_net_winnings(guild.id):
             if uid == house_id or economy.is_memorial(uid):
                 continue
-            base = economy.kv_get(guild.id, uid, _NS, "base", None)
+            base = economy.kv_get(guild.id, uid, _NS, "net_base", None)
             # New player with no baseline yet: start the clock, tax nothing.
-            base = won if base is None else int(base)
-            economy.kv_set(guild.id, uid, _NS, "base", won)  # roll forward
-            winnings = won - base
+            base = net if base is None else int(base)
+            economy.kv_set(guild.id, uid, _NS, "net_base", net)  # roll forward
+            winnings = net - base
             owed = int(winnings * economy.WINNINGS_TAX_PCT) if winnings > 0 else 0
             if owed <= 0:
                 economy.kv_delete(guild.id, uid, _NS, "owed")
@@ -198,10 +226,10 @@ class Taxes(commands.Cog):
                 reason="Tax evasion", channel_id=channel_id, no_release=repeat,
             )
             economy.kv_delete(guild.id, uid, _NS, "owed")
-            # No baseline roll here: `base` was snapshotted to this levy's
-            # total_won in _levy, and seizure doesn't touch total_won. Leaving it
-            # means any winnings during the grace window are taxed next period —
-            # same as players who paid on time.
+            # No baseline roll here: `net_base` was snapshotted to this levy's
+            # net_won in _levy, and seizure (is_bet=False) doesn't touch net_won.
+            # Leaving it means any winnings during the grace window are taxed next
+            # period — same as players who paid on time.
             evaders.append((uid, seized, offense))
 
         # Close the window — back to idle until next week's levy.
@@ -215,7 +243,7 @@ class Taxes(commands.Cog):
         take = min(amount, coins)
         if take <= 0:
             return 0
-        return take if economy.transfer_to_house(guild_id, user_id, take).get("ok") else 0
+        return take if economy.transfer_to_house(guild_id, user_id, take, is_bet=False).get("ok") else 0
 
     async def _announce_enforcement(self, guild, ch, evaders):
         if ch is None:
@@ -261,7 +289,7 @@ class Taxes(commands.Cog):
                 description="You don't owe any taxes right now. Breathe easy.",
                 color=discord.Color.green(),
             )
-        res = economy.transfer_to_house(guild_id, user.id, owed)
+        res = economy.transfer_to_house(guild_id, user.id, owed, is_bet=False)
         if not res.get("ok"):
             if res.get("error") == "broke":
                 have = res.get("have", 0)

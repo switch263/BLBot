@@ -145,7 +145,7 @@ class JailBreak(commands.Cog):
             wallet = get_coins(guild.id, user.id)
             fine = min(wallet, max(1_000, int(wallet * 0.15)))
             if fine > 0:
-                transfer_to_house(guild.id, user.id, fine)
+                transfer_to_house(guild.id, user.id, fine, is_bet=False)
                 result_line = (
                     f"🔴 The bribe cost you **{fine:,}** coins, but your sentence stands at "
                     f"**{self._fmt(remaining)}**. Balance: **{get_coins(guild.id, user.id):,}**."

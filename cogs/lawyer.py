@@ -197,7 +197,7 @@ class Lawyer(commands.Cog):
         if needs_card and not consume_item(guild.id, user.id, JAIL_CARD):
             await reply(f"You don't own a {item_display(JAIL_CARD)} card.")
             return
-        paid = transfer_to_house(guild.id, user.id, fee)
+        paid = transfer_to_house(guild.id, user.id, fee, is_bet=False)
         if not paid.get("ok"):
             if needs_card:
                 grant_item(guild.id, user.id, JAIL_CARD)  # un-charge the card

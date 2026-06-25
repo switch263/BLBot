@@ -205,6 +205,7 @@ def _init_db():
                     coins INTEGER DEFAULT 100,
                     total_won INTEGER DEFAULT 0,
                     total_lost INTEGER DEFAULT 0,
+                    net_won INTEGER DEFAULT 0,
                     spins INTEGER DEFAULT 0,
                     jackpots INTEGER DEFAULT 0,
                     last_daily TEXT DEFAULT '',
@@ -301,6 +302,11 @@ def _init_db():
             # Migrations: add columns if missing (safe on existing DBs)
             for col, decl in [
                 ("last_daily", "TEXT DEFAULT ''"),
+                # net_won: lifetime NET gambling profit (payouts minus stakes),
+                # the basis for the weekly winnings tax. Distinct from total_won,
+                # which counts GROSS payouts (incl. the returned stake) and stays
+                # the lifetime "Total Won" brag stat. See cogs/taxes.py.
+                ("net_won", "INTEGER DEFAULT 0"),
                 ("roulette_plays", "INTEGER DEFAULT 0"),
                 ("roulette_wins", "INTEGER DEFAULT 0"),
                 ("rr_plays", "INTEGER DEFAULT 0"),
@@ -441,14 +447,16 @@ def update_wallet(guild_id: int, user_id: int, delta: int, is_jackpot: bool = Fa
     try:
         with sqlite3.connect(DB_FILE) as conn:
             if delta > 0:
+                # `delta` is already the NET result for these games (slots,
+                # coinflip), so it feeds net_won directly (the tax basis).
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, spins = spins + 1, jackpots = jackpots + ? WHERE guild_id = ? AND user_id = ?",
-                    (delta, delta, 1 if is_jackpot else 0, guild_id, user_id)
+                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, net_won = net_won + ?, spins = spins + 1, jackpots = jackpots + ? WHERE guild_id = ? AND user_id = ?",
+                    (delta, delta, delta, 1 if is_jackpot else 0, guild_id, user_id)
                 )
             else:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_lost = total_lost + ?, spins = spins + 1 WHERE guild_id = ? AND user_id = ?",
-                    (delta, abs(delta), guild_id, user_id)
+                    "UPDATE wallets SET coins = coins + ?, total_lost = total_lost + ?, net_won = net_won + ?, spins = spins + 1 WHERE guild_id = ? AND user_id = ?",
+                    (delta, abs(delta), delta, guild_id, user_id)
                 )
             conn.commit()
     except sqlite3.Error as e:
@@ -724,9 +732,15 @@ def memorial_tithe(guild_id: int, amount: int) -> int:
         return 0
 
 
-def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
+def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = True) -> dict:
     """Atomic transfer from a user to the house (donations, vig, bet collection).
     After the deposit, normalizes the house (applies interest to the reserve).
+
+    `is_bet` (default True): treat this as a gambling stake, so it lowers the
+    player's net_won (the weekly-tax basis) by `amount`. A matching win comes
+    back through casino_payout, which raises net_won — so net over a game is
+    payout minus stake. Pure sinks that are NOT bets (paying tax, bail, fees,
+    burning coins) pass is_bet=False so they don't shrink the tax basis.
 
     Same return shape as transfer_coins. `receiver_balance` is the on-hand
     wallet, not the total house net worth."""
@@ -749,10 +763,18 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int) -> dict:
             if sender_coins < amount:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "have": sender_coins, "need": amount}
-            conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
-                (amount, guild_id, user_id),
-            )
+            # A bet lowers the player's net winnings (the weekly-tax basis); a
+            # matching win restores it via casino_payout. Non-bet sinks skip this.
+            if is_bet:
+                conn.execute(
+                    "UPDATE wallets SET coins = coins - ?, net_won = net_won - ? WHERE guild_id = ? AND user_id = ?",
+                    (amount, amount, guild_id, user_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    (amount, guild_id, user_id),
+                )
             conn.execute(
                 "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, house_id),
@@ -883,9 +905,9 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 (pay, guild_id, house_id),
             )
             conn.execute(
-                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? "
+                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, net_won = net_won + ? "
                 "WHERE guild_id = ? AND user_id = ?",
-                (pay, pay, guild_id, user_id),
+                (pay, pay, pay, guild_id, user_id),
             )
             # Memorial tithe (1.5% of the win, paid by the house on top — the
             # winner keeps 100% of `pay`). Skips the memorial player.
@@ -1366,6 +1388,23 @@ def get_winnings(guild_id: int, user_id: int) -> int:
     """Lifetime gross winnings (total_won) for one player. Used by the tax cog to
     roll a baseline forward after enforcement."""
     return int(get_wallet(guild_id, user_id).get("total_won", 0) or 0)
+
+
+def get_all_net_winnings(guild_id: int) -> list:
+    """Every (user_id, net_won) in the guild EXCLUDING the house wallet. net_won
+    is lifetime NET gambling profit (payouts minus stakes); the weekly tax
+    snapshots it and taxes the positive per-period delta. The memorial player is
+    left in — the caller filters him out (he's exempt from tax)."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, net_won FROM wallets WHERE guild_id = ? AND user_id != ?",
+                (guild_id, get_house_id()),
+            ).fetchall()
+            return [(r[0], r[1] or 0) for r in rows]
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_all_net_winnings: {e}")
+        return []
 
 
 def get_total_economy(guild_id: int) -> int:

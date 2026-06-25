@@ -48,7 +48,7 @@ class Burn(commands.Cog):
             target = "the void"
             color = discord.Color.dark_red()
         else:
-            result = economy.transfer_to_house(guild_id, user.id, amount)
+            result = economy.transfer_to_house(guild_id, user.id, amount, is_bet=False)
             if not result.get("ok"):
                 if result.get("error") == "broke":
                     return discord.Embed(

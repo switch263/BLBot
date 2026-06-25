@@ -100,7 +100,7 @@ class HeistInsurance(commands.Cog):
 
         wallet = economy.get_coins(guild.id, user.id)
         premium = max(INSURANCE_PREMIUM_MIN, int(wallet * INSURANCE_PREMIUM_PCT))
-        bet_result = economy.transfer_to_house(guild.id, user.id, premium)
+        bet_result = economy.transfer_to_house(guild.id, user.id, premium, is_bet=False)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
                 await reply(
