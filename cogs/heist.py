@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import logging
 import time
+import asyncio
 import economy
 
 logger = logging.getLogger(__name__)
@@ -219,6 +220,37 @@ BAIL_RELEASE_MESSAGES = [
 ]
 
 
+# ---- Succession-log reveal --------------------------------------------------
+# The heist plays out as an APPEND-ONLY log: each beat is added beneath the last
+# (nothing is overwritten), then the real outcome lands at the bottom. These are
+# the suspense beats shown before the predetermined result is revealed.
+HEIST_REVEAL_DELAY = 1.5  # seconds between each new log line
+
+HEIST_BUILDUP_SOLO = [
+    "🕵️ {thief} pulls a ski mask down and creeps toward {victim}'s place…",
+    "🔓 Working the lock. Tumblers clicking, one by one…",
+    "🧤 Inside. Sweeping the place for {victim}'s stash…",
+    "💰 Hands on the coins. Now for the getaway…",
+]
+
+HEIST_BUILDUP_DUO = [
+    "🕵️ {thief} and {accomplice} roll up on {victim}'s place, headlights off…",
+    "📡 {accomplice} takes the lookout. {thief} works the lock…",
+    "🧤 Both inside now. Four hands moving fast…",
+    "💰 Coins bagged. Heading for the exit…",
+]
+
+HEIST_BUILDUP_BOT = [
+    "🏦 {thief} steps up to the casino vault. Cameras everywhere…",
+    "🔦 Killing the lights. The bot's security mainframe hums…",
+    "🧨 Drilling into the house's on-hand reserves…",
+    "💰 The vault door groans open…",
+]
+
+HEIST_INPROGRESS_TITLE = "🎭 Heist in Progress…"
+BOT_HEIST_INPROGRESS_TITLE = "🏦 Robbing the House…"
+
+
 class BotHeistConfirmView(discord.ui.View):
     """Confirmation prompt for robbing the house. Makes the risk explicit before any coins move."""
 
@@ -257,13 +289,20 @@ class BotHeistConfirmView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         channel_id = interaction.channel_id or 0
-        embed, jail_view = await self.cog._execute_bot_heist(self.guild_id, self.thief, self.victim, self.accomplice, channel_id)
-        # On failure, the result embed gets its own action view (bail / extend).
-        # The confirm view is now spent either way.
-        if jail_view is not None:
-            await interaction.response.edit_message(content=None, embed=embed, view=jail_view)
-        else:
-            await interaction.response.edit_message(content=None, embed=embed, view=self)
+        embed, jail_view, buildup = await self.cog._execute_bot_heist(self.guild_id, self.thief, self.victim, self.accomplice, channel_id)
+        # Swap the confirm prompt for the first beat of the succession log, then
+        # let _reveal_heist append the rest one line at a time. On failure the
+        # final edit attaches the jail action view (bail / extend).
+        intro = discord.Embed(
+            title=BOT_HEIST_INPROGRESS_TITLE,
+            description=buildup[0],
+            color=discord.Color.dark_grey(),
+        )
+        await interaction.response.edit_message(content=None, embed=intro, view=None)
+        await self.cog._reveal_heist(
+            interaction.message, buildup, embed,
+            view=jail_view, in_progress_title=BOT_HEIST_INPROGRESS_TITLE,
+        )
         self.stop()
 
     @discord.ui.button(label="Back out", style=discord.ButtonStyle.secondary)
@@ -460,6 +499,84 @@ class Heist(commands.Cog):
         desc += "\nThe house almost always wins. Are you sure?"
         return discord.Embed(title="🏦 Robbing the House — Are You Sure?", description=desc, color=discord.Color.orange())
 
+    # ---- Succession-log reveal helpers -----------------------------------
+
+    def _heist_buildup(self, thief: discord.Member, victim: discord.Member, accomplice: discord.Member | None) -> list[str]:
+        """Suspense beats for a player-vs-player heist, formatted with names."""
+        if accomplice is not None:
+            fmt = dict(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name)
+            lines = HEIST_BUILDUP_DUO
+        else:
+            fmt = dict(thief=thief.mention, victim=victim.display_name)
+            lines = HEIST_BUILDUP_SOLO
+        return [line.format(**fmt) for line in lines]
+
+    def _bot_heist_buildup(self, thief: discord.Member, accomplice: discord.Member | None) -> list[str]:
+        """Suspense beats for robbing the house."""
+        fmt = dict(thief=thief.mention, accomplice=accomplice.mention if accomplice else "")
+        return [line.format(**fmt) for line in HEIST_BUILDUP_BOT]
+
+    async def _reveal_heist(self, message: discord.Message, buildup: list[str], final_embed: discord.Embed,
+                            *, view: discord.ui.View | None = None,
+                            in_progress_title: str = HEIST_INPROGRESS_TITLE):
+        """Play the heist as an append-only log on `message`.
+
+        The caller has already sent/edited `message` to show buildup[0]. We append
+        each remaining beat beneath the last (never overwriting), then land the
+        real outcome at the bottom of the same growing log."""
+        if message is None:
+            return
+        revealed = list(buildup[:1])
+        for line in buildup[1:]:
+            await asyncio.sleep(HEIST_REVEAL_DELAY)
+            revealed.append(line)
+            step = discord.Embed(
+                title=in_progress_title,
+                description="\n".join(revealed),
+                color=discord.Color.dark_grey(),
+            )
+            try:
+                await message.edit(embed=step, view=None)
+            except discord.HTTPException:
+                pass
+        await asyncio.sleep(HEIST_REVEAL_DELAY)
+        # Keep the whole log, then append the outcome the result embed carried.
+        outcome = final_embed.description or ""
+        final_embed.description = "\n".join(buildup) + "\n\n" + outcome
+        try:
+            await message.edit(embed=final_embed, view=view)
+        except discord.HTTPException:
+            pass
+
+    async def _send_heist(self, ctx_or_interaction, embed: discord.Embed,
+                          view: discord.ui.View | None, buildup: list[str] | None):
+        """Dispatch a heist result. With no buildup (validation errors, the bot-heist
+        confirm prompt, shield blocks) it sends instantly as before; with a buildup
+        it streams the succession log."""
+        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
+        if not buildup:
+            if is_slash:
+                await ctx_or_interaction.response.send_message(embed=embed, view=view)
+                if view is not None:
+                    view.message = await ctx_or_interaction.original_response()
+            else:
+                msg = await ctx_or_interaction.send(embed=embed, view=view)
+                if view is not None:
+                    view.message = msg
+            return
+        # Streamed path — outcome already decided/applied; this is pure suspense.
+        intro = discord.Embed(
+            title=HEIST_INPROGRESS_TITLE,
+            description=buildup[0],
+            color=discord.Color.dark_grey(),
+        )
+        if is_slash:
+            await ctx_or_interaction.response.send_message(embed=intro)
+            message = await ctx_or_interaction.original_response()
+        else:
+            message = await ctx_or_interaction.send(embed=intro)
+        await self._reveal_heist(message, buildup, embed, view=view)
+
     def _bail_multiplier(self, offenses: int) -> float:
         """Repeat offenders pay more. Capped so it stays remotely payable."""
         if offenses <= 1:
@@ -492,8 +609,10 @@ class Heist(commands.Cog):
         return int(base * self._jail_time_multiplier(offenses))
 
     async def _execute_bot_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member | None, channel_id: int):
-        """Run the bot heist after the player has confirmed. Returns (embed, view_or_none).
-        On failure the view carries bail/extend buttons for the channel message."""
+        """Run the bot heist after the player has confirmed. Returns (embed, view_or_none, buildup).
+        On failure the view carries bail/extend buttons for the channel message;
+        buildup is the suspense-log the caller streams before the result."""
+        buildup = self._bot_heist_buildup(thief, accomplice)
         victim_coins = economy.get_coins(guild_id, victim.id)
         success = random.random() < BOT_HEIST_SUCCESS_RATE
 
@@ -511,7 +630,7 @@ class Heist(commands.Cog):
             msg = random.choice(BOT_SUCCESS_MESSAGES).format(
                 thief=thief.mention, amount=f"{loot:,}", pct=int(round(heist_pct * 100)),
             )
-            return discord.Embed(title="🏦 HOUSE ROBBED", description=msg, color=discord.Color.gold()), None
+            return discord.Embed(title="🏦 HOUSE ROBBED", description=msg, color=discord.Color.gold()), None, buildup
 
         # Failure: each participant gets their own random sentence + bail amount,
         # both scaled by their own prior bot-heist offenses.
@@ -556,26 +675,31 @@ class Heist(commands.Cog):
         # actually got jailed; otherwise there's no one to bail.
         view_accomplice = accomplice if accomplice_jailed else None
         view = JailActionView(self, guild_id, thief, thief_bail, view_accomplice, accomplice_bail)
-        return embed, view
+        return embed, view, buildup
 
-    async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None) -> tuple[discord.Embed, discord.ui.View | None]:
-        """Validate and run a heist. Returns (embed, view). View is non-None when the caller must show a confirmation prompt before the heist resolves."""
+    async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None) -> tuple[discord.Embed, discord.ui.View | None, list[str] | None]:
+        """Validate and run a heist. Returns (embed, view, buildup).
+
+        - view is non-None when the caller must show a confirmation prompt first.
+        - buildup is non-None only for a resolved player-vs-player heist; the caller
+          streams those beats as a succession log. Validation errors and the
+          bot-heist confirm prompt return buildup=None to send instantly."""
 
         # Validation
         if thief.id == victim.id:
-            return discord.Embed(description="You can't rob yourself!", color=discord.Color.red()), None
+            return discord.Embed(description="You can't rob yourself!", color=discord.Color.red()), None, None
 
         if accomplice and accomplice.id == victim.id:
-            return discord.Embed(description="Your accomplice can't be the victim!", color=discord.Color.red()), None
+            return discord.Embed(description="Your accomplice can't be the victim!", color=discord.Color.red()), None, None
 
         if accomplice and accomplice.id == thief.id:
-            return discord.Embed(description="You can't be your own accomplice!", color=discord.Color.red()), None
+            return discord.Embed(description="You can't be your own accomplice!", color=discord.Color.red()), None, None
 
         # Rob-the-bot is allowed (victim.bot == True with victim == this bot).
         # Other bots are still off-limits — they don't have wallets you can touch.
         targeting_house = victim.id == self.bot.user.id if self.bot.user else False
         if victim.bot and not targeting_house:
-            return discord.Embed(description="You can't rob that bot. No wallet, no dice.", color=discord.Color.red()), None
+            return discord.Embed(description="You can't rob that bot. No wallet, no dice.", color=discord.Color.red()), None, None
 
         # kev2tall is a memorial player. Trying to heist him doesn't rob him —
         # it backfires: the would-be thief's entire wallet is emptied into his
@@ -590,44 +714,44 @@ class Heist(commands.Cog):
                     "I've gone ahead and taken care of your wallet. 🕊️"
                 ),
                 color=discord.Color.red(),
-            ), None
+            ), None, None
         if economy.is_memorial(thief.id) or (accomplice and economy.is_memorial(accomplice.id)):
-            return discord.Embed(description="kev2tall doesn't run heists anymore. Rest easy, brother. 🕊️", color=discord.Color.red()), None
+            return discord.Embed(description="kev2tall doesn't run heists anymore. Rest easy, brother. 🕊️", color=discord.Color.red()), None, None
 
         # Jail check (can't rob while jailed)
         jmsg = economy.jail_message(guild_id, thief.id)
         if jmsg:
-            return discord.Embed(description=jmsg, color=discord.Color.red()), None
+            return discord.Embed(description=jmsg, color=discord.Color.red()), None, None
         if accomplice:
             jmsg = economy.jail_message(guild_id, accomplice.id)
             if jmsg:
-                return discord.Embed(description=f"{accomplice.display_name} is in jail: {jmsg}", color=discord.Color.red()), None
+                return discord.Embed(description=f"{accomplice.display_name} is in jail: {jmsg}", color=discord.Color.red()), None, None
 
         # Cooldown check
         remaining = self._check_cooldown(guild_id, thief.id)
         if remaining:
             minutes, seconds = divmod(remaining, 60)
-            return discord.Embed(description=f"You're laying low after your last heist. Try again in **{minutes}m {seconds}s**.", color=discord.Color.red()), None
+            return discord.Embed(description=f"You're laying low after your last heist. Try again in **{minutes}m {seconds}s**.", color=discord.Color.red()), None, None
 
         if accomplice:
             remaining = self._check_cooldown(guild_id, accomplice.id)
             if remaining:
                 minutes, seconds = divmod(remaining, 60)
-                return discord.Embed(description=f"{accomplice.display_name} is laying low after their last heist. Try again in **{minutes}m {seconds}s**.", color=discord.Color.red()), None
+                return discord.Embed(description=f"{accomplice.display_name} is laying low after their last heist. Try again in **{minutes}m {seconds}s**.", color=discord.Color.red()), None, None
 
         # Check balances
         victim_coins = economy.get_coins(guild_id, victim.id)
         thief_coins = economy.get_coins(guild_id, thief.id)
 
         if victim_coins < MIN_VICTIM_COINS:
-            return discord.Embed(description=f"{victim.display_name} only has **{victim_coins:,}** coins. Not worth the risk!", color=discord.Color.red()), None
+            return discord.Embed(description=f"{victim.display_name} only has **{victim_coins:,}** coins. Not worth the risk!", color=discord.Color.red()), None, None
 
         # --- Robbing the house (the bot itself) ---
         # Don't auto-execute — surface the risk and require confirmation. The view will call _execute_bot_heist on confirm.
         if targeting_house:
             warning = self._build_bot_heist_warning(thief, victim, accomplice)
             view = BotHeistConfirmView(self, guild_id, thief, victim, accomplice)
-            return warning, view
+            return warning, view, None
 
         # Heist Shield: the victim must have ACTIVATED a shield (via /use) earlier
         # today. An active shield blocks every heist against them for the rest of
@@ -646,9 +770,10 @@ class Heist(commands.Cog):
             self._set_cooldown(guild_id, thief.id)
             if accomplice is not None:
                 self._set_cooldown(guild_id, accomplice.id)
-            return embed, None
+            return embed, None, None
 
         is_duo = accomplice is not None
+        buildup = self._heist_buildup(thief, victim, accomplice)
         success_rate = DUO_SUCCESS_RATE if is_duo else SOLO_SUCCESS_RATE
         success = random.random() < success_rate
 
@@ -710,7 +835,7 @@ class Heist(commands.Cog):
         if is_duo:
             economy.record_heist(guild_id, accomplice.id, success)
 
-        return embed, None
+        return embed, None, buildup
 
     @commands.command(aliases=['rob', 'steal'])
     async def heist(self, ctx, victim: discord.Member = None, accomplice: discord.Member = None):
@@ -718,12 +843,8 @@ class Heist(commands.Cog):
         if victim is None:
             await ctx.send("Usage: `!heist @victim` or `!heist @victim @accomplice`")
             return
-        embed, view = await self._run_heist(ctx.guild.id, ctx.author, victim, accomplice)
-        if view is not None:
-            msg = await ctx.send(embed=embed, view=view)
-            view.message = msg
-        else:
-            await ctx.send(embed=embed)
+        embed, view, buildup = await self._run_heist(ctx.guild.id, ctx.author, victim, accomplice)
+        await self._send_heist(ctx, embed, view, buildup)
 
     @app_commands.command(name="heist", description="Attempt to steal coins from another user")
     @app_commands.describe(
@@ -731,12 +852,8 @@ class Heist(commands.Cog):
         accomplice="Optional partner in crime (gets 10-50% cut, improves odds)"
     )
     async def heist_slash(self, interaction: discord.Interaction, victim: discord.Member, accomplice: discord.Member = None):
-        embed, view = await self._run_heist(interaction.guild_id, interaction.user, victim, accomplice)
-        if view is not None:
-            await interaction.response.send_message(embed=embed, view=view)
-            view.message = await interaction.original_response()
-        else:
-            await interaction.response.send_message(embed=embed)
+        embed, view, buildup = await self._run_heist(interaction.guild_id, interaction.user, victim, accomplice)
+        await self._send_heist(interaction, embed, view, buildup)
 
     def _format_duration(self, seconds: int) -> str:
         h, rem = divmod(max(0, seconds), 3600)
