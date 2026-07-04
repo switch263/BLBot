@@ -124,8 +124,14 @@ MIN_VICTIM_COINS = 50
 
 # Cooldown in seconds (per user per guild)
 HEIST_COOLDOWN = 21600  # 6 hours because 5 minutes is insanely low
-# Rob-the-bot odds and punishment
-BOT_HEIST_SUCCESS_RATE = 0.01  # 1% — 1-in-100 long shot
+# Rob-the-bot odds and punishment. Three mutually exclusive success tiers are
+# rolled per attempt (checked rarest-first off a single random.random()):
+#   vault = the house's on-hand bucket (0 to HOUSE_HEIST_MAX_PCT of it)
+#   boxes = every player's /bank account (0 to BANK_RAID_MAX_PCT of each)
+# Anything past the three tiers is a bust → jail.
+BOT_HEIST_BOTH_ODDS = 1 / 5000    # THE FULL SWEEP: vault AND safe-deposit boxes
+BOT_HEIST_BOXES_ODDS = 1 / 1000   # safe-deposit boxes only
+BOT_HEIST_VAULT_ODDS = 1 / 125    # vault only
 BOT_HEIST_JAIL_MIN_SECONDS = 1 * 60 * 60   # 1 hour
 BOT_HEIST_JAIL_MAX_SECONDS = 36 * 60 * 60  # 36 hours
 # Heist take is a uniform random fraction of on-hand within this band. Tune in
@@ -189,6 +195,19 @@ BOT_SUCCESS_MESSAGES = [
     "**{thief} SOMEHOW DID IT.** They cleared **{amount} coins** ({pct}% of on-hand) before the silent alarm tripped. The bot is rattled but solvent.",
     "**{thief} PULLED OFF A MIRACLE HEIST.** The bot stared blankly as **{amount} coins** — **{pct}%** of the vault — walked out the door.",
 ]
+
+BOT_BOXES_SUCCESS_MESSAGES = [
+    "**{thief} SKIPPED THE VAULT ENTIRELY.** They went straight for the **safe-deposit boxes** and pried **{pct}%** out of **{accounts}** of them — **{amount} coins** of other people's savings.",
+    "**{thief} KNEW WHERE THE REAL MONEY WAS.** The vault stayed shut; the **safe-deposit boxes** did not. **{pct}%** skimmed off **{accounts}** account(s) for **{amount} coins**.",
+    "**{thief} DRILLED THE SAFE-DEPOSIT WALL.** Box after box popped open — **{pct}%** of **{accounts}** account(s), **{amount} coins** total. Depositors are advised not to check their balance.",
+]
+
+BOT_BOXES_EMPTY_MESSAGES = [
+    "**{thief} DRILLED INTO THE SAFE-DEPOSIT BOXES**… and found nothing but dust and old love letters. Nobody banks here. Still counts as a win. Somehow.",
+    "**{thief} CRACKED THE SAFE-DEPOSIT WALL** — every box was empty. A flawless heist of absolutely nothing.",
+]
+
+BOT_BOTH_HEADER = "💎 **THE FULL SWEEP.** One-in-five-thousand. The vault AND the safe-deposit boxes, one job."
 
 BOT_FAIL_MESSAGES = [
     "🚨 **{thief} tried to rob the casino.** The bot saw it coming from a mile away. Security dragged them off to **{hours} hours of casino jail**.",
@@ -481,13 +500,18 @@ class Heist(commands.Cog):
         self._cooldowns[(guild_id, user_id)] = time.time()
 
     def _build_bot_heist_warning(self, thief: discord.Member, victim: discord.Member, accomplice: discord.Member | None) -> discord.Embed:
-        win_pct = BOT_HEIST_SUCCESS_RATE * 100
         min_h = BOT_HEIST_JAIL_MIN_SECONDS // 3600
         max_h = BOT_HEIST_JAIL_MAX_SECONDS // 3600
+        vault_odds = round(1 / BOT_HEIST_VAULT_ODDS)
+        boxes_odds = round(1 / BOT_HEIST_BOXES_ODDS)
+        both_odds = round(1 / BOT_HEIST_BOTH_ODDS)
+        bust_pct = (1.0 - (BOT_HEIST_VAULT_ODDS + BOT_HEIST_BOXES_ODDS + BOT_HEIST_BOTH_ODDS)) * 100
         desc = (
-            f"⚠️ {thief.mention}, you're about to **rob the house**.\n\n"
-            f"• **Win odds:** ~**{win_pct:.0f}%** (1 in 100). Win and you roll **{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%** of the vault (uniform random — could be a scratch, could be a fortune).\n"
-            f"• **Lose odds:** ~**{100 - win_pct:.0f}%**. Caught means **casino jail for a random {min_h}–{max_h} hours** — no bets, no gambling.\n"
+            f"⚠️ {thief.mention}, you're about to **rob the house**. Three ways this pays, one way it doesn't:\n\n"
+            f"• **1 in {vault_odds:,}** — you crack the **vault**: **{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%** of the house's on-hand coins (uniform random — could be a scratch, could be a fortune).\n"
+            f"• **1 in {boxes_odds:,}** — you skip the vault and pry open the **safe-deposit boxes**: **{int(economy.BANK_RAID_MIN_PCT*100)}–{int(economy.BANK_RAID_MAX_PCT*100)}%** skimmed off every player's `/bank` account (yours is spared).\n"
+            f"• **1 in {both_odds:,}** — **THE FULL SWEEP**: vault AND boxes, one job.\n"
+            f"• **Everything else (~{bust_pct:.1f}%):** caught — **casino jail for a random {min_h}–{max_h} hours**. No bets, no gambling.\n"
             f"• A friend can **`/bail`** you out (once per week). Bail scales with the vault — and gets steeper every time you re-offend.\n"
         )
         if accomplice:
@@ -614,7 +638,17 @@ class Heist(commands.Cog):
         buildup is the suspense-log the caller streams before the result."""
         buildup = self._bot_heist_buildup(thief, accomplice)
         victim_coins = economy.get_coins(guild_id, victim.id)
-        success = random.random() < BOT_HEIST_SUCCESS_RATE
+        # One roll, three mutually exclusive success tiers, rarest checked first.
+        roll = random.random()
+        if roll < BOT_HEIST_BOTH_ODDS:
+            outcome = "both"
+        elif roll < BOT_HEIST_BOTH_ODDS + BOT_HEIST_BOXES_ODDS:
+            outcome = "boxes"
+        elif roll < BOT_HEIST_BOTH_ODDS + BOT_HEIST_BOXES_ODDS + BOT_HEIST_VAULT_ODDS:
+            outcome = "vault"
+        else:
+            outcome = None
+        success = outcome is not None
 
         self._set_cooldown(guild_id, thief.id)
         if accomplice:
@@ -624,13 +658,42 @@ class Heist(commands.Cog):
             economy.record_heist(guild_id, accomplice.id, success)
 
         if success:
-            heist_pct = random.uniform(HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT)
-            loot = max(1, int(victim_coins * heist_pct))
-            economy.transfer_coins(guild_id, victim.id, thief.id, loot)
-            msg = random.choice(BOT_SUCCESS_MESSAGES).format(
-                thief=thief.mention, amount=f"{loot:,}", pct=int(round(heist_pct * 100)),
-            )
-            return discord.Embed(title="🏦 HOUSE ROBBED", description=msg, color=discord.Color.gold()), None, buildup
+            lines = []
+            if outcome == "both":
+                lines.append(BOT_BOTH_HEADER)
+            if outcome in ("vault", "both"):
+                heist_pct = random.uniform(HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT)
+                loot = int(victim_coins * heist_pct)
+                if loot > 0:
+                    economy.transfer_coins(guild_id, victim.id, thief.id, loot)
+                lines.append(random.choice(BOT_SUCCESS_MESSAGES).format(
+                    thief=thief.mention, amount=f"{loot:,}", pct=int(round(heist_pct * 100)),
+                ))
+            if outcome in ("boxes", "both"):
+                # Crack the safe-deposit boxes: skim a rolled cut of every
+                # player /bank account. The thief's own account is spared.
+                raid_pct = random.uniform(economy.BANK_RAID_MIN_PCT, economy.BANK_RAID_MAX_PCT)
+                raid = economy.bank_raid(guild_id, thief.id, raid_pct)
+                if outcome == "both":
+                    plural = "s" if raid["accounts"] != 1 else ""
+                    if raid["total"] > 0:
+                        lines.append(
+                            f"🏧 And on the way out — the **safe-deposit boxes**: "
+                            f"**{int(round(raid_pct * 100))}%** skimmed off **{raid['accounts']} bank account{plural}** "
+                            f"for another **{raid['total']:,} coins**."
+                        )
+                    else:
+                        lines.append("🏧 The safe-deposit boxes were empty. The vault will have to do.")
+                elif raid["total"] > 0:
+                    lines.append(random.choice(BOT_BOXES_SUCCESS_MESSAGES).format(
+                        thief=thief.mention, amount=f"{raid['total']:,}",
+                        pct=int(round(raid_pct * 100)), accounts=raid["accounts"],
+                    ))
+                else:
+                    lines.append(random.choice(BOT_BOXES_EMPTY_MESSAGES).format(thief=thief.mention))
+            title = "💎 THE FULL SWEEP" if outcome == "both" else "🏦 HOUSE ROBBED"
+            msg = "\n\n".join(lines)
+            return discord.Embed(title=title, description=msg, color=discord.Color.gold()), None, buildup
 
         # Failure: each participant gets their own random sentence + bail amount,
         # both scaled by their own prior bot-heist offenses.

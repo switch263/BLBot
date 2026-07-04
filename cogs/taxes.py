@@ -218,7 +218,7 @@ class Taxes(commands.Cog):
 
             coins = economy.get_coins(guild.id, uid)
             target = owed + int(coins * penalty_pct)   # bill + wallet penalty
-            seized = self._seize(guild.id, uid, target)  # capped at wallet
+            seized = self._seize(guild.id, uid, target)  # wallet first, then bank
 
             economy.jail_user(
                 guild.id, uid,
@@ -238,12 +238,17 @@ class Taxes(commands.Cog):
 
     def _seize(self, guild_id: int, user_id: int, amount: int) -> int:
         """Move up to `amount` coins from a player to the house (closed loop),
-        capped at what they actually hold. Returns coins seized."""
+        capped at what they actually hold — wallet first, then their /bank
+        account, so parking coins in the bank doesn't dodge enforcement.
+        Returns coins seized."""
+        seized = 0
         coins = economy.get_coins(guild_id, user_id)
         take = min(amount, coins)
-        if take <= 0:
-            return 0
-        return take if economy.transfer_to_house(guild_id, user_id, take, is_bet=False).get("ok") else 0
+        if take > 0 and economy.transfer_to_house(guild_id, user_id, take, is_bet=False).get("ok"):
+            seized = take
+        if seized < amount:
+            seized += economy.bank_seize_to_house(guild_id, user_id, amount - seized)
+        return seized
 
     async def _announce_enforcement(self, guild, ch, evaders):
         if ch is None:

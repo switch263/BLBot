@@ -608,8 +608,8 @@ _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 # and takes that fraction of on-hand. Living here (not in their cogs) so /pot can
 # read the ranges without a cross-cog import and so any future "casino policy"
 # tuning happens in one file.
-HOUSE_HEIST_MIN_PCT = 0.15
-HOUSE_HEIST_MAX_PCT = 0.90
+HOUSE_HEIST_MIN_PCT = 0.0
+HOUSE_HEIST_MAX_PCT = 0.60
 GREEN_JACKPOT_MIN_PCT = 0.75
 GREEN_JACKPOT_MAX_PCT = 0.90
 
@@ -1192,6 +1192,221 @@ def get_inventory(guild_id: int, user_id: int) -> dict:
     return {k: v for k, v in kv_get_all(guild_id, user_id, _INV_NS).items() if v > 0}
 
 
+# --- Player bank ------------------------------------------------------------
+# A per-player vault built on cog_kv (namespace "bank", key "balance"). Coins
+# deposited here leave the wallet, so PvP heists — which only ever see wallet
+# `coins` — can't touch them. The flip side: banked coins can't be gambled
+# (every game reads the wallet), and the bank sits INSIDE the casino, so when
+# someone successfully robs the HOUSE they also crack the safe-deposit boxes
+# and skim a rolled cut of every account (bank_raid). Hitting the boxes is its
+# own rare heist outcome (1 in 1,000 boxes-only, 1 in 5,000 for vault AND
+# boxes — odds live in cogs/heist.py). Bounded-drain policy, same as the house
+# buckets: the skim is capped at BANK_RAID_MAX_PCT.
+# Deposits/withdrawals move money 1:1 between wallet and bank — nothing is
+# minted or destroyed, and no win/loss stats change.
+_BANK_NS = "bank"
+_BANK_KEY = "balance"
+BANK_RAID_MIN_PCT = 0.0
+BANK_RAID_MAX_PCT = 0.40
+
+
+def bank_balance(guild_id: int, user_id: int) -> int:
+    """Coins a player has parked in the bank."""
+    return int(kv_get(guild_id, user_id, _BANK_NS, _BANK_KEY, 0) or 0)
+
+
+def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
+    """Atomically move coins from a player's wallet into their bank account.
+
+    Returns:
+      {"ok": True, "wallet": X, "bank": Y}
+      {"ok": False, "error": "invalid_amount"}
+      {"ok": False, "error": "broke", "have": X, "need": amount}
+      {"ok": False, "error": "db"}
+    """
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            have = row[0] if row else 0
+            if have < amount:
+                conn.rollback()
+                return {"ok": False, "error": "broke", "have": have, "need": amount}
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, user_id),
+            )
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value = value + ?",
+                (guild_id, user_id, _BANK_NS, _BANK_KEY, amount, amount),
+            )
+            bank_row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, _BANK_NS, _BANK_KEY),
+            ).fetchone()
+            conn.commit()
+            return {"ok": True, "wallet": have - amount, "bank": int(bank_row[0])}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bank_deposit: {e}")
+        return {"ok": False, "error": "db"}
+
+
+def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
+    """Atomically move coins from a player's bank account back to their wallet.
+    Same return shape as bank_deposit; "broke" means the BANK is short."""
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            bank_row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, _BANK_NS, _BANK_KEY),
+            ).fetchone()
+            banked = int(bank_row[0]) if bank_row and bank_row[0] else 0
+            if banked < amount:
+                conn.rollback()
+                return {"ok": False, "error": "broke", "have": banked, "need": amount}
+            conn.execute(
+                "UPDATE cog_kv SET value = value - ? "
+                "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (amount, guild_id, user_id, _BANK_NS, _BANK_KEY),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            conn.execute(
+                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                (amount, guild_id, user_id),
+            )
+            wallet_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            conn.commit()
+            return {"ok": True, "wallet": wallet_row[0] if wallet_row else amount,
+                    "bank": banked - amount}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bank_withdraw: {e}")
+        return {"ok": False, "error": "db"}
+
+
+def get_all_bank_balances(guild_id: int) -> list[tuple[int, int]]:
+    """Every (user_id, balance) with coins in the bank, largest first."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, value FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0 "
+                "ORDER BY value DESC",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchall()
+            return [(r[0], int(r[1])) for r in rows]
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_all_bank_balances: {e}")
+        return []
+
+
+def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
+    """The house just got robbed — the safe-deposit boxes get cracked too.
+    Atomically skim `pct` of EVERY player bank account (the thief's own and the
+    memorial player's excepted) and credit the total to the thief's wallet.
+    Pure player↔player transfer: no total_won/net_won bumps, nothing minted.
+
+    `pct` is clamped to [0, BANK_RAID_MAX_PCT] — callers roll it within
+    [BANK_RAID_MIN_PCT, BANK_RAID_MAX_PCT] (see cogs/heist.py).
+
+    Returns {"total": coins_taken, "accounts": how_many_accounts_hit}.
+    """
+    pct = max(0.0, min(pct, BANK_RAID_MAX_PCT))
+    if pct <= 0:
+        return {"total": 0, "accounts": 0}
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT user_id, value FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchall()
+            total = 0
+            accounts = 0
+            for uid, balance in rows:
+                if uid == thief_id or is_memorial(uid):
+                    continue
+                take = int(int(balance) * pct)
+                if take <= 0:
+                    continue
+                conn.execute(
+                    "UPDATE cog_kv SET value = value - ? "
+                    "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                    (take, guild_id, uid, _BANK_NS, _BANK_KEY),
+                )
+                total += take
+                accounts += 1
+            if total > 0:
+                conn.execute(
+                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                    (guild_id, thief_id, STARTING_COINS),
+                )
+                conn.execute(
+                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                    (total, guild_id, thief_id),
+                )
+            conn.commit()
+            return {"total": total, "accounts": accounts}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bank_raid: {e}")
+        return {"total": 0, "accounts": 0}
+
+
+def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
+    """Enforcement reaching into the vault: atomically move up to `amount` from
+    a player's bank straight to the house on-hand. Used by tax enforcement so
+    parking coins in the bank isn't a way to dodge a seizure. Returns the coins
+    actually moved (0 if the account is empty)."""
+    if amount <= 0:
+        return 0
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            bank_row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, _BANK_NS, _BANK_KEY),
+            ).fetchone()
+            banked = int(bank_row[0]) if bank_row and bank_row[0] else 0
+            take = min(amount, banked)
+            if take <= 0:
+                conn.rollback()
+                return 0
+            conn.execute(
+                "UPDATE cog_kv SET value = value - ? "
+                "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (take, guild_id, user_id, _BANK_NS, _BANK_KEY),
+            )
+            _ensure_house_wallet(conn, guild_id)
+            conn.execute(
+                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                (take, guild_id, get_house_id()),
+            )
+            conn.commit()
+            return take
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bank_seize_to_house: {e}")
+        return 0
+
+
 def release_from_jail(guild_id: int, user_id: int) -> dict:
     """Try to clear a player's jail sentence — the Get Out of Jail Free card.
 
@@ -1409,8 +1624,9 @@ def get_all_net_winnings(guild_id: int) -> list:
 
 def get_total_economy(guild_id: int) -> int:
     """Sum of all coins across the guild — every player wallet, the house on-hand,
-    AND the house safe-harbor reserve. The reserve is real money even though it
-    isn't heistable, so it counts toward total circulation."""
+    the house safe-harbor reserve, AND every player bank account. Reserve and
+    banked coins are real money even though they aren't heistable, so they count
+    toward total circulation."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             wallets_total = conn.execute(
@@ -1422,7 +1638,12 @@ def get_total_economy(guild_id: int) -> int:
                 (guild_id,),
             ).fetchone()
             reserve_total = (reserve_row[0] if reserve_row else 0) or 0
-            return int(wallets_total) + int(reserve_total)
+            bank_total = conn.execute(
+                "SELECT COALESCE(SUM(value), 0) FROM cog_kv "
+                "WHERE guild_id = ? AND namespace = ? AND key = ?",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchone()[0] or 0
+            return int(wallets_total) + int(reserve_total) + int(bank_total)
     except sqlite3.Error as e:
         logger.error(f"Database error reading total economy: {e}")
         return 0
