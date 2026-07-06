@@ -22,7 +22,7 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     e1.add_field(name="Utility", value=(
         "`/weather` - Get weather for a location\n"
-        "`/ctf` / `/ftc` - Temperature conversion\n"
+        "`/convert` - Units & currency (`72f to c`, `100 usd to eur`, `5mi km`)\n"
         "`/serverstats` - Server statistics\n"
         "`/whoami` - Your user info (ephemeral)\n"
         "`/channelinfo` - Channel info (ephemeral)\n"
@@ -90,8 +90,7 @@ def _build_pages() -> list[discord.Embed]:
     e5.add_field(name="Card & Chance", value=(
         "`/blackjack` - Multi-player blackjack with buy-in lobby\n"
         "`/highlow` - Predict the next card, build streak multiplier\n"
-        "`/vault` - Crack a 4-digit code, Mastermind-style deduction\n"
-        "`/vault_hard` - 5 digits from 1-9, **3 attempts**, lose = bet goes to the house\n"
+        "`/vault` - Crack the code, Mastermind-style — pick normal, hard, or extra difficulty\n"
         "`/slots` - Slot machine with weighted reels\n"
         "`/coinflip` - Heads or tails, double or nothing\n"
     ), inline=False)
