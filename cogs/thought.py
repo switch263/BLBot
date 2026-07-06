@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import random
 import logging
 import os
@@ -40,16 +39,6 @@ class ThoughtOfTheDay(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    @app_commands.command(name="thought", description="Get a deep(?) thought of the day")
-    async def thought_slash(self, interaction: discord.Interaction):
-        if not self.thoughts:
-            await interaction.response.send_message("My brain is empty right now. (Data file missing!)")
-            return
-        embed = discord.Embed(
-            description=f"\U0001f9e0 *{random.choice(self.thoughts)}*",
-            color=discord.Color.from_rgb(147, 112, 219)
-        )
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

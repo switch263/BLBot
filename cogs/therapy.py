@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import random
 import logging
 import os
@@ -35,13 +34,6 @@ class Therapy(commands.Cog):
             await ctx.send("The therapist is out. (Data file missing!)")
             return
         await ctx.send(f"\U0001f6cb\ufe0f {random.choice(self.responses)}")
-
-    @app_commands.command(name="therapy", description="Get some professional(?) advice from the bot therapist")
-    async def therapy_slash(self, interaction: discord.Interaction):
-        if not self.responses:
-            await interaction.response.send_message("The therapist is out. (Data file missing!)")
-            return
-        await interaction.response.send_message(f"\U0001f6cb\ufe0f {random.choice(self.responses)}")
 
 
 async def setup(bot):

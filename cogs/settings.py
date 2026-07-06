@@ -1,13 +1,14 @@
 """
-settings.py — one generic /set, /get, /unset for every per-user preference.
+settings.py — one /pref group (set|get|unset) for every per-user preference.
 
 Instead of each cog spending a slash command on its own `/foo-save`, cogs
 register their settings with `user_settings.register(...)` and players manage
-them all through this single cog. Keeps us well under Discord's 100-command cap.
+them all through this single cog. The group costs ONE slot against Discord's
+100-command cap (prefix !set/!get/!unset still work too).
 
-    /set setting:<name> value:<...>   save a preference
-    /get [setting:<name>]             show one or all of your saved preferences
-    /unset setting:<name>             forget a preference
+    /pref set setting:<name> value:<...>   save a preference
+    /pref get [setting:<name>]             show one or all saved preferences
+    /pref unset setting:<name>             forget a preference
 
 The `setting` field autocompletes from the live registry, so newly-registered
 settings appear automatically with no change here.
@@ -61,7 +62,7 @@ class SettingsCog(commands.Cog):
                 return self._unknown(key)
             val = user_settings.get_value(user_id, setting.key)
             if val is None:
-                return f"No **{setting.label}** saved. Set it with `/set {setting.key} <value>`."
+                return f"No **{setting.label}** saved. Set it with `/pref set {setting.key} <value>`."
             return f"**{setting.label}**: `{val}`"
 
         # No key → list everything the user has saved.
@@ -94,21 +95,23 @@ class SettingsCog(commands.Cog):
             if current in s.key.lower() or current in s.label.lower()
         ][:25]
 
-    @app_commands.command(name="set", description="Save a personal preference (e.g. your weather location)")
+    pref_group = app_commands.Group(name="pref", description="Your saved preferences")
+
+    @pref_group.command(name="set", description="Save a personal preference (e.g. your weather location)")
     @app_commands.describe(setting="Which preference to set", value="The value to save")
     @app_commands.autocomplete(setting=_setting_autocomplete)
     async def set_slash(self, interaction: discord.Interaction, setting: str, value: str):
         await interaction.response.send_message(
             self._do_set(interaction.user.id, setting, value), ephemeral=True)
 
-    @app_commands.command(name="get", description="Show your saved preferences")
+    @pref_group.command(name="get", description="Show your saved preferences")
     @app_commands.describe(setting="Optional — a single preference to show")
     @app_commands.autocomplete(setting=_setting_autocomplete)
     async def get_slash(self, interaction: discord.Interaction, setting: str | None = None):
         await interaction.response.send_message(
             self._do_get(interaction.user.id, setting), ephemeral=True)
 
-    @app_commands.command(name="unset", description="Forget a saved preference")
+    @pref_group.command(name="unset", description="Forget a saved preference")
     @app_commands.describe(setting="Which preference to clear")
     @app_commands.autocomplete(setting=_setting_autocomplete)
     async def unset_slash(self, interaction: discord.Interaction, setting: str):

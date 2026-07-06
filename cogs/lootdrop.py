@@ -359,7 +359,7 @@ class LootDrop(commands.Cog):
 
         sell_value = meta.get("sell_value")
         worth_line = (
-            f"Worth **{sell_value:,}** coins if you `/sell` it.\n"
+            f"Worth **{sell_value:,}** coins if you `/shop sell` it.\n"
             if sell_value else ""
         )
         embed = discord.Embed(
@@ -367,7 +367,7 @@ class LootDrop(commands.Cog):
             description=(
                 f"**{meta['name']}**\n{meta['blurb']}\n\n"
                 f"{worth_line}"
-                f"Added to your inventory — check it with `/inventory`."
+                f"Added to your inventory — check it with `/shop inventory`."
             ),
             color=color,
         )

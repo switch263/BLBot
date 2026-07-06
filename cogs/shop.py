@@ -280,30 +280,35 @@ class Shop(commands.Cog):
             return
         await self._use(ctx, item)
 
-    # --- slash commands ----------------------------------------------------
-    @app_commands.command(name="shop", description="Browse the item-card shop")
-    async def shop_slash(self, interaction: discord.Interaction):
+    # --- slash commands ------------------------------------------------------
+    # One /shop group instead of five top-level commands — each group costs a
+    # single slot against Discord's 100-command cap; subcommands are free.
+    shop_group = app_commands.Group(name="shop", description="The item-card shop",
+                                    guild_only=True)
+
+    @shop_group.command(name="view", description="Browse the item-card shop")
+    async def shop_view_slash(self, interaction: discord.Interaction):
         await self._shop(interaction)
 
-    @app_commands.command(name="buy", description="Buy an item card from the shop")
+    @shop_group.command(name="buy", description="Buy an item card from the shop")
     @app_commands.describe(item="Which item to buy", qty="How many (default 1)")
     @app_commands.choices(item=_ITEM_CHOICES)
     async def buy_slash(self, interaction: discord.Interaction,
                         item: app_commands.Choice[str], qty: int = 1):
         await self._buy(interaction, item.value, qty)
 
-    @app_commands.command(name="sell", description="Sell an item card back for coins")
+    @shop_group.command(name="sell", description="Sell an item card back for coins")
     @app_commands.describe(item="Which item to sell", qty="How many (default 1)")
     @app_commands.choices(item=_ITEM_CHOICES)
     async def sell_slash(self, interaction: discord.Interaction,
                          item: app_commands.Choice[str], qty: int = 1):
         await self._sell(interaction, item.value, qty)
 
-    @app_commands.command(name="inventory", description="Show the item cards you own")
+    @shop_group.command(name="inventory", description="Show the item cards you own")
     async def inventory_slash(self, interaction: discord.Interaction):
         await self._inventory(interaction)
 
-    @app_commands.command(name="use", description="Use an item card you own")
+    @shop_group.command(name="use", description="Use an item card you own")
     @app_commands.describe(item="Which item to use")
     @app_commands.choices(item=_ITEM_CHOICES)
     async def use_slash(self, interaction: discord.Interaction,

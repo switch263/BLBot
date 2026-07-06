@@ -15,7 +15,11 @@ class Info(commands.Cog):
     async def on_ready(self):
         logger.info("Info module has been loaded")
 
-    @app_commands.command(name="whoami", description="Show your user info (only you can see this)")
+    # One /info group (me|channel|server) — costs a single slot against
+    # Discord's 100-command cap instead of three.
+    info_group = app_commands.Group(name="info", description="User, channel, and server info")
+
+    @info_group.command(name="me", description="Show your user info (only you can see this)")
     async def whoami(self, interaction: discord.Interaction):
         user = interaction.user
         embed = discord.Embed(
@@ -41,7 +45,7 @@ class Info(commands.Cog):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="channelinfo", description="Show current channel info (only you can see this)")
+    @info_group.command(name="channel", description="Show current channel info (only you can see this)")
     async def channelinfo(self, interaction: discord.Interaction):
         channel = interaction.channel
         embed = discord.Embed(
@@ -71,7 +75,7 @@ class Info(commands.Cog):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="guildinfo", description="Show server info + bot's overall reach (only you can see this)")
+    @info_group.command(name="server", description="Show server info + bot's overall reach (only you can see this)")
     async def guildinfo(self, interaction: discord.Interaction):
         guild = interaction.guild
         if guild is None:

@@ -6,7 +6,7 @@ minus the snapshot taken last week) and posts a single notice to #game-spam.
 net_won is payouts minus stakes, so a break-even or losing week nets <= 0 and
 owes nothing — only coins you actually came out ahead on are taxed. (This
 replaced an older GROSS basis that counted returned stakes too, which let
-churn inflate a bill past the player's wallet.) Players have 24h to `/paytax`;
+churn inflate a bill past the player's wallet.) Players have 24h to `/tax pay`;
 the coins flow to the house on-hand (a closed loop, not burned). Miss the
 deadline and you're a tax evader: jailed and your wallet is forfeited.
 
@@ -185,7 +185,7 @@ class Taxes(commands.Cog):
                 f"coin you **won** this week — locked in as of right now. Doesn't "
                 f"matter if you lost it all back; if you won it, it's taxed. Won "
                 f"nothing? You owe nothing.\n\n"
-                f"Pay with **`/paytax`** before <t:{due_ts}:R> (deadline "
+                f"Pay with **`/tax pay`** before <t:{due_ts}:R> (deadline "
                 f"<t:{due_ts}:f>).\n"
                 f"**Miss it and the house seizes your bill plus a cut of your "
                 f"wallet, and you go to jail.** Repeat offenders lose more — and "
@@ -434,11 +434,14 @@ class Taxes(commands.Cog):
             title="🧾 Tax Bill",
             description=(
                 f"You owe **{owed:,}** coins on this week's winnings.\n"
-                f"Pay with `/paytax` before <t:{int(due)}:R> (<t:{int(due)}:f>) "
+                f"Pay with `/tax pay` before <t:{int(due)}:R> (<t:{int(due)}:f>) "
                 f"or face jail and a forfeited wallet."
             ),
             color=discord.Color.dark_gold(),
         )
+
+    tax_group = app_commands.Group(name="tax", description="Casino taxes — pay up or else",
+                                   guild_only=True)
 
     @commands.command(name="paytax", aliases=["paytaxes"])
     @commands.guild_only()
@@ -446,7 +449,7 @@ class Taxes(commands.Cog):
         """Pay your weekly tax bill."""
         await ctx.send(embed=self._pay(ctx.guild.id, ctx.author))
 
-    @app_commands.command(name="paytax", description="Pay your weekly winnings-tax bill to the house.")
+    @tax_group.command(name="pay", description="Pay your weekly winnings-tax bill to the house.")
     async def paytax_slash(self, interaction: discord.Interaction):
         if not interaction.guild_id:
             await interaction.response.send_message("Server only.", ephemeral=True)
@@ -461,7 +464,7 @@ class Taxes(commands.Cog):
         """Check what you owe and when it's due."""
         await ctx.send(embed=self._bill(ctx.guild.id, ctx.author))
 
-    @app_commands.command(name="taxbill", description="Check your current tax bill and deadline.")
+    @tax_group.command(name="bill", description="Check your current tax bill and deadline.")
     async def taxbill_slash(self, interaction: discord.Interaction):
         if not interaction.guild_id:
             await interaction.response.send_message("Server only.", ephemeral=True)

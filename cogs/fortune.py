@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import random
 import logging
 
@@ -127,10 +126,6 @@ class FortuneCookie(commands.Cog):
     async def fortune(self, ctx):
         """Crack open a fortune cookie."""
         await ctx.send(embed=self._crack_cookie())
-
-    @app_commands.command(name="fortune", description="Crack open a fortune cookie")
-    async def fortune_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=self._crack_cookie())
 
 
 async def setup(bot):

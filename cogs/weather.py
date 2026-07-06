@@ -24,7 +24,7 @@ import user_settings
 # Configure the API endpoint
 WEATHER_API_URL = "https://discord.flvrtown.com"
 
-# Key for this cog's entry in the shared /set registry.
+# Key for this cog's entry in the shared /pref registry.
 LOCATION_SETTING = "location"
 
 # Configure logging
@@ -57,8 +57,8 @@ class WeatherCog(commands.Cog):
             raise_for_status=False  # Handle status codes manually
         )
 
-        # Register the saveable "location" preference with the shared /set cog,
-        # so players can `/set location 78704` and then just `/weather`.
+        # Register the saveable "location" preference with the shared /pref cog,
+        # so players can `/pref set location 78704` and then just `/weather`.
         user_settings.register(
             key=LOCATION_SETTING,
             label="Weather location",
@@ -250,7 +250,7 @@ class WeatherCog(commands.Cog):
             if not saved:
                 who = "You haven't" if target.id == invoker.id else f"**{target.display_name}** hasn't"
                 return None, (f"{who} saved a location. "
-                              f"Set one with `/set location <place>`.")
+                              f"Set one with `/pref set location <place>`.")
             return saved, None
 
         if location and location.strip():
@@ -260,7 +260,7 @@ class WeatherCog(commands.Cog):
         if not saved:
             return None, ("No location given and you haven't saved one. "
                           "Try `/weather London`, or save a default with "
-                          "`/set location <place>` and then just `/weather`.")
+                          "`/pref set location <place>` and then just `/weather`.")
         return saved, None
 
     @commands.command(name='weather', aliases=['w', 'forecast'])

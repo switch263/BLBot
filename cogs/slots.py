@@ -134,7 +134,7 @@ class Slots(commands.Cog):
         if not economy.consume_item(guild_id, user_id, BONUS_SPIN):
             return discord.Embed(
                 title="🎰 No Bonus Spins",
-                description="You don't have a 🎰 **Bonus Spin**. Buy one with `/buy` or find one in a loot drop.",
+                description="You don't have a 🎰 **Bonus Spin**. Buy one with `/shop buy` or find one in a loot drop.",
                 color=discord.Color.red(),
             )
         reels = self._spin()
