@@ -598,10 +598,10 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
 #            casino_payout will top on-hand up from the reserve when on-hand
 #            is insufficient — so the bank can't go bankrupt on a single big
 #            bet while the investment account still has cash.
-# Annualized rate, compounded continuously on read. 0.05 = 5% APR.
+# Annualized rate, compounded continuously on read. 0.15 = 15% APR.
 # Stays scale-invariant: doesn't matter if you read every second or once a month,
 # the effective growth equals the APR exactly.
-HOUSE_INTEREST_APR = 0.05
+HOUSE_INTEREST_APR = 0.15
 _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 
 # Per-event drain caps as random ranges. A successful event rolls uniform(min, max)
@@ -921,8 +921,12 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
 
 
 def get_house_state(guild_id: int) -> dict:
-    """Snapshot of both house buckets. Applies reserve interest as a side
-    effect. Returns {'on_hand': X, 'reserve': Y, 'apr': Z}."""
+    """Snapshot of the safe harbor and the on-hand pot. Applies reserve
+    interest as a side effect. `banked` is the sum of every player bank
+    account — those live in the safe harbor too (earning BANK_INTEREST_APR),
+    but they're depositor money, not house money, so they're reported
+    separately from `reserve`.
+    Returns {'on_hand', 'reserve', 'apr', 'banked', 'bank_apr'}."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -935,15 +939,23 @@ def get_house_state(guild_id: int) -> dict:
                 "SELECT coins FROM house_reserve WHERE guild_id = ?",
                 (guild_id,),
             ).fetchone()
+            banked_row = conn.execute(
+                "SELECT COALESCE(SUM(value), 0) FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=?",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchone()
             conn.commit()
             return {
                 "on_hand": (house_row[0] if house_row else 0),
                 "reserve": (reserve_row[0] if reserve_row else 0),
                 "apr": HOUSE_INTEREST_APR,
+                "banked": int(banked_row[0] if banked_row else 0),
+                "bank_apr": BANK_INTEREST_APR,
             }
     except sqlite3.Error as e:
         logger.error(f"Database error in get_house_state: {e}")
-        return {"on_hand": 0, "reserve": 0, "apr": HOUSE_INTEREST_APR}
+        return {"on_hand": 0, "reserve": 0, "apr": HOUSE_INTEREST_APR,
+                "banked": 0, "bank_apr": BANK_INTEREST_APR}
 
 
 def replenish_house_if_low(guild_id: int) -> dict:
@@ -1204,15 +1216,83 @@ def get_inventory(guild_id: int, user_id: int) -> dict:
 # buckets: the skim is capped at BANK_RAID_MAX_PCT.
 # Deposits/withdrawals move money 1:1 between wallet and bank — nothing is
 # minted or destroyed, and no win/loss stats change.
+# Accounts sit in the safe harbor alongside the house reserve, and like the
+# reserve they earn interest: BANK_INTEREST_APR, compounded lazily on read
+# (the interest itself is minted, same as reserve interest). The house earns
+# HOUSE_INTEREST_APR (15%); depositors earn BANK_INTEREST_APR (10%) — the
+# house always out-earns its customers.
 _BANK_NS = "bank"
 _BANK_KEY = "balance"
+_BANK_TS_KEY = "interest_ts"
+BANK_INTEREST_APR = 0.10
 BANK_RAID_MIN_PCT = 0.0
 BANK_RAID_MAX_PCT = 0.40
 
 
+def _accrue_bank_interest(conn: sqlite3.Connection, guild_id: int, user_id: int) -> int:
+    """Within an open BEGIN IMMEDIATE transaction, apply lazily-compounded
+    interest to one bank account and return the post-accrual balance.
+
+    Same APR math as _normalize_house, with one difference: the clock only
+    advances when at least one whole coin has accrued. The reserve is huge so
+    truncation there is noise, but a small player balance read frequently
+    would round every sub-coin gain down to zero and never grow — so here a
+    read that accrues less than a coin leaves the timestamp alone and the
+    gain keeps compounding until it clears 1."""
+    import time as _t
+    now = _t.time()
+    row = conn.execute(
+        "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+        (guild_id, user_id, _BANK_NS, _BANK_KEY),
+    ).fetchone()
+    balance = int(row[0]) if row and row[0] else 0
+    if balance <= 0:
+        # Reset any stale clock so a later deposit can't back-accrue across
+        # the empty period. UPDATE only — don't create rows for non-customers.
+        conn.execute(
+            "UPDATE cog_kv SET value=? WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+            (now, guild_id, user_id, _BANK_NS, _BANK_TS_KEY),
+        )
+        return balance
+    ts_row = conn.execute(
+        "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+        (guild_id, user_id, _BANK_NS, _BANK_TS_KEY),
+    ).fetchone()
+    last_ts = float(ts_row[0]) if ts_row and ts_row[0] else 0.0
+    if last_ts <= 0 or now <= last_ts:
+        # Balance predates interest (or clock skew): start the clock now.
+        conn.execute(
+            "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value = excluded.value",
+            (guild_id, user_id, _BANK_NS, _BANK_TS_KEY, now),
+        )
+        return balance
+    elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
+    grown = int(balance * ((1.0 + BANK_INTEREST_APR) ** elapsed_years))
+    if grown <= balance:
+        return balance  # sub-coin gain: leave the clock running
+    conn.execute(
+        "UPDATE cog_kv SET value=? WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+        (grown, guild_id, user_id, _BANK_NS, _BANK_KEY),
+    )
+    conn.execute(
+        "UPDATE cog_kv SET value=? WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+        (now, guild_id, user_id, _BANK_NS, _BANK_TS_KEY),
+    )
+    return grown
+
+
 def bank_balance(guild_id: int, user_id: int) -> int:
-    """Coins a player has parked in the bank."""
-    return int(kv_get(guild_id, user_id, _BANK_NS, _BANK_KEY, 0) or 0)
+    """Coins a player has parked in the bank (interest applied on read)."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            balance = _accrue_bank_interest(conn, guild_id, user_id)
+            conn.commit()
+            return balance
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bank_balance: {e}")
+        return int(kv_get(guild_id, user_id, _BANK_NS, _BANK_KEY, 0) or 0)
 
 
 def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
@@ -1226,9 +1306,11 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
     """
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
+    import time as _t
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
+            banked = _accrue_bank_interest(conn, guild_id, user_id)
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS),
@@ -1250,12 +1332,15 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
                 "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value = value + ?",
                 (guild_id, user_id, _BANK_NS, _BANK_KEY, amount, amount),
             )
-            bank_row = conn.execute(
-                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
-                (guild_id, user_id, _BANK_NS, _BANK_KEY),
-            ).fetchone()
+            # First deposit starts the interest clock (no-op if it's running —
+            # _accrue_bank_interest already reset it when the account was empty).
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO NOTHING",
+                (guild_id, user_id, _BANK_NS, _BANK_TS_KEY, _t.time()),
+            )
             conn.commit()
-            return {"ok": True, "wallet": have - amount, "bank": int(bank_row[0])}
+            return {"ok": True, "wallet": have - amount, "bank": banked + amount}
     except sqlite3.Error as e:
         logger.error(f"Database error in bank_deposit: {e}")
         return {"ok": False, "error": "db"}
@@ -1269,11 +1354,7 @@ def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            bank_row = conn.execute(
-                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
-                (guild_id, user_id, _BANK_NS, _BANK_KEY),
-            ).fetchone()
-            banked = int(bank_row[0]) if bank_row and bank_row[0] else 0
+            banked = _accrue_bank_interest(conn, guild_id, user_id)
             if banked < amount:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "have": banked, "need": amount}
@@ -1303,16 +1384,19 @@ def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
 
 
 def get_all_bank_balances(guild_id: int) -> list[tuple[int, int]]:
-    """Every (user_id, balance) with coins in the bank, largest first."""
+    """Every (user_id, balance) with coins in the bank, largest first.
+    Applies each account's accrued interest as a side effect."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
-                "SELECT user_id, value FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0 "
-                "ORDER BY value DESC",
+                "SELECT user_id FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchall()
-            return [(r[0], int(r[1])) for r in rows]
+            balances = [(uid, _accrue_bank_interest(conn, guild_id, uid)) for (uid,) in rows]
+            conn.commit()
+            return sorted(balances, key=lambda b: b[1], reverse=True)
     except sqlite3.Error as e:
         logger.error(f"Database error in get_all_bank_balances: {e}")
         return []
@@ -1345,6 +1429,9 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
             for uid, balance in rows:
                 if uid == thief_id or is_memorial(uid):
                     continue
+                # Interest accrues up to the moment the boxes crack — the raid
+                # skims the fully-grown balance.
+                balance = _accrue_bank_interest(conn, guild_id, uid)
                 take = int(int(balance) * pct)
                 if take <= 0:
                     continue
@@ -1381,11 +1468,7 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            bank_row = conn.execute(
-                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
-                (guild_id, user_id, _BANK_NS, _BANK_KEY),
-            ).fetchone()
-            banked = int(bank_row[0]) if bank_row and bank_row[0] else 0
+            banked = _accrue_bank_interest(conn, guild_id, user_id)
             take = min(amount, banked)
             if take <= 0:
                 conn.rollback()

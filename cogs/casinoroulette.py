@@ -143,6 +143,8 @@ class CasinoRoulette(commands.Cog):
         on_hand = state["on_hand"]
         reserve = state["reserve"]
         apr_pct = state["apr"] * 100
+        banked = state.get("banked", 0)
+        bank_apr_pct = state.get("bank_apr", 0) * 100
         green_lo = int(on_hand * GREEN_JACKPOT_MIN_PCT)
         green_hi = int(on_hand * GREEN_JACKPOT_MAX_PCT)
         heist_lo = int(on_hand * HOUSE_HEIST_MIN_PCT)
@@ -152,8 +154,10 @@ class CasinoRoulette(commands.Cog):
         return (
             f"💰 **House Pot**\n"
             f"• **On hand:** **{on_hand:,}** coins — heistable, funds payouts.\n"
-            f"• **Safe harbor:** **{reserve:,}** coins — earning **{apr_pct:.2f}% APR**, taps to cover payouts when on-hand runs short.\n"
-            f"• **Total net worth:** **{on_hand + reserve:,}**\n\n"
+            f"• **Safe harbor:** **{reserve + banked:,}** coins total —\n"
+            f"   • house reserve **{reserve:,}** earning **{apr_pct:.2f}% APR**, taps to cover payouts when on-hand runs short.\n"
+            f"   • safe-deposit boxes **{banked:,}** of player money earning **{bank_apr_pct:.2f}% APR** (`{prefix}bank`).\n"
+            f"• **House net worth:** **{on_hand + reserve:,}**\n\n"
             f"**Ways to bleed the on-hand cash:**\n"
             f"• 🟢 Hit **green** on `{prefix}bet` — random **{green_pct_range}** of on-hand (**{green_lo:,}–{green_hi:,}**).\n"
             f"• 🏦 Rob the house with `{prefix}heist @<bot>` — 1-in-100, random **{heist_pct_range}** of on-hand (**{heist_lo:,}–{heist_hi:,}**)."
