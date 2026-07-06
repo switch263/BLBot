@@ -1,4 +1,4 @@
-"""Weekly winnings tax — the economy's primary coin sink.
+"""Weekly winnings tax and monthly wealth tax — the economy's primary coin sinks.
 
 An income tax on NET winnings. Once a week the bot assesses WINNINGS_TAX_PCT of
 each player's net gambling profit since the previous levy (their net_won now
@@ -10,14 +10,21 @@ churn inflate a bill past the player's wallet.) Players have 24h to `/paytax`;
 the coins flow to the house on-hand (a closed loop, not burned). Miss the
 deadline and you're a tax evader: jailed and your wallet is forfeited.
 
-All state lives in economy's cog_kv store (namespace "tax"), so the levy/
-collect/enforce cycle survives restarts:
-  guild-scoped (user_id=0):  last_levy_ts, due_ts  (due_ts == 0 -> idle)
-                             schema_v  (migration guard; see _migrate_once)
-  per-user:                  net_base  (net_won snapshot at the last levy)
-                             owed  (the locked bill; deleted once paid)
+The WEALTH TAX is monthly: on the WEALTH_TAX_DAYth (local time), anyone whose
+total wealth (wallet + bank) tops WEALTH_TAX_THRESHOLD pays WEALTH_TAX_PCT of
+it, seized on the spot — no bill, no grace, no jail. A 1% haircut can always
+be covered by the fortune it's assessed on, so there's nothing to evade.
 
-All tuning knobs (rate, period, grace, jail length, channel) live in economy.py.
+All state lives in economy's cog_kv store, so the cycles survive restarts:
+  namespace "tax" (weekly winnings tax):
+    guild-scoped (user_id=0):  last_levy_ts, due_ts  (due_ts == 0 -> idle)
+                               schema_v  (migration guard; see _migrate_once)
+    per-user:                  net_base  (net_won snapshot at the last levy)
+                               owed  (the locked bill; deleted once paid)
+  namespace "wealthtax" (monthly):
+    guild-scoped (user_id=0):  last_ym  ("YYYY-MM" of the last collection)
+
+All tuning knobs (rates, period, grace, jail length, channel) live in economy.py.
 """
 import time
 import logging
@@ -32,6 +39,7 @@ from config import ADMIN_CHANNEL_ID
 logger = logging.getLogger(__name__)
 
 _NS = "tax"
+_WNS = "wealthtax"
 _MAX_LIST = 30  # cap how many bills/evaders we spell out in one message
 # Bump to force _migrate_once to clear stale bill state on next loop. v2 = the
 # gross→net winnings basis change.
@@ -94,6 +102,10 @@ class Taxes(commands.Cog):
                     await self._levy(guild, now)
             except Exception as e:
                 logger.error(f"tax_loop failed for guild {guild.id}: {e}")
+            try:
+                await self._maybe_wealth_tax(guild)
+            except Exception as e:
+                logger.error(f"wealth tax failed for guild {guild.id}: {e}")
 
     @tax_loop.before_loop
     async def _before(self):
@@ -235,6 +247,77 @@ class Taxes(commands.Cog):
         # Close the window — back to idle until next week's levy.
         economy.kv_set(guild.id, 0, _NS, "due_ts", 0)
         await self._announce_enforcement(guild, ch, evaders)
+
+    # --- the monthly wealth tax --------------------------------------------
+
+    async def _maybe_wealth_tax(self, guild: discord.Guild):
+        """Fire the wealth tax once per calendar month, on WEALTH_TAX_DAY."""
+        local = economy.now_local()
+        if local.day != economy.WEALTH_TAX_DAY:
+            return
+        ym = local.strftime("%Y-%m")
+        if str(economy.kv_get(guild.id, 0, _WNS, "last_ym", "") or "") == ym:
+            return
+        economy.kv_set(guild.id, 0, _WNS, "last_ym", ym)
+        await self._wealth_levy(guild)
+
+    async def _wealth_levy(self, guild: discord.Guild):
+        """Collect WEALTH_TAX_PCT of total wealth (wallet + bank) from everyone
+        above WEALTH_TAX_THRESHOLD. Seized on the spot — wallet first, then
+        bank — and routed to the house. No bill, no grace, no jail."""
+        house_id = economy.get_house_id()
+        totals: dict[int, int] = {}
+        for uid, coins in economy.get_all_wallets(guild.id):
+            totals[uid] = totals.get(uid, 0) + coins
+        for uid, banked in economy.get_all_bank_balances(guild.id):
+            totals[uid] = totals.get(uid, 0) + banked
+
+        taxed: list[tuple[int, int, int]] = []  # (uid, total, seized)
+        for uid, total in totals.items():
+            if uid == house_id or economy.is_memorial(uid):
+                continue
+            if total <= economy.WEALTH_TAX_THRESHOLD:
+                continue
+            bill = int(total * economy.WEALTH_TAX_PCT)
+            if bill <= 0:
+                continue
+            seized = self._seize(guild.id, uid, bill)
+            if seized > 0:
+                taxed.append((uid, total, seized))
+
+        if not taxed:
+            return  # no fortunes over the line this month; stay quiet
+        taxed.sort(key=lambda t: t[2], reverse=True)
+        await self._announce_wealth_tax(guild, taxed)
+
+    async def _announce_wealth_tax(self, guild, taxed):
+        ch = self._find_channel(guild)
+        if ch is None:
+            logger.warning(f"No tax channel for guild {guild.id}; wealth tax unposted.")
+            return
+        pct = economy.WEALTH_TAX_PCT * 100
+        threshold = economy.WEALTH_TAX_THRESHOLD
+        lines = [
+            f"<@{uid}> — worth **{total:,}**, paid **{seized:,}**"
+            for uid, total, seized in taxed[:_MAX_LIST]
+        ]
+        if len(taxed) > _MAX_LIST:
+            lines.append(f"…and **{len(taxed) - _MAX_LIST}** more.")
+        embed = discord.Embed(
+            title="💎 MONTHLY WEALTH TAX",
+            description=(
+                f"It's the {economy.WEALTH_TAX_DAY}th. Every fortune over "
+                f"**{threshold:,}** coins (wallet + bank) just paid its "
+                f"**{pct:g}%** to the house. Already collected — no bill, no "
+                f"deadline, no appeals. Hoard accordingly.\n\n"
+                + "\n".join(lines)
+            ),
+            color=discord.Color.purple(),
+        )
+        try:
+            await ch.send(embed=embed)
+        except discord.HTTPException as e:
+            logger.error(f"Failed to post wealth tax in guild {guild.id}: {e}")
 
     def _seize(self, guild_id: int, user_id: int, amount: int) -> int:
         """Move up to `amount` coins from a player to the house (closed loop),
@@ -401,6 +484,16 @@ class Taxes(commands.Cog):
             return
         await self._levy(ctx.guild, time.time())
         await ctx.send("Levy triggered.")
+
+    @commands.command(name="wealthtaxrun")
+    @commands.guild_only()
+    async def wealthtaxrun_prefix(self, ctx):
+        """Admin: collect the wealth tax immediately (admin channel only).
+        Doesn't consume the month — the scheduled 15th still fires."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return
+        await self._wealth_levy(ctx.guild)
+        await ctx.send("Wealth tax collected.")
 
 
 async def setup(bot):

@@ -124,19 +124,19 @@ MIN_VICTIM_COINS = 50
 
 # Cooldown in seconds (per user per guild)
 HEIST_COOLDOWN = 21600  # 6 hours because 5 minutes is insanely low
-# Rob-the-bot odds and punishment. Three mutually exclusive success tiers are
+# Rob-the-bot punishment. The three mutually exclusive success tiers are
 # rolled per attempt (checked rarest-first off a single random.random()):
 #   vault = the house's on-hand bucket (0 to HOUSE_HEIST_MAX_PCT of it)
 #   boxes = every player's /bank account (0 to BANK_RAID_MAX_PCT of each)
 # Anything past the three tiers is a bust → jail.
-BOT_HEIST_BOTH_ODDS = 1 / 5000    # THE FULL SWEEP: vault AND safe-deposit boxes
-BOT_HEIST_BOXES_ODDS = 1 / 1000   # safe-deposit boxes only
-BOT_HEIST_VAULT_ODDS = 1 / 125    # vault only
 BOT_HEIST_JAIL_MIN_SECONDS = 1 * 60 * 60   # 1 hour
 BOT_HEIST_JAIL_MAX_SECONDS = 36 * 60 * 60  # 36 hours
-# Heist take is a uniform random fraction of on-hand within this band. Tune in
-# economy.py so /pot can display the same range without a cross-cog import.
-from economy import HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT
+# Odds tiers and the heist-take band are tuned in economy.py so /pot can
+# display the same numbers without a cross-cog import.
+from economy import (
+    HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT,
+    BOT_HEIST_BOTH_ODDS, BOT_HEIST_BOXES_ODDS, BOT_HEIST_VAULT_ODDS,
+)
 
 # Bail: someone ELSE pays a random share of the JAILED user's own wallet to
 # spring you — so the bigger your stack, the costlier you are to free.

@@ -149,7 +149,7 @@ def _build_pages() -> list[discord.Embed]:
         "`/wallet` - Balance + stats across games\n"
         "`/gift` - Send coins to another user\n"
         "`/burn` - Donate coins to the house (or `vanish:True` to destroy)\n"
-        "`/charity` - Disperse coins to random members of this channel\n"
+        "`/bank` - Private vault: 10% APR, heist-proof, un-gamblable\n"
         "`/richest` - Leaderboard & economy stats\n"
         "`/slots_leaderboard` - Top slot players\n"
     ), inline=False)

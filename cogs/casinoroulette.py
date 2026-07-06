@@ -10,7 +10,7 @@ from economy import (
     get_coins, record_roulette, get_house_state, jail_message,
     transfer_to_house, casino_payout, MAX_BET,
     GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT,
-    HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT,
+    HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT, BOT_HEIST_VAULT_ODDS,
 )
 from amount import parse_amount, amount_error
 
@@ -138,8 +138,9 @@ class CasinoRoulette(commands.Cog):
         await self.run_bet(interaction, bet_type, amount)
 
     # --- POT ---
-    def _format_pot_message(self, state: dict, slash: bool) -> str:
+    def _format_pot_message(self, state: dict, slash: bool, bot_name: str) -> str:
         prefix = "/" if slash else "!"
+        vault_odds = round(1 / BOT_HEIST_VAULT_ODDS)
         on_hand = state["on_hand"]
         reserve = state["reserve"]
         apr_pct = state["apr"] * 100
@@ -155,24 +156,30 @@ class CasinoRoulette(commands.Cog):
             f"💰 **House Pot**\n"
             f"• **On hand:** **{on_hand:,}** coins — heistable, funds payouts.\n"
             f"• **Safe harbor:** **{reserve + banked:,}** coins total —\n"
-            f"   • house reserve **{reserve:,}** earning **{apr_pct:.2f}% APR**, taps to cover payouts when on-hand runs short.\n"
+            f"   • house reserve **{reserve:,}** earning **{apr_pct:.2f}% APR** — covers payouts when on-hand runs short, auto-refills from on-hand when tapped.\n"
             f"   • safe-deposit boxes **{banked:,}** of player money earning **{bank_apr_pct:.2f}% APR** (`{prefix}bank`).\n"
             f"• **House net worth:** **{on_hand + reserve:,}**\n\n"
             f"**Ways to bleed the on-hand cash:**\n"
             f"• 🟢 Hit **green** on `{prefix}bet` — random **{green_pct_range}** of on-hand (**{green_lo:,}–{green_hi:,}**).\n"
-            f"• 🏦 Rob the house with `{prefix}heist @<bot>` — 1-in-100, random **{heist_pct_range}** of on-hand (**{heist_lo:,}–{heist_hi:,}**)."
+            f"• 🏦 Rob the house with `{prefix}heist @{bot_name}` — 1-in-{vault_odds}, random **{heist_pct_range}** of on-hand (**{heist_lo:,}–{heist_hi:,}**)."
         )
+
+    def _bot_name(self, guild) -> str:
+        me = guild.me if guild else None
+        return me.display_name if me else (self.bot.user.name if self.bot.user else "bot")
 
     @commands.command(name="pot")
     @commands.guild_only()
     async def pot_prefix(self, ctx):
         state = get_house_state(ctx.guild.id)
-        await ctx.send(self._format_pot_message(state, slash=False))
+        await ctx.send(self._format_pot_message(state, slash=False, bot_name=self._bot_name(ctx.guild)))
 
     @app_commands.command(name="pot", description="Show the house pot — on-hand cash vs safe-harbor investments")
     async def pot_slash(self, interaction: discord.Interaction):
         state = get_house_state(interaction.guild_id)
-        await interaction.response.send_message(self._format_pot_message(state, slash=True))
+        await interaction.response.send_message(
+            self._format_pot_message(state, slash=True, bot_name=self._bot_name(interaction.guild))
+        )
 
 async def setup(bot):
     await bot.add_cog(CasinoRoulette(bot))

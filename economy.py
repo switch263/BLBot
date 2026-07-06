@@ -47,6 +47,17 @@ TAX_JAIL_SECONDS = 48 * 3600         # first-offense sentence
 TAX_JAIL_REPEAT_SECONDS = 72 * 3600  # repeat-offense sentence (GOOJF disabled)
 TAX_DECAY_WEEKS = 4                   # on-time pays needed to drop an offense tier
 
+# Monthly wealth tax (cogs/taxes.py). On the WEALTH_TAX_DAYth of each month
+# (local time), anyone whose TOTAL wealth — wallet + bank — exceeds
+# WEALTH_TAX_THRESHOLD is assessed WEALTH_TAX_PCT of that total. Unlike the
+# winnings tax there's no bill or grace window: by definition the levy is a
+# tiny fraction of what they hold, so the house collects on the spot (wallet
+# first, then bank — closed loop, coins go to house on-hand). No jail, no
+# offense tracking; it's a haircut, not a crime.
+WEALTH_TAX_PCT = 0.01                    # 1% of total wealth
+WEALTH_TAX_THRESHOLD = 1_000_000_000     # only fortunes above 1B are taxed
+WEALTH_TAX_DAY = 15                      # day of the month it fires
+
 
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
@@ -608,10 +619,21 @@ _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 # and takes that fraction of on-hand. Living here (not in their cogs) so /pot can
 # read the ranges without a cross-cog import and so any future "casino policy"
 # tuning happens in one file.
+# Green is a 1-in-37 event (any green bet that hits 0), far more frequent than
+# a 1-in-125 vault heist — so its take band is much narrower. At 5–15% the
+# expected drain per green bet (~0.27% of on-hand) roughly matches the expected
+# drain per heist attempt (~0.24%), instead of nuking the pot every ~37 bets.
 HOUSE_HEIST_MIN_PCT = 0.0
 HOUSE_HEIST_MAX_PCT = 0.60
-GREEN_JACKPOT_MIN_PCT = 0.75
-GREEN_JACKPOT_MAX_PCT = 0.90
+GREEN_JACKPOT_MIN_PCT = 0.05
+GREEN_JACKPOT_MAX_PCT = 0.15
+
+# Rob-the-house odds tiers, rolled in cogs/heist.py (mutually exclusive,
+# checked rarest-first off one roll; anything past them is a bust → jail).
+# Here rather than in the cog so /pot can display them.
+BOT_HEIST_BOTH_ODDS = 1 / 5000    # THE FULL SWEEP: vault AND safe-deposit boxes
+BOT_HEIST_BOXES_ODDS = 1 / 1000   # safe-deposit boxes only
+BOT_HEIST_VAULT_ODDS = 1 / 125    # vault only
 
 # Starting balance seeded into the house's safe-harbor RESERVE on first
 # touch (and after any clear_economy wipe). It lives in the reserve — not
@@ -646,8 +668,9 @@ def _ensure_house_wallet(conn: sqlite3.Connection, guild_id: int):
 
 
 def _normalize_house(conn: sqlite3.Connection, guild_id: int):
-    """Apply accrued interest to the safe-harbor reserve. Idempotent. Caller is
-    expected to be holding BEGIN IMMEDIATE so the read-modify-write is atomic."""
+    """Apply accrued interest to the safe-harbor reserve, then self-heal a
+    tapped reserve from on-hand. Idempotent. Caller is expected to be holding
+    BEGIN IMMEDIATE so the read-modify-write is atomic."""
     import time as _t
     now = _t.time()
     conn.execute(
@@ -668,6 +691,28 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
     if reserve_coins > 0 and last_ts > 0 and now > last_ts:
         elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
         reserve_coins = int(reserve_coins * ((1.0 + HOUSE_INTEREST_APR) ** elapsed_years))
+    # Self-heal: a payout that tapped the reserve leaves it below the seed.
+    # Refill the deficit from on-hand (a transfer, nothing minted) so the
+    # insurance bucket is always the first thing house revenue rebuilds.
+    # replenish_house_if_low stays as the mint-backstop for a house that's
+    # broke in BOTH buckets.
+    deficit = HOUSE_STARTING_COINS - reserve_coins
+    if deficit > 0:
+        conn.execute(
+            "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+            (guild_id, get_house_id()),
+        )
+        on_hand_row = conn.execute(
+            "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+            (guild_id, get_house_id()),
+        ).fetchone()
+        heal = min(deficit, on_hand_row[0] if on_hand_row else 0)
+        if heal > 0:
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (heal, guild_id, get_house_id()),
+            )
+            reserve_coins += heal
     conn.execute(
         "UPDATE house_reserve SET coins = ?, last_interest_ts = ? WHERE guild_id = ?",
         (reserve_coins, now, guild_id),
