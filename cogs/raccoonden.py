@@ -12,9 +12,18 @@ logger = logging.getLogger(__name__)
 GRID_ROWS = 4
 GRID_COLS = 4
 GRID_SIZE = GRID_ROWS * GRID_COLS
-NUM_RACCOONS = 3
+DEFAULT_RACCOONS = 3
+MIN_RACCOONS = 1
+MAX_RACCOONS = 12   # always leaves at least 4 safe bins to dig
 HOUSE_EDGE = 0.97
 BONUS_CHANCE = 0.25
+# The multiplier is probability-fair (HOUSE_EDGE / P(survival)), so more
+# raccoons = steeper payouts automatically, same edge at every difficulty.
+# The cap bounds the tail: a deep full clear can otherwise reach five
+# figures of multiplier (16-choose-8 = 12,870), and one fair-odds hit for
+# a third of the house pot is exactly the kind of rare mega-drain we cap
+# everywhere else (see HOUSE_HEIST_MAX_PCT / MINES_MAX_MULT).
+DEN_MAX_MULT = 1000.0
 
 # Weighted pool of bonuses. When the bonus tile is dug, one of these resolves.
 # Effects: "mult" multiplies cashout; "kick" removes N raccoons (turns those
@@ -41,7 +50,7 @@ BONUS_TYPES = [
         "weight": 7,
         "label": "🚨",
         "effect": "kick",
-        "value": NUM_RACCOONS,
+        "value": "all",
         "flavor": "🚨 The trash truck rolls in. **Every raccoon flees the den.**",
     },
     {
@@ -80,16 +89,16 @@ WIN_FLAVOR = [
     "Your mom will never know.",
 ]
 
-def current_multiplier(revealed_safe: int) -> float:
+def current_multiplier(revealed_safe: int, num_raccoons: int) -> float:
     # Cap so kick-bonuses (which mark raccoon tiles as revealed) can't push
     # past the safe-tile count and divide by zero.
-    revealed_safe = min(revealed_safe, GRID_SIZE - NUM_RACCOONS)
+    revealed_safe = min(revealed_safe, GRID_SIZE - num_raccoons)
     if revealed_safe <= 0:
         return 1.0
     p_survive = 1.0
     for i in range(revealed_safe):
-        p_survive *= (GRID_SIZE - NUM_RACCOONS - i) / (GRID_SIZE - i)
-    return HOUSE_EDGE / p_survive
+        p_survive *= (GRID_SIZE - num_raccoons - i) / (GRID_SIZE - i)
+    return min(HOUSE_EDGE / p_survive, DEN_MAX_MULT)
 
 
 def pick_bonus_type() -> dict:
@@ -97,12 +106,14 @@ def pick_bonus_type() -> dict:
 
 
 class DenGame:
-    def __init__(self, guild_id: int, user_id: int, user_name: str, bet: int):
+    def __init__(self, guild_id: int, user_id: int, user_name: str, bet: int,
+                 num_raccoons: int = DEFAULT_RACCOONS):
         self.guild_id = guild_id
         self.user_id = user_id
         self.user_name = user_name
         self.bet = bet
-        self.raccoons: set[int] = set(random.sample(range(GRID_SIZE), NUM_RACCOONS))
+        self.num_raccoons = num_raccoons
+        self.raccoons: set[int] = set(random.sample(range(GRID_SIZE), num_raccoons))
         self.revealed: set[int] = set()
         self.ended = False
         self.won = False
@@ -119,7 +130,8 @@ class DenGame:
         return self.bonus_tile is not None and self.bonus_tile in self.revealed
 
     def get_multiplier(self) -> float:
-        return current_multiplier(len(self.revealed)) * self.bonus_multiplier
+        base = current_multiplier(len(self.revealed), self.num_raccoons)
+        return min(base * self.bonus_multiplier, DEN_MAX_MULT)
 
 
 class BinButton(discord.ui.Button):
@@ -166,7 +178,7 @@ class BinButton(discord.ui.Button):
             self.label = "💎"
             self.style = discord.ButtonStyle.success
         view._refresh_cashout()
-        if len(g.revealed) >= GRID_SIZE - NUM_RACCOONS:
+        if len(g.revealed) >= GRID_SIZE - g.num_raccoons:
             # Cleared the board — max payout, auto cashout
             g.ended = True
             g.won = True
@@ -255,7 +267,8 @@ class DenView(discord.ui.View):
         if effect == "mult":
             g.bonus_multiplier = bt["value"]
         elif effect == "kick":
-            count = min(bt["value"], len(g.raccoons))
+            kick = len(g.raccoons) if bt["value"] == "all" else bt["value"]
+            count = min(kick, len(g.raccoons))
             for victim in random.sample(list(g.raccoons), count):
                 self._kick_out_raccoon(victim, bt["label"])
 
@@ -292,13 +305,13 @@ class RaccoonDen(commands.Cog):
 
     def _render(self, g: DenGame, footer: str | None = None) -> str:
         mult = g.get_multiplier()
-        safe_possible = GRID_SIZE - NUM_RACCOONS
+        safe_possible = GRID_SIZE - g.num_raccoons
         mult_label = f"**{mult:.2f}×**"
         if g.bonus_triggered and g.bonus_type:
             mult_label += f" {g.bonus_type['label']}"
         lines = [
             f"🦝 **{g.user_name}'s Raccoon Den** — bet **{g.bet:,}** coins",
-            f"{NUM_RACCOONS} feral raccoons hide in {GRID_SIZE} bins. "
+            f"**{g.num_raccoons}** feral raccoons hide in {GRID_SIZE} bins. "
             f"Revealed: **{len(g.revealed)}/{safe_possible}** | Multiplier: {mult_label}",
         ]
         if not g.ended:
@@ -309,7 +322,7 @@ class RaccoonDen(commands.Cog):
             lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
         return "\n".join(lines)
 
-    async def _start_game(self, ctx_or_interaction, bet):
+    async def _start_game(self, ctx_or_interaction, bet, raccoons: int = DEFAULT_RACCOONS):
         is_slash = isinstance(ctx_or_interaction, discord.Interaction)
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
@@ -322,6 +335,10 @@ class RaccoonDen(commands.Cog):
 
         if not guild:
             await reply("Can only dig in a server.")
+            return
+        if not (MIN_RACCOONS <= raccoons <= MAX_RACCOONS):
+            await reply(f"Pick **{MIN_RACCOONS}–{MAX_RACCOONS}** raccoons. "
+                        f"More raccoons, steeper multipliers.")
             return
         amt = parse_amount(bet)
         if amt is None:
@@ -345,19 +362,24 @@ class RaccoonDen(commands.Cog):
             else:
                 await reply("Bet failed. Try again.")
             return
-        game = DenGame(guild.id, user.id, user.display_name, bet)
+        game = DenGame(guild.id, user.id, user.display_name, bet, num_raccoons=raccoons)
         view = DenView(self, game)
         await reply(self._render(game), view=view)
 
     @commands.command(name="dig", aliases=["den", "raccoon"])
     @commands.guild_only()
-    async def dig_prefix(self, ctx, bet: str):
-        await self._start_game(ctx, bet)
+    async def dig_prefix(self, ctx, bet: str, raccoons: int = DEFAULT_RACCOONS):
+        """Dig the den: !dig <bet> [raccoons 1-12] — more raccoons, richer bins."""
+        await self._start_game(ctx, bet, raccoons)
 
-    @app_commands.command(name="dig", description="Dig through a raccoon den — avoid the raccoons, grab the loot.")
-    @app_commands.describe(bet="Coins to risk on the dig")
-    async def dig_slash(self, interaction: discord.Interaction, bet: str):
-        await self._start_game(interaction, bet)
+    @app_commands.command(name="dig", description="Dig through a raccoon den — pick how many raccoons; more = steeper multipliers.")
+    @app_commands.describe(
+        bet="Coins to risk on the dig",
+        raccoons=f"How many raccoons hide in the 16 bins ({MIN_RACCOONS}-{MAX_RACCOONS}, default {DEFAULT_RACCOONS}) — more raccoons, richer payouts",
+    )
+    async def dig_slash(self, interaction: discord.Interaction, bet: str,
+                        raccoons: app_commands.Range[int, MIN_RACCOONS, MAX_RACCOONS] = DEFAULT_RACCOONS):
+        await self._start_game(interaction, bet, raccoons)
 
 
 async def setup(bot):

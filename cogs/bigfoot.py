@@ -20,6 +20,9 @@ NUM_BIGFOOT = 1     # jackpot tile — auto-wins on reveal
 # remaining 12 are footprint tiles that bump the multiplier
 SAFE_BUMP = 0.25    # +25% of bet per footprint
 BIGFOOT_MULT = 10.0 # whole-bet multiplier when photographed
+# Walking straight up to Bigfoot on your very first hex (1-in-16 per game)
+# skips the print math entirely and pays this flat.
+FIRST_SHOT_MULT = 100.0
 
 BEAR_NARRATIVES = [
     "A black bear emerges from the bushes looking personally wronged by you.",
@@ -29,6 +32,12 @@ BEAR_NARRATIVES = [
     "You tripped over a bear that was napping. Rookie mistake.",
     "The bear was the cryptid all along. It gets you.",
     "A bear wearing your uncle's hat rips your film out.",
+]
+
+FIRST_SHOT_NARRATIVES = [
+    "You step off the trail and he's RIGHT THERE, mid-yawn. One frame. Perfect focus. History.",
+    "No tracking, no prints, no patience — you simply walk into the clearing and Bigfoot is waiting like he had an appointment.",
+    "First hex. First step. There he is, backlit by the moon like he was posing for the cover. The shot of the century.",
 ]
 
 BIGFOOT_NARRATIVES = [
@@ -119,9 +128,19 @@ class HexButton(discord.ui.Button):
             g.ended = True
             self.label = "🦍"
             self.style = discord.ButtonStyle.success
-            # Base multiplier from footprints PLUS Bigfoot jackpot
-            base_mult = current_multiplier(g.footprints_found)
-            final_mult = base_mult * BIGFOOT_MULT
+            first_shot = len(g.revealed) == 1
+            if first_shot:
+                # Bigfoot on the very first hex: flat FIRST_SHOT_MULT jackpot.
+                final_mult = FIRST_SHOT_MULT
+                headline = "📸 **FIRST SHOT!** " + random.choice(FIRST_SHOT_NARRATIVES)
+                breakdown = f"Final multiplier: **{final_mult:.0f}×** — first-hex jackpot, no prints needed."
+            else:
+                # Base multiplier from footprints PLUS Bigfoot jackpot
+                base_mult = current_multiplier(g.footprints_found)
+                final_mult = base_mult * BIGFOOT_MULT
+                headline = f"🦍 **BIGFOOT PHOTOGRAPHED!** {random.choice(BIGFOOT_NARRATIVES)}"
+                breakdown = (f"Final multiplier: **{final_mult:.2f}×** "
+                             f"({base_mult:.2f}× prints × {BIGFOOT_MULT:.0f}× jackpot).")
             requested = int(g.bet * final_mult)
             paid = casino_payout(g.guild_id, g.user_id, requested)
             for child in view.children:
@@ -132,11 +151,9 @@ class HexButton(discord.ui.Button):
                 child.disabled = True
             net = paid - g.bet
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            narrative = random.choice(BIGFOOT_NARRATIVES)
             content = view.cog._render(
                 g,
-                f"🦍 **BIGFOOT PHOTOGRAPHED!** {narrative}\n"
-                f"Final multiplier: **{final_mult:.2f}×** ({base_mult:.2f}× prints × {BIGFOOT_MULT:.0f}× jackpot). Net **{net:+,}** coins.{short}",
+                f"{headline}\n{breakdown} Net **{net:+,}** coins.{short}",
             )
             await interaction.response.edit_message(content=content, view=view)
             return
@@ -229,7 +246,10 @@ class BigfootExpedition(commands.Cog):
             f"Prints found: **{g.footprints_found}** | Multiplier: **{mult:.2f}×**",
         ]
         if not g.ended:
-            lines.append(f"Each print bumps the multiplier. Find Bigfoot and the multiplier is ×{BIGFOOT_MULT:.0f}.")
+            lines.append(
+                f"Each print bumps the multiplier. Find Bigfoot and the multiplier is ×{BIGFOOT_MULT:.0f} — "
+                f"or a flat **×{FIRST_SHOT_MULT:.0f}** if he's your very first hex."
+            )
         if footer:
             lines.append("")
             lines.append(footer)

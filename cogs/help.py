@@ -105,8 +105,8 @@ def _build_pages() -> list[discord.Embed]:
     e6.add_field(name="Push Your Luck", value=(
         "`/gauntlet` - High-roller ladder: cash out or push your luck (bet scales with the house, no flat 100k cap)\n"
         "`/mines` - Reveal gems, dodge mines; each gem raises the multiplier, cash out or boom\n"
-        "`/dig` - Raccoon Den: dig bins, avoid feral raccoons\n"
-        "`/bigfoot` - Hunt Bigfoot, dodge bears, rare ×10 jackpot\n"
+        "`/dig` - Raccoon Den: pick 1-12 raccoons — more raccoons, steeper multipliers\n"
+        "`/bigfoot` - Hunt Bigfoot, dodge bears — ×10 jackpot, ×100 on a first-hex find\n"
         "`/dogs` - Hot Dog Eating Contest — stack multiplier, don't hurl\n"
         "`/vault` - Mastermind-style 4-digit safecrack\n"
     ), inline=False)
