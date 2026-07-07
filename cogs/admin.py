@@ -1,9 +1,7 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import logging
 import economy
-import re
 
 from config import ADMIN_CHANNEL_ID
 from amount import parse_amount, amount_error

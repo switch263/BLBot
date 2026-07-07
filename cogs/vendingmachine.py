@@ -5,8 +5,8 @@ import random
 import logging
 import asyncio
 
-from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
-from amount import parse_amount, amount_error
+from economy import get_coins, transfer_to_house, casino_payout, record_game
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ class VendingMachine(commands.Cog):
             return f"🥤 **×2!** It's drinkable. **{paid - bet:+,}** coins.{short}"
         if outcome == "break_even":
             casino_payout(gid, uid, bet)
-            return f"😐 **Break even.** The can is empty but the coin fell back out. Weird."
+            return "😐 **Break even.** The can is empty but the coin fell back out. Weird."
         if outcome == "nothing":
             return f"💀 **Nothing drops.** The machine takes your **{bet:,}** and whistles innocently."
         if outcome == "extra_loss":
@@ -248,6 +248,10 @@ class VendingMachine(commands.Cog):
         result = await self._apply_outcome(
             outcome, view.bet, interaction.user, interaction.guild, interaction.channel,
         )
+        # Win = the machine paid a multiplier; break-even and the cursed
+        # novelty outcomes count as plays, not wins.
+        record_game(interaction.guild.id, interaction.user.id, "vend",
+                    won=outcome in ("jackpot", "big_win", "medium_win", "small_win"))
         flavor = random.choice(FLAVOR_PULL)
         # 30% of the time, the machine gives you something you did NOT ask for.
         if random.random() < 0.3:
@@ -264,41 +268,11 @@ class VendingMachine(commands.Cog):
         await interaction.response.edit_message(content=text, view=view)
 
     async def _start(self, ctx_or_interaction, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Only in a server, weirdo.")
+        start = await casino_prelude(ctx_or_interaction, bet, zero_msg="Gotta feed it something.",
+                                     no_guild_msg="Only in a server, weirdo.")
+        if start is None:
             return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("Gotta feed it something.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
-            return
-        bet_result = transfer_to_house(guild.id, user.id, bet)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
-            else:
-                await reply("Bet failed. Try again.")
-            return
+        user, bet, reply = start.user, start.bet, start.reply
         view = VendingView(self, user.id, bet)
         content = (
             f"🤖 **THE VENDING MACHINE FROM HELL** accepts **{user.display_name}**'s offering of **{bet:,}** coins.\n"

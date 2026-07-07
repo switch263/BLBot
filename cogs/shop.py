@@ -15,7 +15,7 @@ from discord.ext import commands
 import economy
 from items import (
     ITEMS, ALL_ITEMS, JAIL_CARD, BONUS_SPIN, HEIST_SHIELD,
-    item_meta, display, resolve,
+    item_meta, resolve,
 )
 
 logger = logging.getLogger(__name__)

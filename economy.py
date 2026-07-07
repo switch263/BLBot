@@ -1,6 +1,7 @@
 """Shared economy database utilities. All economy cogs import from here."""
 
 import sqlite3
+from contextlib import contextmanager
 import os
 import logging
 from datetime import datetime
@@ -570,6 +571,57 @@ def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> dict
         return {"ok": False, "error": "db"}
 
 
+# --- Transaction plumbing ---------------------------------------------------
+# Every write helper used to hand-roll the same dance: connect, BEGIN
+# IMMEDIATE, remember to rollback on each early exit, commit, log on
+# sqlite3.Error. `_tx` is that dance with a name. Pattern for new helpers:
+#
+#     try:
+#         with _tx("my_helper") as conn:
+#             ...reads...
+#             if not valid:
+#                 raise _Abort(fallback_value)   # rolls back, carries result
+#             ...writes...
+#         return success_value
+#     except _Abort as a:
+#         return a.result
+#     except sqlite3.Error:
+#         return db_error_fallback              # _tx already logged it
+#
+# The connection is always closed (the bare `with sqlite3.connect(...)` the
+# old code used never closed it).
+
+class _Abort(Exception):
+    """Raised inside a _tx block to roll back and hand `result` back."""
+
+    def __init__(self, result=None):
+        self.result = result
+
+
+@contextmanager
+def _tx(op: str):
+    """One immediate-mode write transaction: BEGIN IMMEDIATE on entry, commit
+    on clean exit, rollback on _Abort or sqlite3.Error (the latter logged
+    under `op` and re-raised)."""
+    conn = sqlite3.connect(DB_FILE)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        yield conn
+        conn.commit()
+    except _Abort:
+        conn.rollback()
+        raise
+    except sqlite3.Error as e:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        logger.error(f"Database error in {op}: {e}")
+        raise
+    finally:
+        conn.close()
+
+
 def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
     """Atomically deduct `amount` only if the wallet has enough. Returns True on success.
 
@@ -579,8 +631,7 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
     if amount <= 0:
         return False
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("try_deduct") as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS),
@@ -591,12 +642,11 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
                 (amount, amount, guild_id, user_id, amount),
             )
             if cursor.rowcount == 0:
-                conn.rollback()
-                return False
-            conn.commit()
-            return True
-    except sqlite3.Error as e:
-        logger.error(f"Database error in try_deduct: {e}")
+                raise _Abort(False)
+        return True
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
         return False
 
 
@@ -764,7 +814,6 @@ def memorial_tithe(guild_id: int, amount: int) -> int:
     tithe = int(amount * MEMORIAL_TITHE_PCT)
     if tithe <= 0:
         return 0
-    house_id = get_house_id()
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -1176,6 +1225,24 @@ def kv_get_all(guild_id: int, user_id: int, namespace: str) -> dict:
         return {}
 
 
+def kv_top(guild_id: int, namespace: str, key: str, limit: int = 10) -> list[tuple[int, int]]:
+    """Top users by numeric value for one (namespace, key) — [(user_id, value)]
+    descending. Guild-scoped rows (user_id=0) are excluded; they're aggregates,
+    not people. The cross-user leaderboard query cogs can't do themselves."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute(
+                "SELECT user_id, CAST(value AS INTEGER) AS v FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND user_id != 0 "
+                "ORDER BY v DESC LIMIT ?",
+                (guild_id, namespace, key, limit),
+            ).fetchall()
+            return [(r[0], int(r[1])) for r in rows]
+    except sqlite3.Error as e:
+        logger.error(f"Database error in kv_top: {e}")
+        return []
+
+
 def kv_clear_namespace(guild_id: int, namespace: str):
     """Delete every row in a namespace for a guild — cleanup for when a cog is
     retired. economy.py itself is untouched."""
@@ -1211,16 +1278,14 @@ def consume_item(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
     if qty <= 0:
         return False
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("consume_item") as conn:
             row = conn.execute(
                 "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (guild_id, user_id, _INV_NS, item),
             ).fetchone()
             have = row[0] if row else 0
             if have < qty:
-                conn.rollback()
-                return False
+                raise _Abort(False)
             remaining = have - qty
             if remaining > 0:
                 conn.execute(
@@ -1232,10 +1297,10 @@ def consume_item(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
                     "DELETE FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                     (guild_id, user_id, _INV_NS, item),
                 )
-            conn.commit()
-            return True
-    except sqlite3.Error as e:
-        logger.error(f"Database error in consume_item: {e}")
+        return True
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
         return False
 
 
@@ -1330,13 +1395,10 @@ def _accrue_bank_interest(conn: sqlite3.Connection, guild_id: int, user_id: int)
 def bank_balance(guild_id: int, user_id: int) -> int:
     """Coins a player has parked in the bank (interest applied on read)."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("bank_balance") as conn:
             balance = _accrue_bank_interest(conn, guild_id, user_id)
-            conn.commit()
-            return balance
-    except sqlite3.Error as e:
-        logger.error(f"Database error in bank_balance: {e}")
+        return balance
+    except sqlite3.Error:
         return int(kv_get(guild_id, user_id, _BANK_NS, _BANK_KEY, 0) or 0)
 
 
@@ -1353,8 +1415,7 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
         return {"ok": False, "error": "invalid_amount"}
     import time as _t
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("bank_deposit") as conn:
             banked = _accrue_bank_interest(conn, guild_id, user_id)
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
@@ -1366,8 +1427,7 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
             ).fetchone()
             have = row[0] if row else 0
             if have < amount:
-                conn.rollback()
-                return {"ok": False, "error": "broke", "have": have, "need": amount}
+                raise _Abort({"ok": False, "error": "broke", "have": have, "need": amount})
             conn.execute(
                 "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, user_id),
@@ -1384,10 +1444,10 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
                 "ON CONFLICT(guild_id, user_id, namespace, key) DO NOTHING",
                 (guild_id, user_id, _BANK_NS, _BANK_TS_KEY, _t.time()),
             )
-            conn.commit()
-            return {"ok": True, "wallet": have - amount, "bank": banked + amount}
-    except sqlite3.Error as e:
-        logger.error(f"Database error in bank_deposit: {e}")
+        return {"ok": True, "wallet": have - amount, "bank": banked + amount}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
         return {"ok": False, "error": "db"}
 
 
@@ -1397,12 +1457,10 @@ def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("bank_withdraw") as conn:
             banked = _accrue_bank_interest(conn, guild_id, user_id)
             if banked < amount:
-                conn.rollback()
-                return {"ok": False, "error": "broke", "have": banked, "need": amount}
+                raise _Abort({"ok": False, "error": "broke", "have": banked, "need": amount})
             conn.execute(
                 "UPDATE cog_kv SET value = value - ? "
                 "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
@@ -1420,11 +1478,11 @@ def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
-            conn.commit()
-            return {"ok": True, "wallet": wallet_row[0] if wallet_row else amount,
-                    "bank": banked - amount}
-    except sqlite3.Error as e:
-        logger.error(f"Database error in bank_withdraw: {e}")
+        return {"ok": True, "wallet": wallet_row[0] if wallet_row else amount,
+                "bank": banked - amount}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
         return {"ok": False, "error": "db"}
 
 
@@ -1432,18 +1490,15 @@ def get_all_bank_balances(guild_id: int) -> list[tuple[int, int]]:
     """Every (user_id, balance) with coins in the bank, largest first.
     Applies each account's accrued interest as a side effect."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("get_all_bank_balances") as conn:
             rows = conn.execute(
                 "SELECT user_id FROM cog_kv "
                 "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchall()
             balances = [(uid, _accrue_bank_interest(conn, guild_id, uid)) for (uid,) in rows]
-            conn.commit()
-            return sorted(balances, key=lambda b: b[1], reverse=True)
-    except sqlite3.Error as e:
-        logger.error(f"Database error in get_all_bank_balances: {e}")
+        return sorted(balances, key=lambda b: b[1], reverse=True)
+    except sqlite3.Error:
         return []
 
 
@@ -1511,13 +1566,11 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
     if amount <= 0:
         return 0
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with _tx("bank_seize_to_house") as conn:
             banked = _accrue_bank_interest(conn, guild_id, user_id)
             take = min(amount, banked)
             if take <= 0:
-                conn.rollback()
-                return 0
+                raise _Abort(0)
             conn.execute(
                 "UPDATE cog_kv SET value = value - ? "
                 "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
@@ -1528,10 +1581,10 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
                 "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
                 (take, guild_id, get_house_id()),
             )
-            conn.commit()
-            return take
-    except sqlite3.Error as e:
-        logger.error(f"Database error in bank_seize_to_house: {e}")
+        return take
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
         return 0
 
 
@@ -1804,18 +1857,6 @@ def get_pot(guild_id: int) -> int:
     """On-hand house coins — the heistable / payout-funded bucket.
     For the full breakdown (on-hand + safe-harbor reserve) call get_house_state."""
     return get_house_state(guild_id)["on_hand"]
-
-
-# Per-game record_* shims. All delegate to record_game(); kept so existing cog
-# imports keep working. New cogs should call record_game directly.
-def record_roulette(guild_id, user_id, won): record_game(guild_id, user_id, "roulette", won)
-def record_rr(guild_id, user_id, won): record_game(guild_id, user_id, "rr", won)
-def record_vault(guild_id, user_id, won): record_game(guild_id, user_id, "vault", won)
-def record_vault_hard(guild_id, user_id, won): record_game(guild_id, user_id, "vault_hard", won)
-def record_blackjack(guild_id, user_id, won): record_game(guild_id, user_id, "blackjack", won)
-def record_highlow(guild_id, user_id, won): record_game(guild_id, user_id, "highlow", won)
-def record_pawnshop(guild_id, user_id, won): record_game(guild_id, user_id, "pawnshop", won)
-def record_heist(guild_id, user_id, succeeded): record_game(guild_id, user_id, "heist", succeeded)
 
 
 def jail_user(guild_id: int, user_id: int, duration_seconds: int, reason: str = "",
@@ -2308,8 +2349,6 @@ def jail_message(guild_id: int, user_id: int) -> str | None:
         return f"🚔 **You're in casino jail** for another **{h}h {m}m**. No bets, no gambling. Should've been nicer to the house."
     return f"🚔 **You're in casino jail** for another **{m}m**. No bets, no gambling."
 
-
-def record_den(guild_id, user_id, won): record_game(guild_id, user_id, "den", won)
 
 
 # --- Admin: hard-reset the economy ----------------------------------------

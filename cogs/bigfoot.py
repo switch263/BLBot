@@ -4,8 +4,9 @@ from discord import app_commands
 import random
 import logging
 
-from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
-from amount import parse_amount, amount_error
+from economy import get_coins, casino_payout, record_game
+from game_common import casino_prelude
+from gridgame import GridView
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,18 @@ CASHOUT_FLAVOR = [
 ]
 
 
-class Expedition:
-    def __init__(self, guild_id: int, user_id: int, user_name: str, bet: int):
+def current_multiplier(footprints: int) -> float:
+    return 1.0 + SAFE_BUMP * footprints
+
+
+class ExpeditionView(GridView):
+    HIDDEN_LABEL = "🌲"
+
+    def __init__(self, cog, guild_id: int, user_id: int, user_name: str, bet: int):
+        super().__init__(user_id, rows=GRID_ROWS, cols=GRID_COLS, timeout=300,
+                         not_yours="Find your own forest.")
+        self.cog = cog
         self.guild_id = guild_id
-        self.user_id = user_id
         self.user_name = user_name
         self.bet = bet
         # Randomly place bears and 1 bigfoot
@@ -79,155 +88,99 @@ class Expedition:
         random.shuffle(slots)
         self.bears = set(slots[:NUM_BEARS])
         self.bigfoot = slots[NUM_BEARS]
-        # everything else is safe
         self.revealed: set[int] = set()
         self.footprints_found = 0
-        self.ended = False
+        self.action_btn.label = "Head Back (1.00×)"
+        self.action_btn.emoji = "📷"
 
+    # ---- GridView hooks ---------------------------------------------------
+    def tile_face(self, idx: int):
+        if idx in self.bears:
+            return "🐻", discord.ButtonStyle.danger
+        if idx == self.bigfoot:
+            return "🦍", (discord.ButtonStyle.success if idx in self.revealed
+                          else discord.ButtonStyle.secondary)
+        if idx in self.revealed:
+            return "🦶", discord.ButtonStyle.success
+        return None
 
-def current_multiplier(footprints: int) -> float:
-    return 1.0 + SAFE_BUMP * footprints
+    async def on_tile(self, interaction: discord.Interaction, idx: int):
+        self.revealed.add(idx)
+        self.tile_btns[idx].disabled = True
 
-
-class HexButton(discord.ui.Button):
-    def __init__(self, idx: int, row: int):
-        super().__init__(style=discord.ButtonStyle.secondary, label="🌲", row=row)
-        self.idx = idx
-
-    async def callback(self, interaction: discord.Interaction):
-        view: "ExpeditionView" = self.view  # type: ignore
-        g = view.game
-        if interaction.user.id != g.user_id:
-            await interaction.response.send_message("Find your own forest.", ephemeral=True)
-            return
-        if g.ended:
-            await interaction.response.defer()
-            return
-
-        g.revealed.add(self.idx)
-        self.disabled = True
-
-        if self.idx in g.bears:
-            g.ended = True
-            self.label = "🐻"
-            self.style = discord.ButtonStyle.danger
-            for child in view.children:
-                if isinstance(child, HexButton):
-                    if child.idx in g.bears:
-                        child.label = "🐻"
-                        child.style = discord.ButtonStyle.danger
-                    elif child.idx == g.bigfoot:
-                        child.label = "🦍"
-                child.disabled = True
+        if idx in self.bears:
+            record_game(self.guild_id, self.user_id, "bigfoot", won=False)
+            self.finish()
             narrative = random.choice(BEAR_NARRATIVES)
-            content = view.cog._render(g, f"🐻 **MAULED!** {narrative}\nYou lose **{g.bet:,}** coins.")
-            await interaction.response.edit_message(content=content, view=view)
+            content = self.cog._render(
+                self, f"🐻 **MAULED!** {narrative}\nYou lose **{self.bet:,}** coins.")
+            await interaction.response.edit_message(content=content, view=self)
             return
 
-        if self.idx == g.bigfoot:
-            g.ended = True
-            self.label = "🦍"
-            self.style = discord.ButtonStyle.success
-            first_shot = len(g.revealed) == 1
+        if idx == self.bigfoot:
+            first_shot = len(self.revealed) == 1
             if first_shot:
                 # Bigfoot on the very first hex: flat FIRST_SHOT_MULT jackpot.
                 final_mult = FIRST_SHOT_MULT
                 headline = "📸 **FIRST SHOT!** " + random.choice(FIRST_SHOT_NARRATIVES)
                 breakdown = f"Final multiplier: **{final_mult:.0f}×** — first-hex jackpot, no prints needed."
             else:
-                # Base multiplier from footprints PLUS Bigfoot jackpot
-                base_mult = current_multiplier(g.footprints_found)
+                base_mult = current_multiplier(self.footprints_found)
                 final_mult = base_mult * BIGFOOT_MULT
                 headline = f"🦍 **BIGFOOT PHOTOGRAPHED!** {random.choice(BIGFOOT_NARRATIVES)}"
                 breakdown = (f"Final multiplier: **{final_mult:.2f}×** "
                              f"({base_mult:.2f}× prints × {BIGFOOT_MULT:.0f}× jackpot).")
-            requested = int(g.bet * final_mult)
-            paid = casino_payout(g.guild_id, g.user_id, requested)
-            for child in view.children:
-                if isinstance(child, HexButton):
-                    if child.idx in g.bears:
-                        child.label = "🐻"
-                        child.style = discord.ButtonStyle.danger
-                child.disabled = True
-            net = paid - g.bet
+            requested = int(self.bet * final_mult)
+            paid = casino_payout(self.guild_id, self.user_id, requested)
+            record_game(self.guild_id, self.user_id, "bigfoot", won=True)
+            self.finish()
+            net = paid - self.bet
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            content = view.cog._render(
-                g,
-                f"{headline}\n{breakdown} Net **{net:+,}** coins.{short}",
-            )
-            await interaction.response.edit_message(content=content, view=view)
+            content = self.cog._render(
+                self, f"{headline}\n{breakdown} Net **{net:+,}** coins.{short}")
+            await interaction.response.edit_message(content=content, view=self)
             return
 
         # Footprint (safe)
-        g.footprints_found += 1
-        self.label = "🦶"
-        self.style = discord.ButtonStyle.success
-        view._refresh_cashout()
-        await interaction.response.edit_message(content=view.cog._render(g), view=view)
+        self.footprints_found += 1
+        self.tile_btns[idx].label = "🦶"
+        self.tile_btns[idx].style = discord.ButtonStyle.success
+        self._refresh_cashout()
+        await interaction.response.edit_message(content=self.cog._render(self), view=self)
 
-
-class CashOutButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(style=discord.ButtonStyle.primary, label="Head Back (1.00×)", emoji="📷", row=GRID_ROWS)
-
-    async def callback(self, interaction: discord.Interaction):
-        view: "ExpeditionView" = self.view  # type: ignore
-        g = view.game
-        if interaction.user.id != g.user_id:
-            await interaction.response.send_message("Not your expedition.", ephemeral=True)
+    async def on_action(self, interaction: discord.Interaction):
+        if self.footprints_found == 0:
+            await interaction.response.send_message(
+                "You haven't even left the parking lot yet.", ephemeral=True)
             return
-        if g.ended:
-            await interaction.response.defer()
-            return
-        if g.footprints_found == 0:
-            await interaction.response.send_message("You haven't even left the parking lot yet.", ephemeral=True)
-            return
-        g.ended = True
-        mult = current_multiplier(g.footprints_found)
-        requested = int(g.bet * mult)
-        paid = casino_payout(g.guild_id, g.user_id, requested)
-        for child in view.children:
-            if isinstance(child, HexButton):
-                if child.idx in g.bears:
-                    child.label = "🐻"
-                    child.style = discord.ButtonStyle.danger
-                elif child.idx == g.bigfoot:
-                    child.label = "🦍"
-            child.disabled = True
-        net = paid - g.bet
+        mult = current_multiplier(self.footprints_found)
+        requested = int(self.bet * mult)
+        paid = casino_payout(self.guild_id, self.user_id, requested)
+        record_game(self.guild_id, self.user_id, "bigfoot", won=True)
+        self.finish()
+        net = paid - self.bet
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         narrative = random.choice(CASHOUT_FLAVOR)
-        content = view.cog._render(
-            g,
-            f"📷 **Headed back with {g.footprints_found} footprints.** {narrative}\n"
+        content = self.cog._render(
+            self,
+            f"📷 **Headed back with {self.footprints_found} footprints.** {narrative}\n"
             f"Multiplier **{mult:.2f}×** → net **{net:+,}** coins.{short}",
         )
-        await interaction.response.edit_message(content=content, view=view)
+        await interaction.response.edit_message(content=content, view=self)
 
-
-class ExpeditionView(discord.ui.View):
-    def __init__(self, cog, game: Expedition):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.game = game
-        for i in range(GRID_SIZE):
-            self.add_item(HexButton(i, row=i // GRID_COLS))
-        self.cashout = CashOutButton()
-        self.add_item(self.cashout)
+    async def on_abandon(self):
+        # Walked away mid-expedition: bank whatever prints they found.
+        if self.footprints_found > 0:
+            mult = current_multiplier(self.footprints_found)
+            casino_payout(self.guild_id, self.user_id, int(self.bet * mult))
+            record_game(self.guild_id, self.user_id, "bigfoot", won=True)
+        else:
+            record_game(self.guild_id, self.user_id, "bigfoot", won=False)
 
     def _refresh_cashout(self):
-        mult = current_multiplier(self.game.footprints_found)
-        payout = int(self.game.bet * mult)
-        net = payout - self.game.bet
-        self.cashout.label = f"Head Back ({mult:.2f}×, +{net})"
-
-    async def on_timeout(self):
-        if not self.game.ended:
-            g = self.game
-            if g.footprints_found > 0:
-                mult = current_multiplier(g.footprints_found)
-                casino_payout(g.guild_id, g.user_id, int(g.bet * mult))
-            g.ended = True
+        mult = current_multiplier(self.footprints_found)
+        net = int(self.bet * mult) - self.bet
+        self.action_btn.label = f"Head Back ({mult:.2f}×, +{net})"
 
 
 class BigfootExpedition(commands.Cog):
@@ -238,14 +191,14 @@ class BigfootExpedition(commands.Cog):
     async def on_ready(self):
         logger.info("Bigfoot Expedition loaded.")
 
-    def _render(self, g: Expedition, footer: str | None = None) -> str:
-        mult = current_multiplier(g.footprints_found)
+    def _render(self, v: ExpeditionView, footer: str | None = None) -> str:
+        mult = current_multiplier(v.footprints_found)
         lines = [
-            f"🌲 **{g.user_name}'s Bigfoot Expedition** — bet **{g.bet:,}** coins",
+            f"🌲 **{v.user_name}'s Bigfoot Expedition** — bet **{v.bet:,}** coins",
             f"Somewhere in these **{GRID_SIZE}** hexes: **{NUM_BEARS} bears** and **1 Bigfoot** (jackpot ×{BIGFOOT_MULT:.0f}).",
-            f"Prints found: **{g.footprints_found}** | Multiplier: **{mult:.2f}×**",
+            f"Prints found: **{v.footprints_found}** | Multiplier: **{mult:.2f}×**",
         ]
-        if not g.ended:
+        if not v.resolved:
             lines.append(
                 f"Each print bumps the multiplier. Find Bigfoot and the multiplier is ×{BIGFOOT_MULT:.0f} — "
                 f"or a flat **×{FIRST_SHOT_MULT:.0f}** if he's your very first hex."
@@ -253,48 +206,20 @@ class BigfootExpedition(commands.Cog):
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
+            lines.append(f"Balance: **{get_coins(v.guild_id, v.user_id):,}**")
         return "\n".join(lines)
 
     async def _start(self, ctx_or_interaction, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Can only hunt cryptids in a server.")
+        start = await casino_prelude(
+            ctx_or_interaction, bet,
+            zero_msg="You gotta risk something, coward.",
+            no_guild_msg="Can only hunt cryptids in a server.",
+        )
+        if start is None:
             return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("You gotta risk something, coward.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
-            return
-        bet_result = transfer_to_house(guild.id, user.id, bet)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                await reply(f"Too broke for an expedition. Balance: **{bet_result.get('have', 0):,}**")
-            else:
-                await reply("Bet failed. Try again.")
-            return
-        game = Expedition(guild.id, user.id, user.display_name, bet)
-        view = ExpeditionView(self, game)
-        await reply(self._render(game), view=view)
+        view = ExpeditionView(self, start.guild.id, start.user.id,
+                              start.user.display_name, start.bet)
+        view.message = await start.reply(self._render(view), view=view)
 
     @commands.command(name="bigfoot", aliases=["cryptid", "expedition"])
     @commands.guild_only()

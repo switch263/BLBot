@@ -82,6 +82,7 @@ class CoinFlip(commands.Cog):
                 color=discord.Color.red()
             )
 
+        economy.record_game(guild_id, user_id, "coinflip", won)
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
         economy.memorial_tithe(guild_id, bet)

@@ -653,9 +653,9 @@ class Heist(commands.Cog):
         self._set_cooldown(guild_id, thief.id)
         if accomplice:
             self._set_cooldown(guild_id, accomplice.id)
-        economy.record_heist(guild_id, thief.id, success)
+        economy.record_game(guild_id, thief.id, "heist", success)
         if accomplice:
-            economy.record_heist(guild_id, accomplice.id, success)
+            economy.record_game(guild_id, accomplice.id, "heist", success)
 
         if success:
             lines = []
@@ -894,9 +894,9 @@ class Heist(commands.Cog):
             self._set_cooldown(guild_id, accomplice.id)
 
         # Track stats
-        economy.record_heist(guild_id, thief.id, success)
+        economy.record_game(guild_id, thief.id, "heist", success)
         if is_duo:
-            economy.record_heist(guild_id, accomplice.id, success)
+            economy.record_game(guild_id, accomplice.id, "heist", success)
 
         return embed, None, buildup
 

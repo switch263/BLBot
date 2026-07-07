@@ -2,7 +2,6 @@ import logging
 
 from discord.ext import commands, tasks
 
-import economy
 from economy import (
     replenish_house_if_low,
     HOUSE_STARTING_COINS,

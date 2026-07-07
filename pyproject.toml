@@ -1,0 +1,18 @@
+# Tooling config only — the bot itself is not a package; it deploys as a
+# Docker image running bot.py.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["disabled"]  # shelved cogs are a museum, not a codebase
+
+[tool.ruff.lint]
+# Correctness only, zero style churn: pyflakes (undefined names, unused
+# imports/variables, redefinitions) and syntax-level E9. Widen deliberately
+# later if wanted — turning on style rules would touch all ~60 cogs at once.
+select = ["F", "E9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# economy.py must see a scratch DB dir before anything imports it; conftest.py
+# sets BOT_DATA_DIR accordingly.

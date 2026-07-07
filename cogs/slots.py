@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
-import sqlite3
 import logging
 import economy
 from items import BONUS_SPIN
@@ -119,6 +118,8 @@ class Slots(commands.Cog):
             net = -bet
 
         economy.update_wallet(guild_id, user_id, net, is_jackpot)
+        # Staked spins only — _freespin risks nothing, so it doesn't count as a play.
+        economy.record_game(guild_id, user_id, "slots", payout_mult > 0)
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
         economy.memorial_tithe(guild_id, bet)
@@ -163,10 +164,14 @@ class Slots(commands.Cog):
         embed.set_footer(text=f"Balance: {balance:,} coins | Bonus Spins left: {left}")
         return embed
 
-    # (game_key, embed_label_with_emoji, plays_word, wins_word)
+    # (game_key, embed_label_with_emoji, plays_word, wins_word) — every key that
+    # record_game receives anywhere in the bot. Games never played are skipped
+    # at render time, so a long catalog costs nothing.
     _GAME_DISPLAY = [
+        ("slots",      "🎰 Slots (staked)",         "Plays",   "Wins"),
         ("roulette",   "🎡 Roulette (/bet)",        "Plays",   "Wins"),
         ("rr",         "🔫 Russian Roulette",       "Games",   "Wins"),
+        ("coinflip",   "🪙 Coinflip",               "Flips",   "Wins"),
         ("vault",      "🏦 Vault (/vault)",         "Plays",   "Cracked"),
         ("vault_hard", "🔒 Vault Hard (/vault hard)", "Plays", "Cracked"),
         ("vault_extra_hard", "🧳 Suitcase Lock (/vault extra)", "Plays", "Cracked"),
@@ -175,7 +180,26 @@ class Slots(commands.Cog):
         ("pawnshop",   "💼 Pawn Shop",              "Plays",   "Wins"),
         ("heist",      "🥷 Heists",                 "Attempts", "Successes"),
         ("den",        "🦝 Raccoon Den",            "Digs",    "Survived"),
+        ("mines",      "💣 Mines",                  "Boards",  "Banked"),
+        ("gauntlet",   "🪜 Gauntlet",               "Runs",    "Cashed out"),
+        ("bigfoot",    "🦍 Bigfoot",                "Hunts",   "Paydays"),
+        ("hotdog",     "🌭 Hot Dogs",               "Contests", "Kept down"),
+        ("insurance",  "📋 Insurance Fraud",        "Claims",  "Paid out"),
+        ("methgator",  "🐊 Meth Gator",             "Rampages", "Survived"),
+        ("troll",      "🌉 Troll Bridge",           "Riddles", "Solved"),
+        ("vend",       "🥤 Vending Machine",        "Sodas",   "Paid out"),
+        ("wheel",      "🎡 Wheel of Misfortune",    "Spins",   "Paid"),
+        ("bailbonds",  "⚖️ Bail Bonds",             "Bonds",   "Vig collected"),
+        ("roach",      "🪳 Roach Fights",           "Bouts",   "Wins"),
+        ("pigderby",   "🐷 Pig Derby",              "Races",   "Cashed"),
+        ("lottery",    "🎟️ Scratch Tickets",        "Tickets", "Winners"),
+        ("jailbreak",  "⛏️ Jailbreaks",             "Attempts", "Escapes"),
+        ("lawyer",     "👔 Lawyer Rolls",           "Trials",  "Acquittals"),
     ]
+
+    # Discord embeds cap at 25 fields; the wallet header uses 5. Show the
+    # player's most-played games and fold the tail into one line.
+    _MAX_GAME_ROWS = 18
 
     def _build_balance_embed(self, user: discord.Member, wallet: dict) -> discord.Embed:
         embed = discord.Embed(
@@ -194,11 +218,22 @@ class Slots(commands.Cog):
             inline=True,
         )
         stats = economy.get_game_stats(user.guild.id, user.id)
-        for game_key, label, plays_word, wins_word in self._GAME_DISPLAY:
-            row = stats.get(game_key, {"plays": 0, "wins": 0})
+        played = [
+            (game_key, label, plays_word, wins_word, stats[game_key])
+            for game_key, label, plays_word, wins_word in self._GAME_DISPLAY
+            if stats.get(game_key, {}).get("plays", 0) > 0
+        ]
+        played.sort(key=lambda p: p[4]["plays"], reverse=True)
+        for game_key, label, plays_word, wins_word, row in played[:self._MAX_GAME_ROWS]:
             embed.add_field(
                 name=label,
                 value=f"{plays_word}: **{row['plays']}**\n{wins_word}: **{row['wins']}**",
+                inline=True,
+            )
+        if len(played) > self._MAX_GAME_ROWS:
+            embed.add_field(
+                name="…and more",
+                value=f"**{len(played) - self._MAX_GAME_ROWS}** other game(s) played.",
                 inline=True,
             )
         return embed

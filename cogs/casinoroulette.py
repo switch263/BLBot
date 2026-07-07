@@ -4,15 +4,12 @@ from discord import app_commands
 import random
 import asyncio
 
-# Ensure root is in path for economy import
-
 from economy import (
-    get_coins, record_roulette, get_house_state, jail_message,
-    transfer_to_house, casino_payout, MAX_BET,
+    get_coins, record_game, get_house_state, casino_payout,
     GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT,
     HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT, BOT_HEIST_VAULT_ODDS,
 )
-from amount import parse_amount, amount_error
+from game_common import casino_prelude
 
 
 class CasinoRoulette(commands.Cog):
@@ -23,54 +20,21 @@ class CasinoRoulette(commands.Cog):
 
     # Logic shared by both command types to keep code clean
     async def run_bet(self, ctx_or_interaction, bet_type: str, amount):
-        # Determine if this is a Prefix context or a Slash interaction
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
+        start = await casino_prelude(
+            ctx_or_interaction, amount,
+            zero_msg="Bet more than 0, you cheapskate.",
+            no_guild_msg="This command can only be used in a server.",
+        )
+        if start is None:
+            return
+        guild, user, amount = start.guild, start.user, start.bet
 
-        guild = ctx_or_interaction.guild if not is_slash else ctx_or_interaction.guild
-        user = ctx_or_interaction.author if not is_slash else ctx_or_interaction.user
-
-        if not guild:
-            msg = "This command can only be used in a server."
-            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
-
-        amt = parse_amount(amount)
-        if amt is None:
-            msg = amount_error(amount)
-            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg, ephemeral=True)
-        amount = amt
-
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            return await ctx_or_interaction.send(jmsg) if not is_slash else await ctx_or_interaction.response.send_message(jmsg)
-
-        if amount <= 0:
-            msg = "Bet more than 0, you cheapskate."
-            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
-        if amount > MAX_BET:
-            msg = f"Easy, high roller — max bet is {MAX_BET:,} coins."
-            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
-
-        # Collect the bet atomically into the house pot. If the player is broke,
-        # this fails and nothing else happens.
-        bet_result = transfer_to_house(guild.id, user.id, amount)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                msg = f"You're too broke. Balance: **{bet_result.get('have', 0):,}**"
-            else:
-                msg = "Bet failed. Try again in a moment."
-            return await ctx_or_interaction.send(msg) if not is_slash else await ctx_or_interaction.response.send_message(msg)
         bet_type = bet_type.lower()
         winning_number = random.randint(0, 36)
         color = "🟢 GREEN" if winning_number == 0 else ("🔴 RED" if winning_number in self.red_numbers else "⚫ BLACK")
-        
+
         start_msg = f"🎰 **{user.display_name}** bets **{amount:,}** on **{bet_type}**... Spinning!"
-        
-        if is_slash:
-            await ctx_or_interaction.response.send_message(start_msg)
-            # Fetch the message object so we can edit it later
-            msg = await ctx_or_interaction.original_response()
-        else:
-            msg = await ctx_or_interaction.send(start_msg)
+        msg = await start.reply(start_msg)
 
         await asyncio.sleep(3)
         
@@ -121,7 +85,7 @@ class CasinoRoulette(commands.Cog):
             # Bet already went to house above; nothing more to do on a loss.
             final_text = f"{result_msg}\n💀 **L.** Your **{amount:,}** is in the pot now."
 
-        record_roulette(guild.id, user.id, won)
+        record_game(guild.id, user.id, "roulette", won)
 
         await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild.id, user.id):,}**")
 

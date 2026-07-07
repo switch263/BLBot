@@ -12,6 +12,13 @@ instead of long strings of zeros:
     1b             -> 1000000000
     1t             -> 1000000000000
 
+When the caller passes `available=` (a balance the amount is drawn against),
+contextual amounts work too:
+
+    all / max      -> available
+    half           -> available // 2
+    50%            -> half of available (any 0-100%)
+
 `parse_amount` is the single source of truth. Cogs declare their amount
 parameter as `str` (so slash fields accept text, not just digits) and call
 `parse_amount` at the top of the handler; on None they show `amount_error`.
@@ -30,15 +37,22 @@ _SUFFIXES = {
 
 # digits with optional , _ or space grouping, optional decimal, optional suffix
 _AMOUNT_RE = re.compile(r"^([0-9][0-9,_ ]*(?:\.[0-9]+)?)\s*([kmbt])?$", re.IGNORECASE)
+_PERCENT_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*%$")
 
 # Shown to the user when their amount couldn't be read.
 AMOUNT_HELP = "Try a number like `500`, `100,000`, `2k`, `1.5m`, or `1b`."
+CONTEXT_HELP = AMOUNT_HELP[:-1] + " — or `all`, `half`, or `50%`."
 
 
-def parse_amount(text) -> int | None:
+def parse_amount(text, available: int | None = None) -> int | None:
     """Parse a human-typed coin amount into a non-negative int, or None if it
     isn't a valid amount. Accepts thousands separators (`,` `_` space) and the
     suffixes k/m/b/t (case-insensitive), with or without a decimal (`1.5k`).
+
+    With `available=` (the balance the amount draws on), also accepts the
+    contextual forms `all`/`max`, `half`, and percentages like `50%`. Those
+    return None when no `available` was given — a bare "/gift all" has nothing
+    to be all OF unless the caller says so.
 
     Already-int input passes straight through (so handlers are safe to call it
     twice or on a default). Booleans, negatives, and junk return None."""
@@ -54,6 +68,19 @@ def parse_amount(text) -> int | None:
     s = str(text).strip().lower().lstrip("$").strip()
     if not s:
         return None
+
+    if available is not None:
+        if s in ("all", "max"):
+            return available
+        if s == "half":
+            return available // 2
+        pm = _PERCENT_RE.match(s)
+        if pm:
+            pct = float(pm.group(1))
+            if not 0 <= pct <= 100:
+                return None
+            return int(available * pct / 100)
+
     m = _AMOUNT_RE.match(s)
     if not m:
         return None
@@ -73,6 +100,9 @@ def parse_amount(text) -> int | None:
     return int(value)
 
 
-def amount_error(raw) -> str:
-    """A friendly 'couldn't read that' message for an unparseable amount."""
-    return f"❓ Couldn't read **{raw}** as an amount. {AMOUNT_HELP}"
+def amount_error(raw, contextual: bool = False) -> str:
+    """A friendly 'couldn't read that' message for an unparseable amount.
+    Pass contextual=True where all/half/% are accepted (i.e. the caller
+    parsed with `available=`) so the help text advertises those forms."""
+    help_text = CONTEXT_HELP if contextual else AMOUNT_HELP
+    return f"❓ Couldn't read **{raw}** as an amount. {help_text}"

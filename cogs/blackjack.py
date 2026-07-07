@@ -6,8 +6,8 @@ import logging
 import asyncio
 import time
 
-from economy import get_coins, jail_message, record_blackjack, transfer_to_house, casino_payout, MAX_BET
-from amount import parse_amount, amount_error
+from economy import get_coins, jail_message, record_game, transfer_to_house, casino_payout
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -399,35 +399,19 @@ class Blackjack(commands.Cog):
     # -------- Flow --------
 
     async def _start_round(self, ctx_or_interaction, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
         channel = ctx_or_interaction.channel
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
+        # collect=False: the buy-in is only taken after the channel-busy check
+        # below — otherwise a second starter in a busy channel would pay and
+        # get nothing.
+        start = await casino_prelude(
+            ctx_or_interaction, bet, collect=False,
+            zero_msg="Buy-in needs to be greater than 0.",
+            no_guild_msg="Can only play in a server.",
+        )
+        if start is None:
+            return
+        guild, user, bet, reply = start.guild, start.user, start.bet, start.reply
 
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Can only play in a server.")
-            return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("Buy-in needs to be greater than 0.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max buy-in is {MAX_BET:,} coins.")
-            return
         if channel.id in self.rounds:
             await reply("A blackjack round is already running in this channel.")
             return
@@ -542,7 +526,7 @@ class Blackjack(commands.Cog):
                     results.append(f"💀 dealer blackjack — lose {bet:,}")
                 elif dealer_bj and is_blackjack(h):
                     payout += bet
-                    results.append(f"🤝 push — dealer blackjack")
+                    results.append("🤝 push — dealer blackjack")
                 elif ptotal > 21:
                     results.append(f"💀 bust ({ptotal}) — lose {bet:,}")
                 elif dealer_bust or ptotal > dealer_total:
@@ -561,7 +545,7 @@ class Blackjack(commands.Cog):
             # Stat tracking: one play per player per round; "won" = ended up ahead
             # vs. what they put in (pushes count as plays but not wins).
             total_bet = sum(p.hand_bets)
-            record_blackjack(r.guild_id, p.user_id, won=payout > total_bet)
+            record_game(r.guild_id, p.user_id, "blackjack", won=payout > total_bet)
             p.result_text = " | ".join(results)
 
         content = self._render_playing(r, reveal_dealer=True, header_note="**Round complete!**")

@@ -7,9 +7,9 @@ top.
 
 Money model mirrors the Gauntlet (cogs/gauntlet.py): the ante goes to the house
 via transfer_to_house, the cash-out comes back through casino_payout, and any
-shortfall is minted so a winner is always paid in full (the memorial tithe is
-handled by those helpers). Two extra guards exist because a mines multiplier
-grows far faster than the Gauntlet's ladder (clearing 3-mine boards pays ~1000×):
+shortfall is minted so a winner is always paid in full. Two extra guards exist
+because a mines multiplier grows far faster than the Gauntlet's ladder
+(clearing 3-mine boards pays ~1000×):
   - MINES_MAX_MULT caps the realized multiplier, and
   - MINES_MAX_HOUSE_PCT keeps the bet a small slice of the house,
 so the most a single board can mint stays bounded.
@@ -17,6 +17,11 @@ so the most a single board can mint stays bounded.
 The fair multiplier after revealing k safe tiles is (1 - edge) / P(survive k),
 where P(survive k) is the probability of having picked k non-mine tiles in a
 row. The (1 - edge) factor is the house edge, applied uniformly at every depth.
+
+Uses casino_prelude in adapter-only mode (bet=None) for the slash/prefix
+plumbing and jail gate, like gauntlet — mines is exempt from MAX_BET (its
+table limit scales with the house bankroll instead), so it keeps its own bet
+parsing and validation. The board machinery comes from gridgame.
 """
 
 import discord
@@ -26,12 +31,15 @@ import random
 import logging
 
 import economy
-from economy import jail_message
 from amount import parse_amount, amount_error
+from game_common import casino_prelude
+from gridgame import GridView
 
 logger = logging.getLogger(__name__)
 
 MINES_N = 20            # 5 columns × 4 rows of tiles
+MINES_ROWS = 4
+MINES_COLS = 5
 MINES_DEFAULT = 3
 MINES_MIN = 1
 MINES_MAX = 19          # leave at least one safe tile
@@ -40,37 +48,23 @@ MINES_MAX_MULT = 100.0  # realized multiplier is capped here (bounds minting)
 MINES_MAX_HOUSE_PCT = 0.10  # bet ceiling = 10% of house on-hand
 MINES_MIN_BET = 1_000
 
-_TILES_PER_ROW = 5
 
-
-class MinesView(discord.ui.View):
+class MinesView(GridView):
     """One board for one player. 20 tile buttons (rows 0-3) plus a Cash Out
     button (row 4). Gated to the player; on timeout it auto-cashes whatever's
     banked so a survived board is never lost."""
 
     def __init__(self, cog, guild_id: int, user_id: int, bet: int, num_mines: int):
-        super().__init__(timeout=180)
+        super().__init__(user_id, rows=MINES_ROWS, cols=MINES_COLS, timeout=180,
+                         not_yours="Not your board — start your own with `/mines`.")
         self.cog = cog
         self.guild_id = guild_id
-        self.user_id = user_id
         self.bet = bet
         self.num_mines = num_mines
         self.safe = MINES_N - num_mines
         self.mines = set(random.sample(range(MINES_N), num_mines))
         self.revealed: set[int] = set()
-        self.message: discord.Message | None = None
-        self.resolved = False
-
-        self.tile_btns: list[discord.ui.Button] = []
-        for i in range(MINES_N):
-            btn = discord.ui.Button(label="⬛", style=discord.ButtonStyle.secondary, row=i // _TILES_PER_ROW)
-            btn.callback = self._make_tile_cb(i)
-            self.tile_btns.append(btn)
-            self.add_item(btn)
-
-        self.cash_btn = discord.ui.Button(style=discord.ButtonStyle.success, row=4)
-        self.cash_btn.callback = self._on_cash
-        self.add_item(self.cash_btn)
+        self.action_btn.style = discord.ButtonStyle.success
         self._sync()
 
     # ---- multiplier math ------------------------------------------------
@@ -92,11 +86,15 @@ class MinesView(discord.ui.View):
 
     # ---- rendering ------------------------------------------------------
     def _sync(self):
-        self.cash_btn.label = f"💰 Cash Out ({self.banked:,})"
+        self.action_btn.label = f"💰 Cash Out ({self.banked:,})"
 
-    def _disable_all(self):
-        for child in self.children:
-            child.disabled = True
+    def tile_face(self, idx: int):
+        if idx in self.mines:
+            return ("💥" if idx == getattr(self, "_hit", None) else "💣",
+                    discord.ButtonStyle.danger)
+        if idx in self.revealed:
+            return "💎", discord.ButtonStyle.success
+        return "🟦", discord.ButtonStyle.secondary
 
     def active_embed(self) -> discord.Embed:
         k = len(self.revealed)
@@ -115,8 +113,6 @@ class MinesView(discord.ui.View):
         )
 
     def _cash_embed(self, paid: int, minted: int, cleared: bool = False) -> discord.Embed:
-        self._reveal_board()
-        self._disable_all()
         net = paid - self.bet
         sign = "+" if net >= 0 else ""
         mint_note = "" if minted <= 0 else "\n*(the house fired up the money printer to cover it 🖨️)*"
@@ -133,8 +129,6 @@ class MinesView(discord.ui.View):
         )
 
     def _bust_embed(self, hit: int) -> discord.Embed:
-        self._reveal_board(hit=hit)
-        self._disable_all()
         return discord.Embed(
             title="💥 BOOM",
             description=(
@@ -143,19 +137,6 @@ class MinesView(discord.ui.View):
             ),
             color=discord.Color.dark_red(),
         )
-
-    def _reveal_board(self, hit: int | None = None):
-        """Flip every tile face-up for the end-state render."""
-        for i, btn in enumerate(self.tile_btns):
-            if i in self.mines:
-                btn.label = "💥" if i == hit else "💣"
-                btn.style = discord.ButtonStyle.danger
-            elif i in self.revealed:
-                btn.label = "💎"
-                btn.style = discord.ButtonStyle.success
-            else:
-                btn.label = "🟦"
-                btn.style = discord.ButtonStyle.secondary
 
     # ---- payout ---------------------------------------------------------
     def _payout_now(self, won: bool) -> tuple[int, int]:
@@ -170,68 +151,49 @@ class MinesView(discord.ui.View):
         economy.record_game(self.guild_id, self.user_id, "mines", won)
         return requested, minted
 
-    # ---- interaction ----------------------------------------------------
-    async def _guard(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "Not your board — start your own with `/mines`.", ephemeral=True
-            )
-            return False
-        return True
-
-    def _make_tile_cb(self, index: int):
-        async def _cb(interaction: discord.Interaction):
-            if not await self._guard(interaction) or self.resolved:
-                return
-            if index in self.revealed:
-                await interaction.response.defer()
-                return
-            if index in self.mines:  # bust
-                self.resolved = True
-                economy.record_game(self.guild_id, self.user_id, "mines", False)
-                await interaction.response.edit_message(embed=self._bust_embed(index), view=self)
-                self.stop()
-                return
-            # safe pick
-            self.revealed.add(index)
-            self.tile_btns[index].label = "💎"
-            self.tile_btns[index].style = discord.ButtonStyle.success
-            self.tile_btns[index].disabled = True
-            self._sync()
-            if len(self.revealed) == self.safe:  # swept the board → auto cash out
-                self.resolved = True
-                paid, minted = self._payout_now(True)
-                await interaction.response.edit_message(
-                    embed=self._cash_embed(paid, minted, cleared=True), view=self
-                )
-                self.stop()
-                return
-            await interaction.response.edit_message(embed=self.active_embed(), view=self)
-        return _cb
-
-    async def _on_cash(self, interaction: discord.Interaction):
-        if not await self._guard(interaction) or self.resolved:
+    # ---- GridView hooks ---------------------------------------------------
+    async def on_tile(self, interaction: discord.Interaction, idx: int):
+        if idx in self.revealed:
+            await interaction.response.defer()
             return
+        if idx in self.mines:  # bust
+            self._hit = idx
+            economy.record_game(self.guild_id, self.user_id, "mines", False)
+            self.finish()
+            await interaction.response.edit_message(embed=self._bust_embed(idx), view=self)
+            return
+        # safe pick
+        self.revealed.add(idx)
+        self.tile_btns[idx].label = "💎"
+        self.tile_btns[idx].style = discord.ButtonStyle.success
+        self.tile_btns[idx].disabled = True
+        self._sync()
+        if len(self.revealed) == self.safe:  # swept the board → auto cash out
+            paid, minted = self._payout_now(True)
+            self.finish()
+            await interaction.response.edit_message(
+                embed=self._cash_embed(paid, minted, cleared=True), view=self
+            )
+            return
+        await interaction.response.edit_message(embed=self.active_embed(), view=self)
+
+    async def on_action(self, interaction: discord.Interaction):
         if not self.revealed:
             await interaction.response.send_message(
                 "Reveal at least one tile before cashing out.", ephemeral=True
             )
             return
-        self.resolved = True
         paid, minted = self._payout_now(self.current_mult > 1.0)
+        self.finish()
         await interaction.response.edit_message(embed=self._cash_embed(paid, minted), view=self)
-        self.stop()
 
-    async def on_timeout(self):
-        if self.resolved or self.message is None:
+    async def on_abandon(self):
+        if self.message is None:
             return
-        self.resolved = True
         if not self.revealed:
             # Nothing banked — refund the ante so an ignored board isn't a loss.
             economy.casino_payout(self.guild_id, self.user_id, self.bet)
             economy.record_game(self.guild_id, self.user_id, "mines", False)
-            self._reveal_board()
-            self._disable_all()
             embed = discord.Embed(
                 title="🕰️ Board Abandoned",
                 description=f"You never picked a tile. Your **{self.bet:,}** was refunded.",
@@ -241,6 +203,7 @@ class MinesView(discord.ui.View):
             paid, minted = self._payout_now(self.current_mult > 1.0)
             embed = self._cash_embed(paid, minted)
             embed.set_footer(text="Auto-cashed out — you went quiet.")
+        self.finish()
         try:
             await self.message.edit(embed=embed, view=self)
         except discord.HTTPException:
@@ -256,19 +219,11 @@ class Mines(commands.Cog):
         logger.info("Mines loaded.")
 
     async def _start(self, ctx_or_interaction, bet_text, num_mines: int):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content=None, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
+        start = await casino_prelude(ctx_or_interaction, None)
+        if start is None:
             return
+        guild, user, reply = start.guild, start.user, start.reply
+
         if bet_text is None:
             await reply("Usage: `!mines <amount> [mines]` — e.g. `!mines 250k 3`.")
             return
@@ -280,10 +235,6 @@ class Mines(commands.Cog):
 
         if not (MINES_MIN <= num_mines <= MINES_MAX):
             await reply(f"Mines must be between **{MINES_MIN}** and **{MINES_MAX}**.")
-            return
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
             return
         if bet < MINES_MIN_BET:
             await reply(f"Minimum buy-in for Mines is **{MINES_MIN_BET:,}**.")

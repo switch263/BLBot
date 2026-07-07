@@ -29,7 +29,6 @@ import time
 import logging
 
 import economy
-from economy import jail_message
 
 logger = logging.getLogger(__name__)
 

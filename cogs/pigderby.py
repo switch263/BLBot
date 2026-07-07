@@ -6,8 +6,8 @@ import logging
 import asyncio
 import time
 
-from economy import get_coins, add_coins, deduct_coins, jail_message, MAX_BET, memorial_tithe
-from amount import parse_amount, amount_error
+from economy import get_coins, add_coins, deduct_coins, jail_message, memorial_tithe, record_game
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +286,7 @@ class PigDerby(commands.Cog):
             else:
                 lines.append(f"{emoji} **{name}** — {payout}× payout")
         lines.append("")
-        lines.append(f"Host can **Start Race** now or **Cancel** to refund.")
+        lines.append("Host can **Start Race** now or **Cancel** to refund.")
         return "\n".join(lines)
 
     def _render_track(self, d: Derby, header: str = "🏁 **The race is on!**") -> str:
@@ -322,35 +322,14 @@ class PigDerby(commands.Cog):
     # ---------- Flow ----------
 
     async def _start_derby(self, ctx_or_interaction, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
         channel = ctx_or_interaction.channel
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
+        # collect=False: pari-mutuel — bets settle player<->player at race end.
+        start = await casino_prelude(ctx_or_interaction, bet, collect=False,
+                                     zero_msg="Buy-in must be > 0.")
+        if start is None:
+            return
+        guild, user, bet, reply = start.guild, start.user, start.bet, start.reply
 
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
-            return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("Buy-in must be > 0.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
-            return
         if channel.id in self.derbies:
             await reply("A pig derby is already running in this channel.")
             return
@@ -431,6 +410,7 @@ class PigDerby(commands.Cog):
                 payouts.append((b, payout))
             else:
                 payouts.append((b, 0))
+            record_game(d.guild_id, b.user.id, "pigderby", won=b.pig_idx == winner_idx)
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
         memorial_tithe(d.guild_id, sum(b.amount for b in d.bets))

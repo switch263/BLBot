@@ -5,8 +5,8 @@ import random
 import logging
 import asyncio
 
-from economy import get_coins, add_coins, deduct_coins, jail_message, MAX_BET, memorial_tithe
-from amount import parse_amount, amount_error
+from economy import get_coins, add_coins, deduct_coins, jail_message, memorial_tithe, record_game
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,9 @@ class CockroachFightClub(commands.Cog):
         flourish = random.choice(WINNER_FLOURISHES).format(b=loser_roach)
         payout = c.bet * 2
         add_coins(c.guild_id, winner_member.id, payout)
+        loser_member = c.opponent if winner_is_challenger else c.challenger
+        record_game(c.guild_id, winner_member.id, "roach", won=True)
+        record_game(c.guild_id, loser_member.id, "roach", won=False)
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
         memorial_tithe(c.guild_id, payout)
@@ -173,40 +176,20 @@ class CockroachFightClub(commands.Cog):
             await channel.send(final)
 
     async def _start(self, ctx_or_interaction, opponent: discord.Member, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
         channel = ctx_or_interaction.channel
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
+        # collect=False: PvP — money moves player<->player when the bout
+        # resolves, not into the house at challenge time.
+        start = await casino_prelude(ctx_or_interaction, bet, collect=False,
+                                     zero_msg="Put some skin in the game.")
+        if start is None:
             return
+        guild, user, bet, reply = start.guild, start.user, start.bet, start.reply
+
         if opponent.id == user.id:
             await reply("You can't fight yourself. Therapy exists.")
             return
         if opponent.bot:
             await reply("Bots don't fight. They just judge.")
-            return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("Put some skin in the game.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
             return
         if get_coins(guild.id, user.id) < bet:
             await reply(f"Too broke for this bout. Balance: **{get_coins(guild.id, user.id):,}**")

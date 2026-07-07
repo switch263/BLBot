@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import logging
 
-from economy import get_coins, jail_message, record_pawnshop, transfer_to_house, casino_payout, MAX_BET
+from economy import get_coins, jail_message, record_game, transfer_to_house, casino_payout, MAX_BET
 from amount import parse_amount, amount_error
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ class PawnView(discord.ui.View):
         requested = int(g.bet * g.current_mult)
         paid = casino_payout(g.guild_id, g.user_id, requested)
         net = paid - g.bet
-        record_pawnshop(g.guild_id, g.user_id, won=net > 0)
+        record_game(g.guild_id, g.user_id, "pawnshop", won=net > 0)
         for child in self.children:
             child.disabled = True
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
@@ -155,7 +155,7 @@ class PawnView(discord.ui.View):
         if g.round >= MAX_ROUNDS:
             # Walk away from final offer
             g.ended = True
-            record_pawnshop(g.guild_id, g.user_id, won=False)
+            record_game(g.guild_id, g.user_id, "pawnshop", won=False)
             for child in self.children:
                 child.disabled = True
             walkaway = random.choice(WALK_AWAY_FLAVOR)

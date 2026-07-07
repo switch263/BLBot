@@ -757,7 +757,7 @@ if __name__ == "__main__":
     for i in range(6):
         buf = render_card(
             rarity_name="Common",
-            item_name=f"Quantum Common {{species}} of Dubious Origin",
+            item_name="Quantum Common {species} of Dubious Origin",
             coins=50_000,
             color=(191, 191, 191),
             flavor="A pigeon delivered this strapped to its leg.",

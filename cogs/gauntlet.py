@@ -25,8 +25,8 @@ import random
 import logging
 
 import economy
-from economy import jail_message
 from amount import parse_amount, amount_error
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -232,19 +232,13 @@ class Gauntlet(commands.Cog):
         logger.info("The Gauntlet loaded.")
 
     async def _start(self, ctx_or_interaction, bet_text):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content=None, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
+        # Adapter-only prelude (bet=None): the Gauntlet deliberately skips the
+        # flat MAX_BET check — its ceiling is a fraction of the house bankroll.
+        start = await casino_prelude(ctx_or_interaction, bet=None)
+        if start is None:
             return
+        guild, user, reply = start.guild, start.user, start.reply
+
         if bet_text is None:
             await reply("Usage: `!gauntlet <amount>` — e.g. `!gauntlet 500k`.")
             return
@@ -254,10 +248,6 @@ class Gauntlet(commands.Cog):
             return
         bet = amt
 
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
         if bet < GAUNTLET_MIN_BET:
             await reply(f"Minimum buy-in for the Gauntlet is **{GAUNTLET_MIN_BET:,}**.")
             return

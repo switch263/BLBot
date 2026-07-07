@@ -4,8 +4,9 @@ from discord import app_commands
 import random
 import logging
 
-from economy import get_coins, record_den, jail_message, transfer_to_house, casino_payout, MAX_BET
-from amount import parse_amount, amount_error
+from economy import get_coins, record_game, casino_payout, transfer_to_house
+from game_common import casino_prelude
+from gridgame import GridView
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ WIN_FLAVOR = [
     "Your mom will never know.",
 ]
 
+
 def current_multiplier(revealed_safe: int, num_raccoons: int) -> float:
     # Cap so kick-bonuses (which mark raccoon tiles as revealed) can't push
     # past the safe-tile count and divide by zero.
@@ -105,17 +107,20 @@ def pick_bonus_type() -> dict:
     return random.choices(BONUS_TYPES, weights=[b["weight"] for b in BONUS_TYPES])[0]
 
 
-class DenGame:
-    def __init__(self, guild_id: int, user_id: int, user_name: str, bet: int,
+class DenView(GridView):
+    HIDDEN_LABEL = "🗑️"
+
+    def __init__(self, cog, guild_id: int, user_id: int, user_name: str, bet: int,
                  num_raccoons: int = DEFAULT_RACCOONS):
+        super().__init__(user_id, rows=GRID_ROWS, cols=GRID_COLS, timeout=300,
+                         not_yours="Find your own dumpster.")
+        self.cog = cog
         self.guild_id = guild_id
-        self.user_id = user_id
         self.user_name = user_name
         self.bet = bet
         self.num_raccoons = num_raccoons
         self.raccoons: set[int] = set(random.sample(range(GRID_SIZE), num_raccoons))
         self.revealed: set[int] = set()
-        self.ended = False
         self.won = False
         self.bonus_tile: int | None = None
         self.bonus_type: dict | None = None
@@ -124,6 +129,8 @@ class DenGame:
             safe_tiles = [i for i in range(GRID_SIZE) if i not in self.raccoons]
             self.bonus_tile = random.choice(safe_tiles)
             self.bonus_type = pick_bonus_type()
+        self.action_btn.label = "Climb Out (1.00×)"
+        self.action_btn.emoji = "💰"
 
     @property
     def bonus_triggered(self) -> bool:
@@ -133,166 +140,103 @@ class DenGame:
         base = current_multiplier(len(self.revealed), self.num_raccoons)
         return min(base * self.bonus_multiplier, DEN_MAX_MULT)
 
+    # ---- GridView hooks ---------------------------------------------------
+    def tile_face(self, idx: int):
+        if idx in self.raccoons:
+            return "🦝", discord.ButtonStyle.danger
+        return None  # dug bins already show their face; unclicked bins stay shut
 
-class BinButton(discord.ui.Button):
-    def __init__(self, idx: int, row: int):
-        super().__init__(style=discord.ButtonStyle.secondary, label="🗑️", row=row)
-        self.idx = idx
+    async def on_tile(self, interaction: discord.Interaction, idx: int):
+        self.revealed.add(idx)
+        btn = self.tile_btns[idx]
+        btn.disabled = True
 
-    async def callback(self, interaction: discord.Interaction):
-        view: "DenView" = self.view  # type: ignore
-        g = view.game
-        if interaction.user.id != g.user_id:
-            await interaction.response.send_message("Find your own dumpster.", ephemeral=True)
-            return
-        if g.ended:
-            await interaction.response.defer()
-            return
-
-        g.revealed.add(self.idx)
-        self.disabled = True
-
-        if self.idx in g.raccoons:
-            g.ended = True
-            self.label = "🦝"
-            self.style = discord.ButtonStyle.danger
-            for child in view.children:
-                if isinstance(child, BinButton) and child.idx in g.raccoons:
-                    child.label = "🦝"
-                    child.style = discord.ButtonStyle.danger
-                child.disabled = True
-            record_den(g.guild_id, g.user_id, won=False)
+        if idx in self.raccoons:
+            record_game(self.guild_id, self.user_id, "den", won=False)
+            btn.label = "🦝"
+            btn.style = discord.ButtonStyle.danger
+            self.finish()
             scream = random.choice(RACCOON_SCREAMS)
-            content = view.cog._render(g, f"🦝 **BITTEN!** {scream}\nYou lose **{g.bet:,}** coins.")
-            await interaction.response.edit_message(content=content, view=view)
+            content = self.cog._render(
+                self, f"🦝 **BITTEN!** {scream}\nYou lose **{self.bet:,}** coins.")
+            await interaction.response.edit_message(content=content, view=self)
             return
 
         bonus_msg = None
-        if self.idx == g.bonus_tile and g.bonus_type:
-            bt = g.bonus_type
-            self.label = bt["label"]
-            self.style = discord.ButtonStyle.success
+        if idx == self.bonus_tile and self.bonus_type:
+            bt = self.bonus_type
+            btn.label = bt["label"]
+            btn.style = discord.ButtonStyle.success
             bonus_msg = bt["flavor"]
-            view._apply_bonus_effect()
+            self._apply_bonus_effect()
         else:
-            self.label = "💎"
-            self.style = discord.ButtonStyle.success
-        view._refresh_cashout()
-        if len(g.revealed) >= GRID_SIZE - g.num_raccoons:
+            btn.label = "💎"
+            btn.style = discord.ButtonStyle.success
+        self._refresh_cashout()
+
+        if len(self.revealed) >= GRID_SIZE - self.num_raccoons:
             # Cleared the board — max payout, auto cashout
-            g.ended = True
-            g.won = True
-            mult = g.get_multiplier()
-            requested = int(g.bet * mult)
-            paid = casino_payout(g.guild_id, g.user_id, requested)
-            record_den(g.guild_id, g.user_id, won=True)
-            for child in view.children:
-                if isinstance(child, BinButton) and child.idx in g.raccoons:
-                    child.label = "🦝"
-                    child.style = discord.ButtonStyle.danger
-                child.disabled = True
-            net = paid - g.bet
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            flavor = random.choice(WIN_FLAVOR)
-            content = view.cog._render(
-                g,
-                f"🏆 **PERFECT RUN at {mult:.2f}×!** You cleaned out the den.\n"
-                f"Net **{net:+,}** coins.{short} _{flavor}_",
-            )
-            await interaction.response.edit_message(content=content, view=view)
+            await self._cash_out(interaction, perfect=True)
             return
 
-        await interaction.response.edit_message(content=view.cog._render(g, bonus_msg), view=view)
+        await interaction.response.edit_message(content=self.cog._render(self, bonus_msg), view=self)
 
+    async def on_action(self, interaction: discord.Interaction):
+        if not self.revealed:
+            await interaction.response.send_message(
+                "You haven't touched a single bin yet, coward.", ephemeral=True)
+            return
+        await self._cash_out(interaction, perfect=False)
 
-class CashOutButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(style=discord.ButtonStyle.primary, label="Climb Out (1.00×)", emoji="💰", row=GRID_ROWS)
-
-    async def callback(self, interaction: discord.Interaction):
-        view: "DenView" = self.view  # type: ignore
-        g = view.game
-        if interaction.user.id != g.user_id:
-            await interaction.response.send_message("Not your den.", ephemeral=True)
-            return
-        if g.ended:
-            await interaction.response.defer()
-            return
-        if not g.revealed:
-            await interaction.response.send_message("You haven't touched a single bin yet, coward.", ephemeral=True)
-            return
-        g.ended = True
-        g.won = True
-        mult = g.get_multiplier()
-        requested = int(g.bet * mult)
-        paid = casino_payout(g.guild_id, g.user_id, requested)
-        record_den(g.guild_id, g.user_id, won=True)
-        for child in view.children:
-            if isinstance(child, BinButton) and child.idx in g.raccoons:
-                child.label = "🦝"
-                child.style = discord.ButtonStyle.danger
-            child.disabled = True
-        net = paid - g.bet
+    async def _cash_out(self, interaction: discord.Interaction, perfect: bool):
+        self.won = True
+        mult = self.get_multiplier()
+        requested = int(self.bet * mult)
+        paid = casino_payout(self.guild_id, self.user_id, requested)
+        record_game(self.guild_id, self.user_id, "den", won=True)
+        self.finish()
+        net = paid - self.bet
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
         flavor = random.choice(WIN_FLAVOR)
-        content = view.cog._render(
-            g,
-            f"💰 **Climbed out at {mult:.2f}×.** Net **{net:+,}** coins.{short} _{flavor}_",
-        )
-        await interaction.response.edit_message(content=content, view=view)
+        if perfect:
+            lead = f"🏆 **PERFECT RUN at {mult:.2f}×!** You cleaned out the den.\n"
+        else:
+            lead = f"💰 **Climbed out at {mult:.2f}×.** "
+        content = self.cog._render(self, f"{lead}Net **{net:+,}** coins.{short} _{flavor}_")
+        await interaction.response.edit_message(content=content, view=self)
 
+    async def on_abandon(self):
+        # Cashout for the user at whatever they've got
+        if self.revealed:
+            casino_payout(self.guild_id, self.user_id, int(self.bet * self.get_multiplier()))
+            record_game(self.guild_id, self.user_id, "den", won=True)
+        else:
+            record_game(self.guild_id, self.user_id, "den", won=False)
 
-class DenView(discord.ui.View):
-    def __init__(self, cog, game: DenGame):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.game = game
-        for i in range(GRID_SIZE):
-            self.add_item(BinButton(i, row=i // GRID_COLS))
-        self.cashout = CashOutButton()
-        self.add_item(self.cashout)
-
+    # ---- bonuses ------------------------------------------------------------
     def _refresh_cashout(self):
-        mult = self.game.get_multiplier()
-        payout = int(self.game.bet * mult)
-        net = payout - self.game.bet
-        self.cashout.label = f"Climb Out ({mult:.2f}×, +{net:,})"
+        mult = self.get_multiplier()
+        net = int(self.bet * mult) - self.bet
+        self.action_btn.label = f"Climb Out ({mult:.2f}×, +{net:,})"
 
     def _apply_bonus_effect(self):
-        g = self.game
-        bt = g.bonus_type
+        bt = self.bonus_type
         if not bt:
             return
-        effect = bt["effect"]
-        if effect == "mult":
-            g.bonus_multiplier = bt["value"]
-        elif effect == "kick":
-            kick = len(g.raccoons) if bt["value"] == "all" else bt["value"]
-            count = min(kick, len(g.raccoons))
-            for victim in random.sample(list(g.raccoons), count):
+        if bt["effect"] == "mult":
+            self.bonus_multiplier = bt["value"]
+        elif bt["effect"] == "kick":
+            kick = len(self.raccoons) if bt["value"] == "all" else bt["value"]
+            for victim in random.sample(list(self.raccoons), min(kick, len(self.raccoons))):
                 self._kick_out_raccoon(victim, bt["label"])
 
     def _kick_out_raccoon(self, idx: int, label: str):
-        g = self.game
-        g.raccoons.discard(idx)
-        g.revealed.add(idx)
-        for child in self.children:
-            if isinstance(child, BinButton) and child.idx == idx:
-                child.label = label
-                child.style = discord.ButtonStyle.success
-                child.disabled = True
-
-    async def on_timeout(self):
-        if not self.game.ended:
-            # Cashout for the user at whatever they've got
-            g = self.game
-            if g.revealed:
-                mult = g.get_multiplier()
-                casino_payout(g.guild_id, g.user_id, int(g.bet * mult))
-                record_den(g.guild_id, g.user_id, won=True)
-            else:
-                record_den(g.guild_id, g.user_id, won=False)
-            g.ended = True
+        self.raccoons.discard(idx)
+        self.revealed.add(idx)
+        btn = self.tile_btns[idx]
+        btn.label = label
+        btn.style = discord.ButtonStyle.success
+        btn.disabled = True
 
 
 class RaccoonDen(commands.Cog):
@@ -303,68 +247,49 @@ class RaccoonDen(commands.Cog):
     async def on_ready(self):
         logger.info("Raccoon's Den loaded.")
 
-    def _render(self, g: DenGame, footer: str | None = None) -> str:
-        mult = g.get_multiplier()
-        safe_possible = GRID_SIZE - g.num_raccoons
+    def _render(self, v: DenView, footer: str | None = None) -> str:
+        mult = v.get_multiplier()
+        safe_possible = GRID_SIZE - v.num_raccoons
         mult_label = f"**{mult:.2f}×**"
-        if g.bonus_triggered and g.bonus_type:
-            mult_label += f" {g.bonus_type['label']}"
+        if v.bonus_triggered and v.bonus_type:
+            mult_label += f" {v.bonus_type['label']}"
         lines = [
-            f"🦝 **{g.user_name}'s Raccoon Den** — bet **{g.bet:,}** coins",
-            f"**{g.num_raccoons}** feral raccoons hide in {GRID_SIZE} bins. "
-            f"Revealed: **{len(g.revealed)}/{safe_possible}** | Multiplier: {mult_label}",
+            f"🦝 **{v.user_name}'s Raccoon Den** — bet **{v.bet:,}** coins",
+            f"**{v.num_raccoons}** feral raccoons hide in {GRID_SIZE} bins. "
+            f"Revealed: **{len(v.revealed)}/{safe_possible}** | Multiplier: {mult_label}",
         ]
-        if not g.ended:
-            lines.append(f"Click bins to dig. Climb Out any time to bank **{int(g.bet * mult):,}** coins.")
+        if not v.resolved:
+            lines.append(f"Click bins to dig. Climb Out any time to bank **{int(v.bet * mult):,}** coins.")
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
+            lines.append(f"Balance: **{get_coins(v.guild_id, v.user_id):,}**")
         return "\n".join(lines)
 
     async def _start_game(self, ctx_or_interaction, bet, raccoons: int = DEFAULT_RACCOONS):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Can only dig in a server.")
+        # collect=False: the bet is parsed and validated but not taken, so the
+        # raccoon-count check below can still bail without needing a refund.
+        start = await casino_prelude(
+            ctx_or_interaction, bet, collect=False,
+            zero_msg="You gotta risk something, cheapskate.",
+            no_guild_msg="Can only dig in a server.",
+        )
+        if start is None:
             return
         if not (MIN_RACCOONS <= raccoons <= MAX_RACCOONS):
-            await reply(f"Pick **{MIN_RACCOONS}–{MAX_RACCOONS}** raccoons. "
-                        f"More raccoons, steeper multipliers.")
+            await start.reply(f"Pick **{MIN_RACCOONS}–{MAX_RACCOONS}** raccoons. "
+                              f"More raccoons, steeper multipliers.", ephemeral=True)
             return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("You gotta risk something, cheapskate.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
-            return
-        bet_result = transfer_to_house(guild.id, user.id, bet)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
+        res = transfer_to_house(start.guild.id, start.user.id, start.bet)
+        if not res.get("ok"):
+            if res.get("error") == "broke":
+                await start.reply(f"Too broke. Balance: **{res.get('have', 0):,}**", ephemeral=True)
             else:
-                await reply("Bet failed. Try again.")
+                await start.reply("Bet failed. Try again.", ephemeral=True)
             return
-        game = DenGame(guild.id, user.id, user.display_name, bet, num_raccoons=raccoons)
-        view = DenView(self, game)
-        await reply(self._render(game), view=view)
+        view = DenView(self, start.guild.id, start.user.id, start.user.display_name,
+                       start.bet, num_raccoons=raccoons)
+        view.message = await start.reply(self._render(view), view=view)
 
     @commands.command(name="dig", aliases=["den", "raccoon"])
     @commands.guild_only()

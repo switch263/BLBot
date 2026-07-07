@@ -6,9 +6,10 @@ import asyncio
 import logging
 
 from economy import (
-    get_coins, jail_message, transfer_to_house, casino_payout,
+    get_coins, transfer_to_house, casino_payout,
     record_game, check_bet,
 )
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -124,30 +125,18 @@ class Lottery(commands.Cog):
         return "\n".join(lines)
 
     async def _play(self, ctx_or_interaction, ticket_key: str):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
+        # Adapter-only prelude (bet=None): the stake is a fixed ticket price,
+        # resolved from the catalog below, not a typed amount.
+        start = await casino_prelude(ctx_or_interaction, bet=None)
+        if start is None:
             return
+        guild, user, reply = start.guild, start.user, start.reply
 
         key = _resolve(ticket_key)
         if not key:
             await reply(
                 f"❓ Unknown ticket **{ticket_key}**.\n\n{self._ticket_list()}"
             )
-            return
-
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
             return
 
         ticket = TICKETS[key]

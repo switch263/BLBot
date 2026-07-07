@@ -20,11 +20,8 @@ import random
 import logging
 from collections import Counter
 
-from economy import (
-    get_coins, jail_message, record_game, transfer_to_house, casino_payout,
-    MAX_BET,
-)
-from amount import parse_amount, amount_error
+from economy import get_coins, record_game, casino_payout, MAX_BET
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -317,44 +314,16 @@ class TheVault(commands.Cog):
 
     async def _start(self, ctx_or_interaction, bet, difficulty: str):
         cfg = DIFFICULTIES[difficulty]
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
+        start = await casino_prelude(
+            ctx_or_interaction, bet,
+            zero_msg=f"Bet > 0 to crack the {cfg['thing']}.",
+        )
+        if start is None:
             return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply(f"Bet > 0 to crack the {cfg['thing']}.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is **{MAX_BET:,}** coins.")
-            return
-        bet_result = transfer_to_house(guild.id, user.id, bet)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
-            else:
-                await reply("Bet failed. Try again.")
-            return
-        game = VaultGame(guild.id, user.id, user.display_name, bet, cfg)
+        game = VaultGame(start.guild.id, start.user.id, start.user.display_name,
+                         start.bet, cfg)
         view = VaultView(self, game)
-        await reply(self._render(game), view=view)
+        await start.reply(self._render(game), view=view)
 
     # ---- prefix: !vault <bet> [difficulty], plus legacy aliases ------------
 

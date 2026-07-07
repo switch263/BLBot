@@ -4,8 +4,8 @@ from discord import app_commands
 import random
 import logging
 
-from economy import get_coins, jail_message, record_highlow, transfer_to_house, casino_payout, MAX_BET
-from amount import parse_amount, amount_error
+from economy import get_coins, record_game, casino_payout
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,6 @@ def random_card() -> tuple[int, str]:
 
 def suit_wrap(rank_idx: int, suit: str) -> str:
     label = rank_label(rank_idx)
-    color = "diamond" if suit in ("♥", "♦") else "spade"
     return f"`{label}{suit}`"
 
 
@@ -96,7 +95,7 @@ class CashOutButton(discord.ui.Button):
         requested = int(g.bet * g.multiplier)
         paid = casino_payout(g.guild_id, g.user_id, requested)
         net = paid - g.bet
-        record_highlow(g.guild_id, g.user_id, won=net > 0)
+        record_game(g.guild_id, g.user_id, "highlow", won=net > 0)
         for child in view.children:
             child.disabled = True
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
@@ -181,7 +180,7 @@ class HigherOrLower(commands.Cog):
 
         # Wrong
         g.ended = True
-        record_highlow(g.guild_id, g.user_id, won=False)
+        record_game(g.guild_id, g.user_id, "highlow", won=False)
         g.log.append(
             f"{suit_wrap(old_rank_idx, old_suit)} → **{'HIGHER' if guessed_higher else 'LOWER'}** → "
             f"{suit_wrap(new_rank_idx, new_suit)} ❌ **BUST**{tie_note}"
@@ -216,41 +215,10 @@ class HigherOrLower(commands.Cog):
         return "\n".join(lines)
 
     async def _start(self, ctx_or_interaction, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Server only.")
+        start = await casino_prelude(ctx_or_interaction, bet, zero_msg="Bet > 0.")
+        if start is None:
             return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("Bet > 0.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
-            return
-        bet_result = transfer_to_house(guild.id, user.id, bet)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
-            else:
-                await reply("Bet failed. Try again.")
-            return
+        guild, user, bet, reply = start.guild, start.user, start.bet, start.reply
         game = HighLowGame(guild.id, user.id, user.display_name, bet)
         view = HighLowView(self, game)
         view._refresh()

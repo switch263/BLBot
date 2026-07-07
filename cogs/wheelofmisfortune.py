@@ -5,8 +5,8 @@ import random
 import logging
 import asyncio
 
-from economy import get_coins, jail_message, transfer_to_house, casino_payout, MAX_BET
-from amount import parse_amount, amount_error
+from economy import get_coins, transfer_to_house, casino_payout, record_game
+from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class WheelOfMisfortune(commands.Cog):
 
         if outcome == "break_even":
             casino_payout(guild_id, user_id, bet)
-            return f"🙃 **Break even.** The wheel is bored. Bet returned."
+            return "🙃 **Break even.** The wheel is bored. Bet returned."
 
         if outcome == "nothing":
             return f"💀 **The wheel ate your {bet:,} coins and stared silently.**"
@@ -184,52 +184,14 @@ class WheelOfMisfortune(commands.Cog):
                     return f"🤡 The wheel tried to rename you to **{nick}** but the bot lacks permissions. Lose **{bet:,}** anyway, coward."
             return f"🤡 Somehow couldn't curse you. Lose **{bet:,}** regardless."
 
-        if outcome == "wheel_again":
-            bonus = self._pick_outcome()
-            while bonus == "wheel_again":
-                bonus = self._pick_outcome()
-            bonus_text = await self._apply_outcome(bonus, bet, user, guild, channel)
-            return f"🔄 **FREE BONUS SPIN!** The wheel re-rolls...\n↳ {bonus_text}"
-
         return "???"
 
     async def _do_spin(self, ctx_or_interaction, bet):
-        is_slash = isinstance(ctx_or_interaction, discord.Interaction)
-        guild = ctx_or_interaction.guild
-        channel = ctx_or_interaction.channel
-        user = ctx_or_interaction.user if is_slash else ctx_or_interaction.author
-
-        async def reply(content, **kwargs):
-            if is_slash:
-                await ctx_or_interaction.response.send_message(content, **kwargs)
-                return await ctx_or_interaction.original_response()
-            return await ctx_or_interaction.send(content, **kwargs)
-
-        if not guild:
-            await reply("Can only spin in a server.")
+        start = await casino_prelude(ctx_or_interaction, bet, zero_msg="Bet more than 0, cheapskate.",
+                                     no_guild_msg="Can only spin in a server.")
+        if start is None:
             return
-        amt = parse_amount(bet)
-        if amt is None:
-            await reply(amount_error(bet))
-            return
-        bet = amt
-        jmsg = jail_message(guild.id, user.id)
-        if jmsg:
-            await reply(jmsg)
-            return
-        if bet <= 0:
-            await reply("Bet more than 0, cheapskate.")
-            return
-        if bet > MAX_BET:
-            await reply(f"Easy, high roller — max bet is {MAX_BET:,} coins.")
-            return
-        bet_result = transfer_to_house(guild.id, user.id, bet)
-        if not bet_result.get("ok"):
-            if bet_result.get("error") == "broke":
-                await reply(f"You're too broke. Balance: **{bet_result.get('have', 0):,}**")
-            else:
-                await reply("Bet failed. Try again.")
-            return
+        guild, user, bet, reply = start.guild, start.user, start.bet, start.reply
 
         frames = [
             "🎡 **Spinning the Wheel of Misfortune...**",
@@ -238,6 +200,7 @@ class WheelOfMisfortune(commands.Cog):
             "🎡 *It lands on...*",
         ]
         msg = await reply(frames[0])
+        channel = msg.channel  # pay_channel outcome scans history for recipients
         for frame in frames[1:]:
             await asyncio.sleep(0.9)
             try:
@@ -246,7 +209,16 @@ class WheelOfMisfortune(commands.Cog):
                 break
 
         outcome = self._pick_outcome()
+        # wheel_again is a re-roll wrapper — resolve it here so the recorded
+        # stat is the outcome that actually settled, not the wrapper.
+        rerolled = outcome == "wheel_again"
+        while outcome == "wheel_again":
+            outcome = self._pick_outcome()
         result = await self._apply_outcome(outcome, bet, user, guild, channel)
+        if rerolled:
+            result = f"🔄 **FREE BONUS SPIN!** The wheel re-rolls...\n↳ {result}"
+        record_game(guild.id, user.id, "wheel",
+                    won=outcome in ("jackpot_10x", "jackpot_5x", "payout_3x", "payout_2x"))
         final = (
             f"🎡 **{user.display_name}** fed the Wheel of Misfortune **{bet:,}** coins.\n"
             f"{result}\n"

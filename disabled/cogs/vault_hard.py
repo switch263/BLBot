@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import (
-    get_coins, jail_message, record_vault_hard,
+    get_coins, jail_message, record_game,
     transfer_to_house, casino_payout,
     MAX_BET,
 )
@@ -138,7 +138,7 @@ class SubmitButton(discord.ui.Button):
             mult = PAYOUT_BY_ATTEMPT.get(attempts_used, PAYOUT_BY_ATTEMPT[MAX_ATTEMPTS])
             requested = int(g.bet * mult)
             payout = casino_payout(g.guild_id, g.user_id, requested)
-            record_vault_hard(g.guild_id, g.user_id, won=True)
+            record_game(g.guild_id, g.user_id, "vault_hard", won=True)
             for child in view.children:
                 child.disabled = True
             short_note = ""
@@ -154,7 +154,7 @@ class SubmitButton(discord.ui.Button):
             g.ended = True
             # Bet was already routed to the house at game start (transfer_to_house);
             # nothing more to do on failure.
-            record_vault_hard(g.guild_id, g.user_id, won=False)
+            record_game(g.guild_id, g.user_id, "vault_hard", won=False)
             for child in view.children:
                 child.disabled = True
             code_str = "".join(str(d) for d in g.code)

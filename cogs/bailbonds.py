@@ -6,7 +6,8 @@ import time
 import logging
 
 from economy import (
-    get_coins, jail_message, jail_remaining,
+    record_game,
+    get_coins, jail_remaining,
     get_active_jails, pay_bail, jail_user,
     casino_payout,
 )
@@ -127,6 +128,9 @@ class BailBonds(commands.Cog):
         if requested > 0 and payout < requested:
             short_note = f" *(house was short — owed {requested:,})*"
         net = payout - bail
+        # Won = the bond turned a profit; break-even, skips, and the bondsman
+        # getting jailed all count as plays without a win.
+        record_game(guild.id, payer.id, "bailbonds", won=net > 0)
 
         lines = [
             f"💼 **{payer.display_name}** posts **{bail:,}** for {jailed.mention} — they walk free.",

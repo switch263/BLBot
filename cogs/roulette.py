@@ -194,11 +194,11 @@ class RussianRoulette(commands.Cog):
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
         economy.memorial_tithe(guild_id, pot)
-        economy.record_rr(guild_id, winner.id, True)
+        economy.record_game(guild_id, winner.id, "rr", True)
         # Record losses for everyone else who joined
         for p in game["players"]:
             if p.id != winner.id:
-                economy.record_rr(guild_id, p.id, False)
+                economy.record_game(guild_id, p.id, "rr", False)
         await ctx.send(random.choice(VICTORY_MESSAGES).format(winner=winner.mention, pot=pot))
 
         del self.active_games[channel.id]

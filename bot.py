@@ -2,14 +2,11 @@
 import discord
 from discord.ext import commands
 from pathlib import Path
-import json
 import logging
 import os
-import random
 import sys
 import asyncio
 # Load configuration from a separate file
-from config import dbtype, dbfile
 import economy
 
 # Configure logging

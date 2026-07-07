@@ -4,6 +4,7 @@ from discord import app_commands
 import logging
 
 import economy
+from amount import parse_amount
 
 logger = logging.getLogger(__name__)
 
@@ -22,40 +23,9 @@ logger = logging.getLogger(__name__)
 
 BANK_NAME = "First Bank of the Casino"
 
+# Amount parsing lives in amount.py (parse_amount with available=) — the
+# shared parser handles numbers, k/m/b suffixes, all/half/max, and percents.
 AMOUNT_HELP = "a number (`2500`, `10k`, `1.5m`), a percent (`50%`), `all`, `half`, or `max`"
-
-_SUFFIXES = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
-
-
-def _parse_amount(raw: str, available: int) -> int | None:
-    """Parse a typed deposit/withdraw amount against the available balance:
-    plain integers (commas/underscores ok), k/m/b suffixes ('10k', '1.5m'),
-    percentages ('50%'), and the keywords all/half/max. Returns None if
-    unparseable. May return a non-positive number (e.g. 'all' on an empty
-    balance) — callers surface that as their own error."""
-    raw = raw.strip().lower().replace(",", "").replace("_", "")
-    if raw in ("all", "max"):
-        return available
-    if raw == "half":
-        return available // 2
-    if raw.endswith("%"):
-        try:
-            pct = float(raw[:-1])
-        except ValueError:
-            return None
-        if not 0 <= pct <= 100:
-            return None
-        return int(available * pct / 100)
-    mult = 1
-    if raw and raw[-1] in _SUFFIXES:
-        mult = _SUFFIXES[raw[-1]]
-        raw = raw[:-1]
-    try:
-        if mult == 1 and "." not in raw:
-            return int(raw)
-        return int(float(raw) * mult)
-    except ValueError:
-        return None
 
 
 class Bank(commands.Cog):
@@ -96,7 +66,7 @@ class Bank(commands.Cog):
     async def _do_deposit(self, guild_id: int, user: discord.Member,
                           raw_amount: str, show_balances: bool = True) -> str:
         wallet = economy.get_coins(guild_id, user.id)
-        amount = _parse_amount(raw_amount, wallet)
+        amount = parse_amount(raw_amount, available=wallet)
         if amount is None:
             return f"Usage: `/deposit <amount>` — {AMOUNT_HELP}."
         if amount <= 0:
@@ -118,7 +88,7 @@ class Bank(commands.Cog):
     async def _do_withdraw(self, guild_id: int, user: discord.Member,
                            raw_amount: str, show_balances: bool = True) -> str:
         banked = economy.bank_balance(guild_id, user.id)
-        amount = _parse_amount(raw_amount, banked)
+        amount = parse_amount(raw_amount, available=banked)
         if amount is None:
             return f"Usage: `/withdraw <amount>` — {AMOUNT_HELP}."
         if amount <= 0:
