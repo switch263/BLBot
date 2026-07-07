@@ -83,8 +83,10 @@ def test_reserve_self_heals_from_on_hand():
     H = economy.get_house_id()
     economy.get_house_state(G)  # seed
     with sqlite3.connect(economy.DB_FILE) as conn:
-        conn.execute("UPDATE house_reserve SET coins=10_000_000, last_interest_ts=? WHERE guild_id=?",
-                     (time.time(), G))
+        # Bind the amount — underscore digit separators in raw SQL need
+        # SQLite >= 3.46, which CI's Ubuntu runner doesn't have.
+        conn.execute("UPDATE house_reserve SET coins=?, last_interest_ts=? WHERE guild_id=?",
+                     (10_000_000, time.time(), G))
         conn.execute("INSERT OR REPLACE INTO wallets (guild_id, user_id, coins) VALUES (?,?,?)",
                      (G, H, 500_000_000))
         conn.commit()
