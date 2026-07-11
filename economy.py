@@ -1747,6 +1747,36 @@ def get_leaderboard(guild_id: int, limit: int = 10) -> list:
         return []
 
 
+def get_wealth_leaderboard(guild_id: int, limit: int = 10) -> list:
+    """Top players by TOTAL wealth (wallet + bank). Excludes the house wallet.
+    Accrues each account's bank interest first so banked figures match /bank.
+    Returns (user_id, wealth, coins, banked, total_won, total_lost) rows.
+    /richest ranks on this; the slots leaderboard and the rank-1 achievement
+    stay on the wallet-only get_leaderboard on purpose."""
+    try:
+        with _tx("get_wealth_leaderboard") as conn:
+            holders = conn.execute(
+                "SELECT user_id FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchall()
+            for (uid,) in holders:
+                _accrue_bank_interest(conn, guild_id, uid)
+            return conn.execute(
+                "SELECT w.user_id, w.coins + COALESCE(b.value, 0) AS wealth, "
+                "w.coins, COALESCE(b.value, 0), w.total_won, w.total_lost "
+                "FROM wallets w LEFT JOIN cog_kv b "
+                "ON b.guild_id = w.guild_id AND b.user_id = w.user_id "
+                "AND b.namespace = ? AND b.key = ? "
+                "WHERE w.guild_id = ? AND w.user_id != ? "
+                "ORDER BY wealth DESC LIMIT ?",
+                (_BANK_NS, _BANK_KEY, guild_id, get_house_id(), limit),
+            ).fetchall()
+    except sqlite3.Error as e:
+        logger.error(f"Database error getting wealth leaderboard: {e}")
+        return []
+
+
 def get_all_wallets(guild_id: int) -> list:
     """Every (user_id, coins) in the guild EXCLUDING the house wallet. Used by
     the weekly wealth tax to assess every player. The memorial player is left
@@ -1840,9 +1870,15 @@ def get_server_stats(guild_id: int) -> dict:
                 (guild_id, get_house_id())
             )
             row = cursor.fetchone()
+            banked = conn.execute(
+                "SELECT COALESCE(SUM(value), 0) FROM cog_kv "
+                "WHERE guild_id = ? AND namespace = ? AND key = ?",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchone()[0] or 0
             return {
                 "players": row[0] or 0,
                 "total_coins": row[1] or 0,
+                "total_banked": int(banked),
                 "total_won": row[2] or 0,
                 "total_lost": row[3] or 0,
                 "total_spins": row[4] or 0,
@@ -1850,7 +1886,7 @@ def get_server_stats(guild_id: int) -> dict:
             }
     except sqlite3.Error as e:
         logger.error(f"Database error getting server stats: {e}")
-        return {"players": 0, "total_coins": 0, "total_won": 0, "total_lost": 0, "total_spins": 0, "total_jackpots": 0}
+        return {"players": 0, "total_coins": 0, "total_banked": 0, "total_won": 0, "total_lost": 0, "total_spins": 0, "total_jackpots": 0}
 
 
 def get_pot(guild_id: int) -> int:

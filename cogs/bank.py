@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 # All money movement lives in economy.py (bank_deposit / bank_withdraw /
 # bank_raid); this cog is just the counter window.
 #
-# Privacy: accounts are private. /bank only shows your own account and every
-# slash response is ephemeral; !bank DMs the statement. Public confirmations
-# (prefix deposit/withdraw) never print balances.
+# Privacy: accounts are private. /bank balance only shows your own account and
+# every slash response is ephemeral; !bank DMs the statement. Public
+# confirmations (prefix deposit/withdraw) never print balances.
 
 BANK_NAME = "First Bank of the Casino"
 
@@ -55,7 +55,7 @@ class Bank(commands.Cog):
             value=(
                 f"• Deposits earn **{apr_pct:.0f}% APR**, compounded continuously.\n"
                 "• Banked coins are **safe from `/heist`** — thieves can only see your wallet.\n"
-                "• You **can't gamble** banked coins. `/withdraw` to get cash on hand.\n"
+                "• You **can't gamble** banked coins. `/bank withdraw` to get cash on hand.\n"
                 f"• Rarely, a house robber cracks the **safe-deposit boxes** and skims up to "
                 f"**{max_pct}%** of every account. FDIC does not operate here."
             ),
@@ -68,7 +68,7 @@ class Bank(commands.Cog):
         wallet = economy.get_coins(guild_id, user.id)
         amount = parse_amount(raw_amount, available=wallet)
         if amount is None:
-            return f"Usage: `/deposit <amount>` — {AMOUNT_HELP}."
+            return f"Usage: `/bank deposit <amount>` — {AMOUNT_HELP}."
         if amount <= 0:
             return "Deposit something. The teller is judging you."
         result = economy.bank_deposit(guild_id, user.id, amount)
@@ -90,7 +90,7 @@ class Bank(commands.Cog):
         banked = economy.bank_balance(guild_id, user.id)
         amount = parse_amount(raw_amount, available=banked)
         if amount is None:
-            return f"Usage: `/withdraw <amount>` — {AMOUNT_HELP}."
+            return f"Usage: `/bank withdraw <amount>` — {AMOUNT_HELP}."
         if amount <= 0:
             return "Your account can't cover a withdrawal of nothing." if banked > 0 else \
                 "🏦 Your bank account is empty. Nothing to withdraw."
@@ -107,7 +107,7 @@ class Bank(commands.Cog):
             msg += f"\n💵 On hand: **{result['wallet']:,}** • 🏦 Banked: **{result['bank']:,}**"
         return msg
 
-    # ---- /bank -------------------------------------------------------------
+    # ---- prefix commands ---------------------------------------------------
 
     @commands.command(name="bank")
     @commands.guild_only()
@@ -120,20 +120,8 @@ class Bank(commands.Cog):
         except discord.Forbidden:
             await ctx.send(
                 "🏦 Your DMs are closed, and the bank doesn't discuss accounts "
-                "in the lobby. Open your DMs or use `/bank` for a private view."
+                "in the lobby. Open your DMs or use `/bank balance` for a private view."
             )
-
-    @app_commands.command(name="bank", description="Check your bank account privately — banked coins are safe from heists")
-    async def bank_slash(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("Server only.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            embed=self._balance_embed(interaction.guild_id, interaction.user),
-            ephemeral=True,
-        )
-
-    # ---- /deposit ----------------------------------------------------------
 
     @commands.command(name="deposit")
     @commands.guild_only()
@@ -141,31 +129,36 @@ class Bank(commands.Cog):
         """Deposit coins into the bank: !deposit <amount|all|half|50%|10k>"""
         await ctx.send(await self._do_deposit(ctx.guild.id, ctx.author, amount, show_balances=False))
 
-    @app_commands.command(name="deposit", description="Park coins in the bank, out of heist reach (you can't gamble them)")
-    @app_commands.describe(amount="Coins to deposit — a number (10k, 1.5m), a percent (50%), 'all', 'half', or 'max'")
-    async def deposit_slash(self, interaction: discord.Interaction, amount: str):
-        if not interaction.guild:
-            await interaction.response.send_message("Server only.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            await self._do_deposit(interaction.guild_id, interaction.user, amount),
-            ephemeral=True,
-        )
-
-    # ---- /withdraw ---------------------------------------------------------
-
     @commands.command(name="withdraw")
     @commands.guild_only()
     async def withdraw_prefix(self, ctx, amount: str = ""):
         """Withdraw coins from the bank: !withdraw <amount|all|half|50%|10k>"""
         await ctx.send(await self._do_withdraw(ctx.guild.id, ctx.author, amount, show_balances=False))
 
-    @app_commands.command(name="withdraw", description="Withdraw banked coins so you have cash on hand to gamble")
+    # ---- slash commands ------------------------------------------------------
+    # One /bank group instead of three top-level commands — each group costs a
+    # single slot against Discord's 100-command cap; subcommands are free.
+    bank_group = app_commands.Group(name="bank", description=f"The {BANK_NAME} — private, heist-proof, un-gamblable",
+                                    guild_only=True)
+
+    @bank_group.command(name="balance", description="Check your bank account privately — banked coins are safe from heists")
+    async def balance_slash(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            embed=self._balance_embed(interaction.guild_id, interaction.user),
+            ephemeral=True,
+        )
+
+    @bank_group.command(name="deposit", description="Park coins in the bank, out of heist reach (you can't gamble them)")
+    @app_commands.describe(amount="Coins to deposit — a number (10k, 1.5m), a percent (50%), 'all', 'half', or 'max'")
+    async def deposit_slash(self, interaction: discord.Interaction, amount: str):
+        await interaction.response.send_message(
+            await self._do_deposit(interaction.guild_id, interaction.user, amount),
+            ephemeral=True,
+        )
+
+    @bank_group.command(name="withdraw", description="Withdraw banked coins so you have cash on hand to gamble")
     @app_commands.describe(amount="Coins to withdraw — a number (10k, 1.5m), a percent (50%), 'all', 'half', or 'max'")
     async def withdraw_slash(self, interaction: discord.Interaction, amount: str):
-        if not interaction.guild:
-            await interaction.response.send_message("Server only.", ephemeral=True)
-            return
         await interaction.response.send_message(
             await self._do_withdraw(interaction.guild_id, interaction.user, amount),
             ephemeral=True,

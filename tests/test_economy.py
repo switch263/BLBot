@@ -115,3 +115,18 @@ def test_kv_top_leaderboard():
     economy.kv_incr(G, 0, "cmdstats", "__total__", 99)  # guild aggregate row
     top = economy.kv_top(G, "cmdstats", "__total__", limit=2)
     assert top == [(2, 12), (3, 7)]  # user 0 excluded, sorted desc, limited
+
+
+def test_wealth_leaderboard_counts_bank():
+    G, S = 9009, economy.STARTING_COINS
+    # user 1: 10k all in wallet; user 2: 12k total but mostly banked
+    economy.add_coins(G, 1, 10_000)
+    economy.add_coins(G, 2, 12_000)
+    economy.bank_deposit(G, 2, 11_000)
+    rows = economy.get_wealth_leaderboard(G)
+    assert [(r[0], r[1]) for r in rows] == [(2, 12_000 + S), (1, 10_000 + S)]
+    uid, wealth, coins, banked, won, lost = rows[0]
+    assert (coins, banked) == (1_000 + S, 11_000)
+    # wallet-only leaderboard still ranks by cash on hand
+    wallet_rows = economy.get_leaderboard(G)
+    assert wallet_rows[0][0] == 1
