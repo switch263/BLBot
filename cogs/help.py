@@ -131,7 +131,7 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     e7.add_field(name="PvP & Confrontation", value=(
         "`/heist` - Rob another user (or the bot — jail if caught)\n"
-        "`/crewheist` - Recruit a crew (10k/head) to hit a player's stash — bigger crew, bigger take\n"
+        "`/crewheist` - Recruit a crew (1M/recruit, fees to the ringleader) to hit a player or the house vault\n"
         "`/roach` - Cockroach Fight Club — 1v1 challenge, winner takes pot\n"
         "`/insure buy` - Buy heist insurance; `/insure claim` recovers % of a robbery from the bank\n"
         "`/jail` - Check casino jail status (blocks all gambling)\n"

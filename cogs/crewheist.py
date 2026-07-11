@@ -7,29 +7,36 @@ import logging
 import time
 
 import economy
+from economy import HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT
 
 logger = logging.getLogger(__name__)
 
-# Crew Heist — the multiplayer job. One player cases a target, then recruits a
-# crew: every member (starter included) antes CREW_BUYIN into the house as the
-# cost of doing business (bribes, ski masks, a van that smells like regret).
-# Buy-ins are NEVER returned once the job launches — win or lose, the house
-# keeps its cut. More crew = better odds AND a bigger slice of the victim's
-# wallet, but a bust sends everyone who doesn't slip away to casino jail.
+# Crew Heist — the multiplayer job. One player (the ringleader) cases a target,
+# then recruits a crew. Each RECRUIT antes CREW_BUYIN; the ringleader antes
+# nothing — the buy-ins are their recruiting fee, paid out the moment the job
+# launches, win or lose. More crew = better odds AND a bigger slice of the
+# take, but a bust sends everyone who doesn't slip away to casino jail.
 #
 # Money flow (per CLAUDE.md):
-#   - buy-in:  transfer_to_house(is_bet=False) — a fee, not a stake, so it
-#     doesn't distort the weekly-tax net_won basis.
-#   - dissolve/cancel/timeout: refund_from_house — exact undo, no stat bumps.
+#   - buy-in: transfer_to_house(is_bet=False) at join — the house is only the
+#     ESCROW agent here, so a ringleader can't pocket the fees and cancel.
+#   - dissolve/cancel/timeout: refund_from_house back to each recruit.
+#   - launch: refund_from_house releases the escrow to the RINGLEADER.
 #   - loot: disburse(victim -> crew) — pure player↔player, atomic.
-# The house is NOT a valid target — that's solo /heist @bot territory.
+# The house CAN be targeted, at drastically worse odds (see the HOUSE_ block):
+# the take is the same capped band as a solo vault crack, split by the crew.
 
-CREW_BUYIN = 10_000
+CREW_BUYIN = 1_000_000
 CREW_MIN_CREW = 2            # starter + at least one recruit
 CREW_MAX_CREW = 3
 LOBBY_TIMEOUT = 180          # seconds before an unlaunched lobby dissolves
 
-MIN_VICTIM_COINS = 100_000   # below this the job isn't worth the buy-ins
+# Floor on the target's stash (player wallet OR house on-hand). Sized so a
+# recruit can NEVER lose money on a successful job: the worst possible roll is
+# a 2-crew 10% take split two ways = stash/20 per head, so 25M guarantees at
+# least 1.25M against the 1M seat. Checked at lobby creation AND re-checked at
+# launch (with refunds) in case the stash shrank while the crew assembled.
+MIN_VICTIM_COINS = 25_000_000
 
 # Odds: 2-person crew starts at BASE, each extra body adds PER_MEMBER, capped.
 BASE_SUCCESS_RATE = 0.40
@@ -52,6 +59,19 @@ JAIL_MAX_SECONDS = 2 * 60 * 60
 BAIL_AMOUNT = 5 * CREW_BUYIN
 
 CREW_COOLDOWN = 3 * 60 * 60  # per member, started when a job LAUNCHES
+
+# ---- Robbing the house as a crew --------------------------------------------
+# Way, WAY worse odds than a player job — the vault pays a rolled cut of the
+# house's ENTIRE on-hand pot (same HOUSE_HEIST band as solo /heist @bot, so the
+# drain stays capped), so the win chance has to live near solo-heist territory
+# (solo vault ≈ 0.8%), not lobby-game territory.
+HOUSE_SUCCESS_RATES = {2: 0.02, 3: 0.04}   # crew size -> odds
+HOUSE_ESCAPE_RATE = 0.20                    # the bot sees everything
+HOUSE_JAIL_MIN_SECONDS = 1 * 60 * 60
+HOUSE_JAIL_MAX_SECONDS = 24 * 60 * 60
+HOUSE_BAIL_WALLET_PCT = 0.25                # bail = max(BAIL_AMOUNT, 25% of wallet)
+HOUSE_BAIL_CAP = 100_000_000
+HOUSE_COOLDOWN = 6 * 60 * 60                # matches the solo /heist cooldown
 
 REVEAL_DELAY = 1.5
 
@@ -92,6 +112,18 @@ CAUGHT_LINES = [
     "🚔 {member} hid in a porta-potty. The K-9 unit did not respect the sanctity. Pinched.",
 ]
 
+HOUSE_SUCCESS_MESSAGES = [
+    "The crew drilled the vault wall for six hours and it PAID: **{amount:,}** coins — **{pct}%** of everything the house had on hand.",
+    "Inside man, dead cameras, a very confused pit boss — the crew walked the vault for **{amount:,}** coins ({pct}% of on-hand).",
+    "The house always wins. Except tonight. **{amount:,}** coins — **{pct}%** of the pot — out the loading dock.",
+]
+
+HOUSE_FAIL_MESSAGES = [
+    "The vault door didn't budge and the bot's security mainframe had already dialed everyone. Floodlights. Dogs. Regret.",
+    "Turns out the 'blind spot' in the casino cameras was bait. The crew walked straight into it.",
+    "Three steps into the counting room, every slot machine turned to face them. The house knew the whole time.",
+]
+
 LOBBY_TITLE = "🚐 Crew Heist — Recruiting"
 INPROGRESS_TITLE = "🚐 The Job Is On…"
 
@@ -99,6 +131,10 @@ INPROGRESS_TITLE = "🚐 The Job Is On…"
 def _success_rate(crew_size: int) -> float:
     return min(SUCCESS_RATE_CAP,
                BASE_SUCCESS_RATE + PER_MEMBER_BONUS * (crew_size - CREW_MIN_CREW))
+
+
+def _house_success_rate(crew_size: int) -> float:
+    return HOUSE_SUCCESS_RATES.get(crew_size, HOUSE_SUCCESS_RATES[CREW_MAX_CREW])
 
 
 def _steal_pct_bounds(crew_size: int) -> tuple[float, float]:
@@ -110,11 +146,12 @@ def _steal_pct_bounds(crew_size: int) -> tuple[float, float]:
 
 class CrewLobby:
     def __init__(self, guild_id: int, channel_id: int,
-                 starter: discord.Member, victim: discord.Member):
+                 starter: discord.Member, victim: discord.Member, is_house: bool):
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.starter = starter
         self.victim = victim
+        self.is_house = is_house
         self.members: list[discord.Member] = [starter]
         self.message: discord.Message | None = None
         self.resolved = False  # launched, cancelled, or timed out
@@ -256,12 +293,15 @@ class CrewHeist(commands.Cog):
             del self.active[lobby.channel_id]
 
     def _refund_all(self, lobby: CrewLobby):
+        # Recruits get their escrowed buy-in back; the ringleader never paid one.
         for m in lobby.members:
-            economy.refund_from_house(lobby.guild_id, m.id, CREW_BUYIN)
+            if m.id != lobby.starter.id:
+                economy.refund_from_house(lobby.guild_id, m.id, CREW_BUYIN)
 
     def _cooldown_remaining(self, guild_id: int, user_id: int) -> int:
-        last = self._cooldowns.get((guild_id, user_id), 0)
-        return max(0, int(CREW_COOLDOWN - (time.time() - last)))
+        # Stored as EXPIRY timestamps — player and house jobs cool down differently.
+        expiry = self._cooldowns.get((guild_id, user_id), 0)
+        return max(0, int(expiry - time.time()))
 
     def _can_join(self, lobby: CrewLobby, user: discord.Member) -> str | None:
         """Ephemeral error string if `user` can't join, else None."""
@@ -288,21 +328,40 @@ class CrewHeist(commands.Cog):
 
     def _lobby_embed(self, lobby: CrewLobby) -> discord.Embed:
         n = len(lobby.members)
-        rate = int(_success_rate(max(n, CREW_MIN_CREW)) * 100)
-        lo, hi = _steal_pct_bounds(max(n, CREW_MIN_CREW))
+        eff = max(n, CREW_MIN_CREW)
         crew_lines = "\n".join(f"• {m.mention}" + (" — ringleader" if m.id == lobby.starter.id else "")
                                for m in lobby.members)
+        if lobby.is_house:
+            rate = _house_success_rate(eff)
+            target_line = (f"**{lobby.starter.display_name}** is putting a crew together to hit "
+                           f"**THE HOUSE VAULT**. Ambitious. Stupid. Both.")
+            odds_line = (
+                f"**Current odds:** {rate * 100:g}% — this is the vault, not somebody's sock drawer.\n"
+                f"**The take:** {int(HOUSE_HEIST_MIN_PCT * 100)}–{int(HOUSE_HEIST_MAX_PCT * 100)}% of the house's "
+                f"entire on-hand pot, split evenly.\n"
+                f"**A bust:** only {int(HOUSE_ESCAPE_RATE * 100)}% slip the bot's security — the caught eat up to "
+                f"{HOUSE_JAIL_MAX_SECONDS // 3600}h of casino jail, bail scaling with their wallet.\n"
+                f"Cooldown after launch: {HOUSE_COOLDOWN // 3600}h."
+            )
+        else:
+            rate = _success_rate(eff)
+            lo, hi = _steal_pct_bounds(eff)
+            target_line = (f"**{lobby.starter.display_name}** is putting a crew together to hit "
+                           f"**{lobby.victim.display_name}**'s stash.")
+            odds_line = (
+                f"**Current odds:** {int(rate * 100)}% • **Take:** {int(lo * 100)}–{int(hi * 100)}% of the stash, split evenly.\n"
+                f"A full crew of **{CREW_MAX_CREW}** runs {int(_success_rate(CREW_MAX_CREW) * 100)}% odds for "
+                f"**{int(_steal_pct_bounds(CREW_MAX_CREW)[0] * 100)}–{int(_steal_pct_bounds(CREW_MAX_CREW)[1] * 100)}%** "
+                f"of everything they've got.\n"
+                f"**A bust:** everyone rolls to slip away — the slow ones eat up to "
+                f"{JAIL_MAX_SECONDS // 3600}h of casino jail (bail {BAIL_AMOUNT:,})."
+            )
         desc = (
-            f"**{lobby.starter.display_name}** is putting a crew together to hit "
-            f"**{lobby.victim.display_name}**'s stash.\n\n"
-            f"**Buy-in:** {CREW_BUYIN:,} coins — the house keeps it, win or lose.\n"
+            f"{target_line}\n\n"
+            f"**Buy-in:** {CREW_BUYIN:,} coins per recruit, held in escrow — paid to the "
+            f"**ringleader** when the job launches (win or lose). Ringleader rides free.\n"
             f"**Crew ({n}/{CREW_MAX_CREW}):**\n{crew_lines}\n\n"
-            f"**Current odds:** {rate}% • **Take:** {int(lo * 100)}–{int(hi * 100)}% of the stash, split evenly.\n"
-            f"A full crew of **{CREW_MAX_CREW}** runs {int(_success_rate(CREW_MAX_CREW) * 100)}% odds for "
-            f"**{int(_steal_pct_bounds(CREW_MAX_CREW)[0] * 100)}–{int(_steal_pct_bounds(CREW_MAX_CREW)[1] * 100)}%** "
-            f"of everything they've got.\n"
-            f"**A bust:** everyone rolls to slip away — the slow ones eat up to "
-            f"{JAIL_MAX_SECONDS // 3600}h of casino jail (bail {BAIL_AMOUNT:,}).\n\n"
+            f"{odds_line}\n\n"
             f"Need **{CREW_MIN_CREW}+** to roll out. Lobby dissolves (with refunds) in "
             f"{LOBBY_TIMEOUT // 60} minutes if the ringleader doesn't launch."
         )
@@ -335,11 +394,9 @@ class CrewHeist(commands.Cog):
         if victim.id == starter.id:
             await reply("You can't put a crew together to rob yourself. Talk to somebody.")
             return
-        if victim.bot:
-            if self.bot.user and victim.id == self.bot.user.id:
-                await reply("The house is a solo job — that's `/heist @me` territory. A crew just means more witnesses.")
-            else:
-                await reply("That bot has no wallet. No wallet, no job.")
+        is_house = bool(self.bot.user and victim.id == self.bot.user.id)
+        if victim.bot and not is_house:
+            await reply("That bot has no wallet. No wallet, no job.")
             return
         if economy.is_memorial(victim.id):
             await reply("Nobody hits kev2tall's stash. Job's off before it started. 🕊️")
@@ -357,20 +414,17 @@ class CrewHeist(commands.Cog):
             m, s = divmod(rem, 60)
             await reply(f"You're laying low after your last job. Ready in **{h}h {m}m {s}s**.")
             return
-        if economy.get_coins(guild.id, victim.id) < MIN_VICTIM_COINS:
-            await reply(f"**{victim.display_name}**'s stash is under **{MIN_VICTIM_COINS:,}** coins. "
-                        "Not worth the buy-ins — pick a richer mark.")
-            return
-        res = economy.transfer_to_house(guild.id, starter.id, CREW_BUYIN, is_bet=False)
-        if not res.get("ok"):
-            if res.get("error") == "broke":
-                await reply(f"💸 The buy-in is **{CREW_BUYIN:,}** coins and you have **{res.get('have', 0):,}**. "
-                            "Even the ringleader pays.")
+        stash_id = economy.get_house_id() if is_house else victim.id
+        if economy.get_coins(guild.id, stash_id) < MIN_VICTIM_COINS:
+            if is_house:
+                await reply(f"The house's on-hand pot is under **{MIN_VICTIM_COINS:,}** coins right now — "
+                            "even a successful vault job would pay less than the seats. Let it fatten up.")
             else:
-                await reply("⚠️ Couldn't collect your buy-in. Try again.")
+                await reply(f"**{victim.display_name}**'s stash is under **{MIN_VICTIM_COINS:,}** coins. "
+                            "Not worth the buy-ins — pick a richer mark.")
             return
 
-        lobby = CrewLobby(guild.id, channel.id, starter, victim)
+        lobby = CrewLobby(guild.id, channel.id, starter, victim, is_house)
         self.active[channel.id] = lobby
         view = CrewHeistView(self, lobby)
         embed = self._lobby_embed(lobby)
@@ -391,30 +445,46 @@ class CrewHeist(commands.Cog):
         message = lobby.message or interaction.message
         channel_id = interaction.channel_id or 0
 
-        # Target re-check: the mark may have gone broke (or gotten robbed) while
-        # the crew was assembling. No job, no forfeits — everyone gets refunded.
-        victim_coins = economy.get_coins(guild_id, victim.id)
-        if victim_coins < MIN_VICTIM_COINS:
+        # Target re-check: the stash may have shrunk (mark got robbed, house pot
+        # got drained) while the crew assembled. Below the floor a "win" would
+        # pay recruits less than their seats — no job, no fees, full refunds.
+        stash_id = economy.get_house_id() if lobby.is_house else victim.id
+        stash_now = economy.get_coins(guild_id, stash_id)
+        if stash_now < MIN_VICTIM_COINS:
             self._refund_all(lobby)
+            if lobby.is_house:
+                desc = (f"The crew rolled up and the house's on-hand pot was down to "
+                        f"**{stash_now:,}** coins — someone drained it first. Not worth the "
+                        f"gas. **Buy-ins refunded.**")
+            else:
+                desc = (f"The crew rolled up and **{victim.display_name}**'s stash was down to "
+                        f"**{stash_now:,}** coins. Not worth the gas. **Buy-ins refunded.**")
             await self._edit(message, discord.Embed(
                 title="🚐 Crew Heist — Target Skipped Town",
-                description=(f"The crew rolled up and **{victim.display_name}**'s stash was down to "
-                             f"**{victim_coins:,}** coins. Not worth the gas. **Buy-ins refunded.**"),
+                description=desc,
                 color=discord.Color.dark_grey(),
             ))
             return
 
-        # From here the job is ON — buy-ins belong to the house, cooldowns start.
+        # From here the job is ON: the escrowed buy-ins release to the
+        # ringleader — their recruiting fee, win or lose — and cooldowns start.
+        fee_total = (n - 1) * CREW_BUYIN
+        if fee_total > 0:
+            economy.refund_from_house(guild_id, lobby.starter.id, fee_total)
+        cooldown = HOUSE_COOLDOWN if lobby.is_house else CREW_COOLDOWN
         for m in crew:
-            self._cooldowns[(guild_id, m.id)] = time.time()
+            self._cooldowns[(guild_id, m.id)] = time.time() + cooldown
 
-        # Heist Shield: an activated shield blocks the whole crew. Buy-ins are
-        # forfeit — you cased a hardened target, that's on the ringleader.
-        if economy.kv_get(guild_id, victim.id, "heistshield", "active_date", "") == economy.today_str():
+        # Heist Shield: an activated shield blocks the whole crew (player jobs
+        # only — the house has no shield, it has odds). The ringleader still
+        # keeps the fees; casing a hardened target is on them.
+        if not lobby.is_house and \
+                economy.kv_get(guild_id, victim.id, "heistshield", "active_date", "") == economy.today_str():
             await self._edit(message, discord.Embed(
                 title="🛡️ Job Blocked!",
                 description=(f"The crew hit **{victim.display_name}**'s place — and bounced straight off an "
-                             f"active **Heist Shield**. {n} buy-ins, gone. The house sends its regards."),
+                             f"active **Heist Shield**. The recruits are out **{CREW_BUYIN:,}** each and "
+                             f"**{lobby.starter.display_name}** still pocketed the fees. Awkward van ride."),
                 color=discord.Color.blue(),
             ))
             return
@@ -431,59 +501,95 @@ class CrewHeist(commands.Cog):
             ))
             await asyncio.sleep(REVEAL_DELAY)
 
-        success = random.random() < _success_rate(n)
+        rate = _house_success_rate(n) if lobby.is_house else _success_rate(n)
+        success = random.random() < rate
         for m in crew:
             economy.record_game(guild_id, m.id, "crewheist", success)
 
         log = "\n".join(buildup) + "\n\n"
         if success:
-            lo, hi = _steal_pct_bounds(n)
-            steal_pct = random.uniform(lo, hi)
-            # Re-read right before moving money — the buildup takes a few seconds.
-            victim_coins = economy.get_coins(guild_id, victim.id)
-            loot = max(0, int(victim_coins * steal_pct))
+            if lobby.is_house:
+                # Same capped band as a solo vault crack (0-60% of ON-HAND only;
+                # the safe-harbor reserve is untouchable), split by the crew.
+                steal_pct = random.uniform(HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT)
+                source_id = economy.get_house_id()
+                stash = economy.get_coins(guild_id, source_id)
+                success_pool = HOUSE_SUCCESS_MESSAGES
+            else:
+                lo, hi = _steal_pct_bounds(n)
+                steal_pct = random.uniform(lo, hi)
+                source_id = victim.id
+                # Re-read right before moving money — the buildup takes a few seconds.
+                stash = economy.get_coins(guild_id, source_id)
+                success_pool = SUCCESS_MESSAGES
+            loot = max(0, int(stash * steal_pct))
             share = loot // n
             paid_lines = []
             if share > 0:
                 remainder = loot - share * n
                 payments = [(m.id, share + (remainder if m.id == lobby.starter.id else 0)) for m in crew]
-                res = economy.disburse(guild_id, victim.id, payments)
+                res = economy.disburse(guild_id, source_id, payments)
                 if res.get("ok"):
-                    economy.kv_set(guild_id, victim.id, "heistins", "last_loss",
-                                   f"{loot}:{int(time.time())}")
+                    if not lobby.is_house:
+                        economy.kv_set(guild_id, victim.id, "heistins", "last_loss",
+                                       f"{loot}:{int(time.time())}")
                     paid_lines = [f"💰 {m.mention} pockets **{amt:,}** coins."
                                   for m, (_, amt) in zip(crew, payments)]
                 else:
                     loot = 0
             if loot > 0 and paid_lines:
-                headline = random.choice(SUCCESS_MESSAGES).format(victim=victim.display_name, amount=loot)
-                body = (f"✅ **{headline}**\n\n" + "\n".join(paid_lines) +
-                        f"\n\n({int(round(steal_pct * 100))}% of the stash, {n}-way split. "
-                        f"{victim.mention}, you just got crewed.)")
+                headline = random.choice(success_pool).format(
+                    victim=victim.display_name, amount=loot, pct=int(round(steal_pct * 100)))
+                body = f"✅ **{headline}**\n\n" + "\n".join(paid_lines)
+                if lobby.is_house:
+                    body += f"\n\n({n}-way split. The house is furious.)"
+                else:
+                    body += (f"\n\n({int(round(steal_pct * 100))}% of the stash, {n}-way split. "
+                             f"{victim.mention}, you just got crewed.)")
             else:
                 body = (f"✅ The crew got in clean… and **{victim.display_name}**'s stash was already gone. "
                         "Somebody beat them to it. The van ride home was very quiet.")
+            title = "🏦💎 THE CREW CRACKED THE VAULT" if lobby.is_house else "🚐💰 THE JOB PAID"
             await self._edit(message, discord.Embed(
-                title="🚐💰 THE JOB PAID", description=log + body, color=discord.Color.gold(),
+                title=title, description=log + body, color=discord.Color.gold(),
             ))
         else:
-            headline = random.choice(FAIL_MESSAGES).format(victim=victim.display_name)
+            if lobby.is_house:
+                headline = random.choice(HOUSE_FAIL_MESSAGES)
+                escape_rate = HOUSE_ESCAPE_RATE
+                jail_lo, jail_hi = HOUSE_JAIL_MIN_SECONDS, HOUSE_JAIL_MAX_SECONDS
+                reason = "Crew job on the house vault went sideways"
+            else:
+                headline = random.choice(FAIL_MESSAGES).format(victim=victim.display_name)
+                escape_rate = ESCAPE_RATE
+                jail_lo, jail_hi = JAIL_MIN_SECONDS, JAIL_MAX_SECONDS
+                reason = f"Crew heist on {victim.display_name} went sideways"
             lines = [f"🚨 **{headline}**", ""]
             for m in crew:
-                if random.random() < ESCAPE_RATE:
+                if random.random() < escape_rate:
                     lines.append(random.choice(ESCAPE_LINES).format(member=m.mention))
                 else:
-                    seconds = random.randint(JAIL_MIN_SECONDS, JAIL_MAX_SECONDS)
+                    seconds = random.randint(jail_lo, jail_hi)
+                    if lobby.is_house:
+                        wallet = economy.get_coins(guild_id, m.id)
+                        bail = min(HOUSE_BAIL_CAP,
+                                   max(BAIL_AMOUNT, int(wallet * HOUSE_BAIL_WALLET_PCT)))
+                    else:
+                        bail = BAIL_AMOUNT
                     economy.jail_user(
                         guild_id, m.id, seconds,
-                        reason=f"Crew heist on {victim.display_name} went sideways",
-                        bail_amount=BAIL_AMOUNT, channel_id=channel_id,
+                        reason=reason, bail_amount=bail, channel_id=channel_id,
                     )
-                    mins = max(1, seconds // 60)
+                    if seconds >= 3600:
+                        stretch = f"**{max(1, round(seconds / 3600))} hours**"
+                    else:
+                        stretch = f"**{max(1, seconds // 60)} minutes**"
                     lines.append(random.choice(CAUGHT_LINES).format(member=m.mention) +
-                                 f" **{mins} minutes** in casino jail (bail {BAIL_AMOUNT:,}).")
-            lines.append("")
-            lines.append(f"The house keeps all **{n * CREW_BUYIN:,}** coins of buy-ins. Obviously.")
+                                 f" {stretch} in casino jail (bail {bail:,}).")
+            if fee_total > 0:
+                lines.append("")
+                lines.append(f"**{lobby.starter.display_name}** still pockets the "
+                             f"**{fee_total:,}** coins in recruiting fees. Obviously.")
             await self._edit(message, discord.Embed(
                 title="🚔 THE JOB WENT SIDEWAYS", description=log + "\n".join(lines),
                 color=discord.Color.dark_red(),
@@ -502,11 +608,11 @@ class CrewHeist(commands.Cog):
     @commands.command(name="crewheist", aliases=["crew"])
     @commands.guild_only()
     async def crewheist_prefix(self, ctx, victim: discord.Member = None):
-        """Recruit a crew (10k buy-in each) to hit another player's stash."""
+        """Recruit a crew (1M/recruit, paid to you) to hit a player — or the house vault."""
         await self._start(ctx, victim)
 
-    @app_commands.command(name="crewheist", description=f"Recruit a crew ({CREW_BUYIN:,}/head) to hit a player's stash — bigger crew, bigger take")
-    @app_commands.describe(target="The player whose stash you're hitting (not the house)")
+    @app_commands.command(name="crewheist", description=f"Recruit a crew ({CREW_BUYIN:,}/recruit, paid to you) to hit a player — or the house vault")
+    @app_commands.describe(target="The player whose stash you're hitting — or the bot to try the house vault")
     async def crewheist_slash(self, interaction: discord.Interaction, target: discord.Member):
         await self._start(interaction, target)
 
