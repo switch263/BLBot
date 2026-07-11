@@ -179,6 +179,7 @@ class Slots(commands.Cog):
         ("highlow",    "🆙 Higher-Lower",           "Plays",   "Wins"),
         ("pawnshop",   "💼 Pawn Shop",              "Plays",   "Wins"),
         ("heist",      "🥷 Heists",                 "Attempts", "Successes"),
+        ("crewheist",  "🚐 Crew Heists",            "Jobs",    "Scores"),
         ("den",        "🦝 Raccoon Den",            "Digs",    "Survived"),
         ("mines",      "💣 Mines",                  "Boards",  "Banked"),
         ("gauntlet",   "🪜 Gauntlet",               "Runs",    "Cashed out"),

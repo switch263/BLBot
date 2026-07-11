@@ -117,6 +117,22 @@ def test_kv_top_leaderboard():
     assert top == [(2, 12), (3, 7)]  # user 0 excluded, sorted desc, limited
 
 
+def test_refund_from_house_is_exact_undo():
+    G, U = 9010, 1
+    economy.add_coins(G, U, 50_000)
+    economy.get_house_state(G)  # seed the reserve before measuring
+    start_total = economy.get_total_economy(G)
+    before = economy.get_wallet(G, U)
+    res = economy.transfer_to_house(G, U, 10_000, is_bet=False)
+    assert res["ok"]
+    assert economy.refund_from_house(G, U, 10_000) == 10_000
+    after = economy.get_wallet(G, U)
+    assert after["coins"] == before["coins"]
+    # A refund is not a win: no stat drift on the round trip.
+    assert after["total_won"] == before["total_won"]
+    assert economy.get_total_economy(G) == start_total
+
+
 def test_wealth_leaderboard_counts_bank():
     G, S = 9009, economy.STARTING_COINS
     # user 1: 10k all in wallet; user 2: 12k total but mostly banked

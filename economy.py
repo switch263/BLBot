@@ -1014,6 +1014,66 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
         return 0
 
 
+def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
+    """Undo a transfer_to_house: pay `amount` back from the house to a player
+    WITHOUT touching total_won / net_won and without the memorial tithe — this
+    is a refund (dissolved lobby, cancelled event), not a win. Draws on-hand
+    first, then the reserve, exactly like casino_payout. Returns actual coins
+    refunded (0 only if both house buckets are empty)."""
+    if amount <= 0:
+        return 0
+    house_id = get_house_id()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _ensure_house_wallet(conn, guild_id)
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            _normalize_house(conn, guild_id)
+            house_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, house_id),
+            ).fetchone()
+            house_coins = house_row[0] if house_row else 0
+            shortfall = amount - house_coins
+            if shortfall > 0:
+                reserve_row = conn.execute(
+                    "SELECT coins FROM house_reserve WHERE guild_id = ?",
+                    (guild_id,),
+                ).fetchone()
+                reserve_coins = reserve_row[0] if reserve_row else 0
+                topup = min(shortfall, max(0, reserve_coins))
+                if topup > 0:
+                    conn.execute(
+                        "UPDATE house_reserve SET coins = coins - ? WHERE guild_id = ?",
+                        (topup, guild_id),
+                    )
+                    conn.execute(
+                        "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                        (topup, guild_id, house_id),
+                    )
+                    house_coins += topup
+            pay = min(amount, max(0, house_coins))
+            if pay <= 0:
+                conn.rollback()
+                return 0
+            conn.execute(
+                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                (pay, guild_id, house_id),
+            )
+            conn.execute(
+                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                (pay, guild_id, user_id),
+            )
+            conn.commit()
+            return pay
+    except sqlite3.Error as e:
+        logger.error(f"Database error in refund_from_house: {e}")
+        return 0
+
+
 def get_house_state(guild_id: int) -> dict:
     """Snapshot of the safe harbor and the on-hand pot. Applies reserve
     interest as a side effect. `banked` is the sum of every player bank
