@@ -44,6 +44,37 @@ def test_duration_stops_at_first_non_time_token():
 
 # ---- Absolute times ----------------------------------------------------------
 
+def test_bare_clock_time_is_implicit_at():
+    due, rest = parse_when("12pm lunch")
+    assert due is not None
+    assert rest == "lunch"
+    got = datetime.fromtimestamp(due)
+    assert (got.hour, got.minute) == (12, 0)
+    assert 0 < _delay(due) <= 86400  # today or rolled to tomorrow, never past
+
+
+@pytest.mark.parametrize("tok,hm", [
+    ("18:30", (18, 30)),
+    ("9:15am", (9, 15)),
+    ("noon", (12, 0)),
+    ("midnight", (0, 0)),
+])
+def test_bare_clock_variants(tok, hm):
+    due, rest = parse_when(f"{tok} do the thing")
+    assert due is not None
+    assert rest == "do the thing"
+    got = datetime.fromtimestamp(due)
+    assert (got.hour, got.minute) == hm
+
+
+def test_bare_clock_does_not_eat_durations():
+    # '10m' is a duration, not a clock time.
+    due, rest = parse_when("10m stretch")
+    assert due is not None
+    assert abs(_delay(due) - 600) < 2
+    assert rest == "stretch"
+
+
 def test_at_hhmm_rolls_to_tomorrow_when_past():
     past = (datetime.now() - timedelta(hours=1)).strftime("%H:%M")
     due, rest = parse_when(f"at {past} pay taxes")

@@ -34,8 +34,9 @@ _AMPM_RE = re.compile(r"^(\d{1,2})(?::(\d{2}))?(am|pm)$")
 USAGE = (
     "Usage: `!remindme <when> <what>` — e.g. "
     "`!remindme 7 days check on the gator`, `!remindme 2h30m withdraw from the bank`, "
-    "`!remindme at 18:30 pig derby`, `!remindme tomorrow 9am pay taxes`. "
-    "Durations take s/m/h/d/w/mo; `at`/`tomorrow` times are server time."
+    "`!remindme 12pm lunch`, `!remindme at 18:30 pig derby`, `!remindme tomorrow 9am pay taxes`. "
+    "Durations take s/m/h/d/w/mo; clock times (`12pm`, `18:30`, `noon`) are server time — "
+    "today, or tomorrow if that time already passed."
 )
 
 
@@ -54,7 +55,11 @@ def _fused_seconds(tok: str):
 
 
 def _parse_clock(tok: str):
-    """'18:30' / '9am' / '9:15pm' -> (hour, minute), or None."""
+    """'18:30' / '9am' / '9:15pm' / 'noon' / 'midnight' -> (hour, minute), or None."""
+    if tok == "noon":
+        return (12, 0)
+    if tok == "midnight":
+        return (0, 0)
     m = _HHMM_RE.match(tok)
     if m:
         h, mi = int(m.group(1)), int(m.group(2))
@@ -125,6 +130,16 @@ def parse_when(raw: str):
         else:
             clock = (9, 0)
         due = (now + timedelta(days=1)).replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
+        return due.timestamp(), " ".join(tokens[i:])
+
+    # A bare clock time ('12pm', '18:30', 'noon') is an implicit 'at' — today,
+    # or tomorrow if that time already passed.
+    clock = _parse_clock(head)
+    if clock is not None:
+        i += 1
+        due = now.replace(hour=clock[0], minute=clock[1], second=0, microsecond=0)
+        if due <= now:
+            due += timedelta(days=1)
         return due.timestamp(), " ".join(tokens[i:])
 
     # Durations: consume tokens while they parse as '7d', '2h30m', or '7 days'.
