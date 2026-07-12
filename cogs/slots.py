@@ -196,6 +196,9 @@ class Slots(commands.Cog):
         ("lottery",    "🎟️ Scratch Tickets",        "Tickets", "Winners"),
         ("jailbreak",  "⛏️ Jailbreaks",             "Attempts", "Escapes"),
         ("lawyer",     "👔 Lawyer Rolls",           "Trials",  "Acquittals"),
+        ("prisondice", "🎲 Yard Dice",              "Rolls",   "Wins"),
+        ("shivfight",  "🔪 Shiv Fights",            "Fights",  "Wins"),
+        ("jurytrial",  "🏛️ Jury Trials",            "Trials",  "Acquittals"),
     ]
 
     # Discord embeds cap at 25 fields; the wallet header uses 5. Show the
