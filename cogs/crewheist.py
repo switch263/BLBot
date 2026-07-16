@@ -58,7 +58,7 @@ JAIL_MIN_SECONDS = 30 * 60
 JAIL_MAX_SECONDS = 2 * 60 * 60
 BAIL_AMOUNT = 5 * CREW_BUYIN
 
-CREW_COOLDOWN = 3 * 60 * 60  # per member, started when a job LAUNCHES
+CREW_COOLDOWN = 30 * 60  # per member, started when a job LAUNCHES
 
 # ---- Robbing the house as a crew --------------------------------------------
 # Way, WAY worse odds than a player job — the vault pays a rolled cut of the
