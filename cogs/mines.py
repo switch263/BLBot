@@ -19,9 +19,9 @@ where P(survive k) is the probability of having picked k non-mine tiles in a
 row. The (1 - edge) factor is the house edge, applied uniformly at every depth.
 
 Uses casino_prelude in adapter-only mode (bet=None) for the slash/prefix
-plumbing and jail gate, like gauntlet — mines is exempt from MAX_BET (its
-table limit scales with the house bankroll instead), so it keeps its own bet
-parsing and validation. The board machinery comes from gridgame.
+plumbing and jail gate, like gauntlet — mines' table limit scales with the
+house bankroll, so it keeps its own bet parsing and validation. The board
+machinery comes from gridgame.
 """
 
 import discord

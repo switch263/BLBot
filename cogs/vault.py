@@ -20,7 +20,7 @@ import random
 import logging
 from collections import Counter
 
-from economy import get_coins, record_game, casino_payout, MAX_BET
+from economy import get_coins, record_game, casino_payout
 from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
@@ -357,7 +357,7 @@ class TheVault(commands.Cog):
         description="Crack a code Mastermind-style. Pick your difficulty — harder locks, fatter multipliers.",
     )
     @app_commands.describe(
-        bet=f"Coins to risk (max {MAX_BET:,}) — supports 1k, 5m, 100,000",
+        bet="Coins to risk — supports 1k, 5m, 100,000",
         difficulty="normal: 4 digits 1-6 · hard: 5 digits 1-9 · extra: suitcase lock, counts-only hints",
     )
     @app_commands.choices(difficulty=[

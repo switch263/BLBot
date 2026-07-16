@@ -51,8 +51,6 @@ class CoinFlip(commands.Cog):
 
         if bet < MIN_BET:
             return discord.Embed(description=f"Bet must be at least **{MIN_BET:,}** coin.", color=discord.Color.red())
-        if bet > economy.MAX_BET:
-            return discord.Embed(description=f"Easy, high roller — max bet is **{economy.MAX_BET:,}** coins.", color=discord.Color.red())
 
         balance = economy.get_coins(guild_id, user_id)
         if balance < bet:

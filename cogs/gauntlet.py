@@ -5,9 +5,8 @@ amount and then repeatedly choose to **cash out** the multiplier you've banked
 or **push your luck** into the next round. Each push either survives (the
 multiplier balloons, the odds shrink) or busts (you lose the whole stake).
 
-Why it isn't gated to the flat 100k MAX_BET: the table limit is a fraction of
-the *house on-hand bankroll* (GAUNTLET_MAX_HOUSE_PCT), so a fat house lets high
-rollers bet big. Winners are always paid in full — if casino_payout can't cover
+The table limit is a fraction of the *house on-hand bankroll*
+(GAUNTLET_MAX_HOUSE_PCT), so a fat house lets high rollers bet big. Winners are always paid in full — if casino_payout can't cover
 a cash-out from house funds, the shortfall is minted (the casino already prints
 money to replenish its reserve; this is the same idea at the moment of payout).
 The table limit therefore exists only to bound how much can be minted in a
@@ -232,8 +231,8 @@ class Gauntlet(commands.Cog):
         logger.info("The Gauntlet loaded.")
 
     async def _start(self, ctx_or_interaction, bet_text):
-        # Adapter-only prelude (bet=None): the Gauntlet deliberately skips the
-        # flat MAX_BET check — its ceiling is a fraction of the house bankroll.
+        # Adapter-only prelude (bet=None): the Gauntlet parses its own bet —
+        # its ceiling is a fraction of the house bankroll.
         start = await casino_prelude(ctx_or_interaction, bet=None)
         if start is None:
             return

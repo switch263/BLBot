@@ -12,11 +12,6 @@ logger = logging.getLogger(__name__)
 DB_FILE = os.path.join(DATA_DIR, "economy.db")
 STARTING_COINS = 100
 
-# Hard ceiling on a single stake, enforced by every game via check_bet().
-# One bet can never move more than this — keeps a whale from blowing up the
-# house (or another player) in one roll.
-MAX_BET = 500_000
-
 # --- Weekly winnings tax --------------------------------------------------
 # The economy's main coin sink (cogs/taxes.py). It's an income tax on GROSS
 # winnings: once a week each player is assessed WINNINGS_TAX_PCT of everything
@@ -62,7 +57,7 @@ WEALTH_TAX_DAY = 15                      # day of the month it fires
 
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
-    error string if the bet is non-positive or exceeds MAX_BET, else None.
+    error string if the bet is non-positive, else None. There is no bet cap.
     Call at the top of every game's bet flow, before transfer_to_house /
     deduct, e.g.:
 
@@ -73,8 +68,6 @@ def check_bet(bet: int) -> str | None:
     """
     if bet <= 0:
         return "Bet must be greater than 0."
-    if bet > MAX_BET:
-        return f"Max bet is **{MAX_BET:,}** coins."
     return None
 
 

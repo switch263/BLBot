@@ -94,13 +94,6 @@ class Slots(commands.Cog):
                 description=f"Bet must be at least **{MIN_BET}** coin.",
                 color=discord.Color.red()
             )
-        if bet > economy.MAX_BET:
-            return discord.Embed(
-                title="🎰 Invalid Bet",
-                description=f"Easy, high roller — max bet is **{economy.MAX_BET:,}** coins.",
-                color=discord.Color.red()
-            )
-
         if wallet["coins"] < bet:
             return discord.Embed(
                 title="🎰 Broke!",

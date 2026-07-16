@@ -2,7 +2,7 @@
 
 Every bet-driven cog used to hand-roll the same ~35 lines: detect slash vs
 prefix, build a reply() adapter, guard guild-only, check jail, parse the bet,
-validate it against MAX_BET, collect it via transfer_to_house, and surface the
+validate it, collect it via transfer_to_house, and surface the
 broke/error replies. That block drifted between cogs (different messages,
 missing checks, no `10k` parsing in older ones). This module is that block,
 with a name.
@@ -23,14 +23,14 @@ Pass `collect=False` for games that don't take the stake up front (lobby
 games, PvP escrow) — the bet is parsed and validated but not moved. Pass
 `bet=None` for commands with no stake at all (you get guild/jail/reply only).
 
-Because the bet parses with `available=` (wallet, capped at MAX_BET), players
-can stake `all`, `half`, or `40%` in every converted game for free.
+Because the bet parses with `available=` (the wallet), players can stake
+`all`, `half`, or `40%` in every converted game for free.
 
 Pure glue — talks to economy.py, never to SQLite.
 """
 import discord
 
-from economy import MAX_BET, check_bet, get_coins, jail_message, transfer_to_house
+from economy import check_bet, get_coins, jail_message, transfer_to_house
 from amount import parse_amount, amount_error
 
 
@@ -61,7 +61,7 @@ async def casino_prelude(
     after having already sent the appropriate error reply.
 
     Steps: guild guard -> jail gate -> parse bet (numbers, 10k/1.5m, and
-    all/half/% against min(wallet, MAX_BET)) -> positive + MAX_BET check ->
+    all/half/% against the wallet) -> positive check ->
     (optionally) collect the stake into the house with broke handling.
     """
     is_slash = isinstance(ctx_or_interaction, discord.Interaction)
@@ -99,8 +99,7 @@ async def casino_prelude(
     # (all/half/%) need to know the wallet, so the balance read is lazy.
     amt = parse_amount(bet)
     if amt is None:
-        stakeable = min(get_coins(guild.id, user.id), MAX_BET)
-        amt = parse_amount(bet, available=stakeable)
+        amt = parse_amount(bet, available=get_coins(guild.id, user.id))
     if amt is None:
         await err(amount_error(bet, contextual=True))
         return None
