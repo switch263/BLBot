@@ -210,20 +210,12 @@ def test_cover_house_shortfall_empties_banks_when_debt_is_bigger():
     assert economy.bank_balance(G, A) == 0
 
 
-def test_bankruptcy_reset_reseeds_wallets_and_keeps_stats():
-    G, A, B = 9105, 1, 2
-    economy.add_coins(G, A, 5_000_000)
-    economy.bank_deposit(G, A, 1_000_000)
-    economy.get_wallet(G, B)  # exists at STARTING_COINS
-    economy.record_game(G, A, "vault", won=True)
-    res = economy.bankruptcy_reset(G)
-    assert set(res["players"]) == {A, B}
-    assert economy.get_coins(G, A) == economy.BANKRUPTCY_RESET_WALLET
-    assert economy.get_coins(G, B) == economy.BANKRUPTCY_RESET_WALLET
-    assert economy.bank_balance(G, A) == 0
-    stats = economy.get_game_stats(G, A)
-    assert stats["vault"] == {"plays": 1, "wins": 1}
-    # house comes back fresh: empty pot, re-seeded reserve
-    state = economy.get_house_state(G)
-    assert state["on_hand"] == 0
-    assert state["reserve"] == economy.HOUSE_STARTING_COINS
+def test_mint_house_bailout_pays_winner_and_counts_as_winnings():
+    G, U = 9105, 1
+    before = economy.get_wallet(G, U)
+    assert economy.mint_house_bailout(G, U, 750_000) == 750_000
+    after = economy.get_wallet(G, U)
+    assert after["coins"] == before["coins"] + 750_000
+    assert after["total_won"] == before["total_won"] + 750_000
+    assert economy.mint_house_bailout(G, U, 0) == 0
+    assert economy.mint_house_bailout(G, U, -5) == 0
