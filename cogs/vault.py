@@ -2,7 +2,7 @@
 
 Consolidates the old vault / vault_hard / vault_extra_hard cogs:
   normal — 4-digit code, digits 1-6, no repeats, per-position hints,
-           payouts 15×…1.25×, payout capped at 10M.
+           payouts 15×…1.25×.
   hard   — 5-digit code, digits 1-9, no repeats, per-position hints,
            payouts 75×…0.5× (limp to the last try and you LOSE half).
   extra  — 3-wheel suitcase lock, wheels 0-3, repeats ALLOWED, and hints
@@ -36,7 +36,6 @@ DIFFICULTIES: dict[str, dict] = {
         "repeats": False,
         "counts_only": False,
         "payouts": {1: 15.0, 2: 7.0, 3: 3.5, 4: 2.0, 5: 1.25},
-        "max_payout": 10_000_000,
         "timeout": 300,
         "game": "vault",
         "rules": "Crack a **4-digit code** using digits **1-6** (no repeats).",
@@ -63,7 +62,6 @@ DIFFICULTIES: dict[str, dict] = {
         "counts_only": False,
         # 5 unique digits from 1-9 = 15,120 possibilities in 5 tries.
         "payouts": {1: 75.0, 2: 30.0, 3: 8.0, 4: 2.0, 5: 0.5},
-        "max_payout": None,
         "timeout": 600,
         "game": "vault_hard",
         "rules": "Crack a **5-digit code** using digits **1-9** (no repeats).",
@@ -91,7 +89,6 @@ DIFFICULTIES: dict[str, dict] = {
         "counts_only": True,
         # 4^3 = 64 combos, counts-only hints: pure Bulls-and-Cows deduction.
         "payouts": {1: 50.0, 2: 15.0, 3: 5.0, 4: 2.0, 5: 1.0},
-        "max_payout": None,
         "timeout": 600,
         "game": "vault_extra_hard",
         "rules": ("Crack a **3-wheel suitcase lock**, wheels **0-3** — the same "
@@ -226,19 +223,21 @@ class SubmitButton(discord.ui.Button):
         if solved:
             g.ended = True
             mult = cfg["payouts"].get(attempts_used, cfg["payouts"][MAX_ATTEMPTS])
-            raw_payout = int(g.bet * mult)
-            cap = cfg["max_payout"]
-            requested = min(raw_payout, cap) if cap else raw_payout
+            requested = int(g.bet * mult)
             paid = casino_payout(g.guild_id, g.user_id, requested)
             record_game(g.guild_id, g.user_id, cfg["game"], won=True)
             for child in view.children:
                 child.disabled = True
-            cap_note = f" *(capped at {cap:,})*" if cap and requested < raw_payout else ""
-            short_note = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short_note = ""
+            if paid < requested:
+                short_note = (
+                    f"\n💥 **YOU BROKE THE BANK.** The house owed **{requested:,}** and could "
+                    f"only scrape together **{paid:,}** — emergency measures incoming."
+                )
             footer = (
                 f"{random.choice(cfg['solve_flavor'])}\n"
-                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{paid:,}** coins{cap_note}{short_note} "
-                f"(net **{paid - g.bet:+,}**).\n"
+                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{paid:,}** coins "
+                f"(net **{paid - g.bet:+,}**).{short_note}\n"
                 f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
             )
         elif attempts_used >= MAX_ATTEMPTS:
@@ -300,13 +299,11 @@ class TheVault(commands.Cog):
         if not g.ended:
             slots = [str(d) for d in g.current] + ["_"] * (cfg["code_length"] - len(g.current))
             payline = " | ".join(f"{n}→{m:g}×" for n, m in sorted(cfg["payouts"].items()))
-            cap = cfg["max_payout"]
-            cap_note = f" *(max payout {cap:,})*" if cap else ""
             lines += [
                 "",
                 f"**Current guess:** `{' '.join(slots)}`",
                 "",
-                f"**Payouts by attempt:** {payline}{cap_note}",
+                f"**Payouts by attempt:** {payline}",
             ]
         if footer:
             lines += ["", footer]
@@ -361,7 +358,7 @@ class TheVault(commands.Cog):
         difficulty="normal: 4 digits 1-6 · hard: 5 digits 1-9 · extra: suitcase lock, counts-only hints",
     )
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name="normal — 4 digits (1-6), up to 15×, payout capped", value="normal"),
+        app_commands.Choice(name="normal — 4 digits (1-6), up to 15×", value="normal"),
         app_commands.Choice(name="hard — 5 digits (1-9), up to 75×, last-try pays 0.5×", value="hard"),
         app_commands.Choice(name="extra — suitcase lock, counts-only hints, up to 50×", value="extra"),
     ])

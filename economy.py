@@ -2,6 +2,7 @@
 
 import sqlite3
 from contextlib import contextmanager
+import json
 import os
 import logging
 from datetime import datetime
@@ -984,8 +985,14 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                     )
                     house_coins += topup
             pay = min(amount, max(0, house_coins))
+            if pay < amount:
+                # THE HOUSE IS BANKRUPT: both buckets are drained and a winner
+                # is still owed money. Log the event for cogs/bankruptcy.py,
+                # which covers the shortfall out of player bank accounts and
+                # opens the economy-reset referendum.
+                _record_bankruptcy_event(conn, guild_id, user_id, amount, pay)
             if pay <= 0:
-                conn.rollback()
+                conn.commit()  # keep the interest normalization + the event
                 return 0
             conn.execute(
                 "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
@@ -1147,6 +1154,155 @@ def replenish_house_if_low(guild_id: int) -> dict:
     except sqlite3.Error as e:
         logger.error(f"Database error in replenish_house_if_low: {e}")
         return {"replenished": False, "added": 0, "on_hand": 0, "reserve": 0}
+
+
+# --- House bankruptcy ------------------------------------------------------
+# There is no bet cap, so a big enough win can drain BOTH house buckets and
+# still leave the winner short — that's a bankruptcy. casino_payout logs the
+# event here; cogs/bankruptcy.py picks it up, covers the shortfall from player
+# bank accounts (cover_house_shortfall) and opens a referendum on wiping the
+# economy (bankruptcy_reset) vs. minting a bailout (replenish_house_if_low).
+
+_BANKRUPTCY_NS = "bankruptcy"
+_BANKRUPTCY_PENDING_KEY = "pending"
+_BANKRUPTCY_MAX_PENDING = 10  # backstop against a broke house shorting in a loop
+
+BANKRUPTCY_VOTE_SECONDS = 4 * 3600   # referendum window
+BANKRUPTCY_VOTES_NEEDED = 3          # votes that force the reset outright
+BANKRUPTCY_RESET_WALLET = 250_000    # everyone's fresh-start wallet...
+BANKRUPTCY_RESET_LOAN = 50_000       # ...of which this much is Big Sal's money
+
+
+def _record_bankruptcy_event(conn: sqlite3.Connection, guild_id: int,
+                             user_id: int, owed: int, paid: int):
+    """Within an open transaction, append one bankruptcy event to the guild's
+    pending list (cog_kv, guild-scoped). cogs/bankruptcy.py drains the list."""
+    import time as _t
+    row = conn.execute(
+        "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace=? AND key=?",
+        (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY),
+    ).fetchone()
+    try:
+        events = json.loads(row[0]) if row and row[0] else []
+        if not isinstance(events, list):
+            events = []
+    except (json.JSONDecodeError, TypeError):
+        events = []
+    if len(events) >= _BANKRUPTCY_MAX_PENDING:
+        return
+    events.append({"user_id": user_id, "owed": int(owed), "paid": int(paid),
+                   "ts": int(_t.time())})
+    conn.execute(
+        "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,0,?,?,?) "
+        "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=excluded.value",
+        (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY, json.dumps(events)),
+    )
+
+
+def pop_bankruptcy_events(guild_id: int) -> list[dict]:
+    """Atomically take (and clear) the guild's pending bankruptcy events.
+    Each is {"user_id", "owed", "paid", "ts"}. Empty list if none."""
+    try:
+        with _tx("pop_bankruptcy_events") as conn:
+            row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace=? AND key=?",
+                (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY),
+            ).fetchone()
+            if not row or not row[0]:
+                raise _Abort([])
+            conn.execute(
+                "DELETE FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace=? AND key=?",
+                (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY),
+            )
+            try:
+                events = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
+                events = []
+        return events if isinstance(events, list) else []
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return []
+
+
+def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict:
+    """Emergency bankruptcy cover: seize an equal percentage of EVERY player
+    bank account (the winner's own and the memorial player's excepted) into the
+    house on-hand, then pay the winner what they're still owed. The percentage
+    is exactly what's needed to cover the shortfall, capped at 100% — this is
+    the one deliberately uncapped drain in the economy, and it only fires when
+    someone has already emptied both house buckets. Atomic.
+
+    Returns {"pct", "seized", "accounts", "paid", "still_short"}.
+    """
+    out = {"pct": 0.0, "seized": 0, "accounts": 0, "paid": 0,
+           "still_short": max(0, int(shortfall))}
+    if shortfall <= 0:
+        return out
+    house_id = get_house_id()
+    try:
+        with _tx("cover_house_shortfall") as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+                (guild_id, house_id),
+            )
+            rows = conn.execute(
+                "SELECT user_id FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                (guild_id, _BANK_NS, _BANK_KEY),
+            ).fetchall()
+            balances = []
+            total_banked = 0
+            for (uid,) in rows:
+                if uid == winner_id or is_memorial(uid):
+                    continue
+                bal = _accrue_bank_interest(conn, guild_id, uid)
+                if bal > 0:
+                    balances.append((uid, bal))
+                    total_banked += bal
+            pct = min(1.0, shortfall / total_banked) if total_banked > 0 else 0.0
+            seized = 0
+            accounts = 0
+            for uid, bal in balances:
+                take = bal if pct >= 1.0 else int(bal * pct)
+                if take <= 0:
+                    continue
+                conn.execute(
+                    "UPDATE cog_kv SET value = value - ? "
+                    "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                    (take, guild_id, uid, _BANK_NS, _BANK_KEY),
+                )
+                seized += take
+                accounts += 1
+            if seized > 0:
+                conn.execute(
+                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                    (seized, guild_id, house_id),
+                )
+            house_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, house_id),
+            ).fetchone()
+            pay = min(int(shortfall), max(0, house_row[0] if house_row else 0))
+            if pay > 0:
+                conn.execute(
+                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                    (guild_id, winner_id, STARTING_COINS),
+                )
+                conn.execute(
+                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    (pay, guild_id, house_id),
+                )
+                conn.execute(
+                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, "
+                    "net_won = net_won + ? WHERE guild_id = ? AND user_id = ?",
+                    (pay, pay, pay, guild_id, winner_id),
+                )
+            out = {"pct": pct, "seized": seized, "accounts": accounts,
+                   "paid": pay, "still_short": int(shortfall) - pay}
+        return out
+    except sqlite3.Error:
+        return out
 
 
 # --- Generic key-value store ----------------------------------------------
@@ -2523,6 +2679,55 @@ def clear_economy(guild_id: int) -> dict:
     except sqlite3.Error as e:
         logger.error(f"Database error in clear_economy: {e}")
         return {}
+
+
+def bankruptcy_reset(guild_id: int, wallet_coins: int = BANKRUPTCY_RESET_WALLET) -> dict:
+    """The nuclear option after a house bankruptcy: wipe the guild's economy
+    (same tables as clear_economy — game_stats survive) and re-seed every
+    known player's wallet at `wallet_coins`. The house comes back fresh too
+    (on-hand 0, reserve at HOUSE_STARTING_COINS). The memorial player is
+    re-seeded with everything he held (wallet + bank) if that beats the
+    fresh-start amount — the reset is never a punishment for him.
+
+    The caller (cogs/bankruptcy.py) is responsible for hanging Big Sal's
+    fresh-start loan on each returned player — the loan row is loanshark
+    state, not an economy concept. Atomic; no undo.
+
+    Returns {"players": [user_ids...], "memorial_kept": int}.
+    """
+    house_id = get_house_id()
+    try:
+        with _tx("bankruptcy_reset") as conn:
+            players = [uid for (uid,) in conn.execute(
+                "SELECT user_id FROM wallets WHERE guild_id = ? AND user_id != ?",
+                (guild_id, house_id),
+            ).fetchall()]
+            mem_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, MEMORIAL_USER_ID),
+            ).fetchone()
+            mem_bank_row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, MEMORIAL_USER_ID, _BANK_NS, _BANK_KEY),
+            ).fetchone()
+            mem_total = int(mem_row[0] if mem_row else 0) + \
+                int(mem_bank_row[0] if mem_bank_row and mem_bank_row[0] else 0)
+            for tbl in _CLEAR_ECONOMY_TABLES:
+                try:
+                    conn.execute(f"DELETE FROM {tbl} WHERE guild_id = ?", (guild_id,))
+                except sqlite3.OperationalError:
+                    pass  # table absent on this DB
+            for uid in players:
+                coins = max(mem_total, wallet_coins) if is_memorial(uid) else wallet_coins
+                conn.execute(
+                    "INSERT INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                    (guild_id, uid, coins),
+                )
+            _ensure_house_wallet(conn, guild_id)
+        return {"players": players, "memorial_kept": mem_total}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bankruptcy_reset: {e}")
+        return {"players": [], "memorial_kept": 0}
 
 
 # Initialize DB on import

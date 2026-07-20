@@ -146,3 +146,84 @@ def test_wealth_leaderboard_counts_bank():
     # wallet-only leaderboard still ranks by cash on hand
     wallet_rows = economy.get_leaderboard(G)
     assert wallet_rows[0][0] == 1
+
+
+def test_bankrupting_payout_logs_event_and_drains_both_buckets():
+    G, U = 9101, 1
+    economy.get_house_state(G)  # first touch seeds the reserve
+    economy.add_coins(G, U, 1_000)
+    assert economy.transfer_to_house(G, U, 1_000)["ok"]
+    state = economy.get_house_state(G)
+    total_house = state["on_hand"] + state["reserve"]
+    owed = total_house + 500_000
+    paid = economy.casino_payout(G, U, owed)
+    assert 0 < paid < owed  # everything the house had, but not what was owed
+    events = economy.pop_bankruptcy_events(G)
+    assert len(events) == 1
+    assert events[0]["user_id"] == U
+    assert events[0]["owed"] == owed
+    assert events[0]["paid"] == paid
+    assert economy.pop_bankruptcy_events(G) == []  # pop clears the list
+    state = economy.get_house_state(G)
+    assert state["on_hand"] == 0 and state["reserve"] == 0
+
+
+def test_fully_covered_payout_logs_no_event():
+    G, U = 9102, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, U, 1_000)
+    assert economy.transfer_to_house(G, U, 500)["ok"]
+    assert economy.casino_payout(G, U, 500) == 500
+    assert economy.pop_bankruptcy_events(G) == []
+
+
+def test_cover_house_shortfall_taxes_banks_evenly():
+    G, W, A, B = 9103, 1, 2, 3
+    economy.add_coins(G, A, 100_000)
+    economy.bank_deposit(G, A, 100_000)
+    economy.add_coins(G, B, 300_000)
+    economy.bank_deposit(G, B, 300_000)
+    economy.add_coins(G, W, 10_000)
+    economy.bank_deposit(G, W, 10_000)  # winner's own bank must be untouched
+    wallet_before = economy.get_coins(G, W)
+    res = economy.cover_house_shortfall(G, W, 200_000)
+    assert res["pct"] == 0.5
+    assert res["seized"] == 200_000
+    assert res["accounts"] == 2
+    assert res["paid"] == 200_000
+    assert res["still_short"] == 0
+    assert economy.bank_balance(G, A) == 50_000
+    assert economy.bank_balance(G, B) == 150_000
+    assert economy.bank_balance(G, W) == 10_000
+    assert economy.get_coins(G, W) == wallet_before + 200_000
+
+
+def test_cover_house_shortfall_empties_banks_when_debt_is_bigger():
+    G, W, A = 9104, 1, 2
+    economy.add_coins(G, A, 50_000)
+    economy.bank_deposit(G, A, 50_000)
+    res = economy.cover_house_shortfall(G, W, 1_000_000)
+    assert res["pct"] == 1.0
+    assert res["seized"] == 50_000
+    assert res["paid"] == 50_000
+    assert res["still_short"] == 950_000
+    assert economy.bank_balance(G, A) == 0
+
+
+def test_bankruptcy_reset_reseeds_wallets_and_keeps_stats():
+    G, A, B = 9105, 1, 2
+    economy.add_coins(G, A, 5_000_000)
+    economy.bank_deposit(G, A, 1_000_000)
+    economy.get_wallet(G, B)  # exists at STARTING_COINS
+    economy.record_game(G, A, "vault", won=True)
+    res = economy.bankruptcy_reset(G)
+    assert set(res["players"]) == {A, B}
+    assert economy.get_coins(G, A) == economy.BANKRUPTCY_RESET_WALLET
+    assert economy.get_coins(G, B) == economy.BANKRUPTCY_RESET_WALLET
+    assert economy.bank_balance(G, A) == 0
+    stats = economy.get_game_stats(G, A)
+    assert stats["vault"] == {"plays": 1, "wins": 1}
+    # house comes back fresh: empty pot, re-seeded reserve
+    state = economy.get_house_state(G)
+    assert state["on_hand"] == 0
+    assert state["reserve"] == economy.HOUSE_STARTING_COINS
