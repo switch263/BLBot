@@ -219,3 +219,29 @@ def test_mint_house_bailout_pays_winner_and_counts_as_winnings():
     assert after["total_won"] == before["total_won"] + 750_000
     assert economy.mint_house_bailout(G, U, 0) == 0
     assert economy.mint_house_bailout(G, U, -5) == 0
+
+
+def test_get_wealth_counts_wallet_and_bank():
+    G, U = 9106, 1
+    economy.add_coins(G, U, 10_000)
+    wallet_only = economy.get_wealth(G, U)
+    assert wallet_only == economy.get_coins(G, U)
+    economy.bank_deposit(G, U, 8_000)
+    assert economy.get_wealth(G, U) == wallet_only  # moving money doesn't change wealth
+
+
+def test_fine_user_wealth_falls_through_to_bank():
+    G, U = 9107, 1
+    economy.add_coins(G, U, 20_000)
+    economy.bank_deposit(G, U, 15_000)
+    wallet = economy.get_coins(G, U)  # 5_000 + STARTING_COINS
+    # Fine bigger than the wallet: wallet emptied, remainder from the bank.
+    fine = wallet + 4_000
+    assert economy.fine_user_wealth(G, U, fine) == fine
+    assert economy.get_coins(G, U) == 0
+    assert economy.bank_balance(G, U) == 11_000
+    # Fine bigger than everything: collects what exists, never goes negative.
+    assert economy.fine_user_wealth(G, U, 1_000_000) == 11_000
+    assert economy.get_coins(G, U) == 0
+    assert economy.bank_balance(G, U) == 0
+    assert economy.fine_user_wealth(G, U, 0) == 0

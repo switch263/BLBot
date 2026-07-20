@@ -69,7 +69,7 @@ HOUSE_SUCCESS_RATES = {2: 0.02, 3: 0.04}   # crew size -> odds
 HOUSE_ESCAPE_RATE = 0.20                    # the bot sees everything
 HOUSE_JAIL_MIN_SECONDS = 1 * 60 * 60
 HOUSE_JAIL_MAX_SECONDS = 24 * 60 * 60
-HOUSE_BAIL_WALLET_PCT = 0.25                # bail = max(BAIL_AMOUNT, 25% of wallet)
+HOUSE_BAIL_WALLET_PCT = 0.25                # bail = max(BAIL_AMOUNT, 25% of wealth: wallet + bank)
 HOUSE_BAIL_CAP = 100_000_000
 HOUSE_COOLDOWN = 6 * 60 * 60                # matches the solo /heist cooldown
 
@@ -340,7 +340,7 @@ class CrewHeist(commands.Cog):
                 f"**The take:** {int(HOUSE_HEIST_MIN_PCT * 100)}–{int(HOUSE_HEIST_MAX_PCT * 100)}% of the house's "
                 f"entire on-hand pot, split evenly.\n"
                 f"**A bust:** only {int(HOUSE_ESCAPE_RATE * 100)}% slip the bot's security — the caught eat up to "
-                f"{HOUSE_JAIL_MAX_SECONDS // 3600}h of casino jail, bail scaling with their wallet.\n"
+                f"{HOUSE_JAIL_MAX_SECONDS // 3600}h of casino jail, bail scaling with their wealth (wallet + bank).\n"
                 f"Cooldown after launch: {HOUSE_COOLDOWN // 3600}h."
             )
         else:
@@ -571,9 +571,9 @@ class CrewHeist(commands.Cog):
                 else:
                     seconds = random.randint(jail_lo, jail_hi)
                     if lobby.is_house:
-                        wallet = economy.get_coins(guild_id, m.id)
+                        wealth = economy.get_wealth(guild_id, m.id)
                         bail = min(HOUSE_BAIL_CAP,
-                                   max(BAIL_AMOUNT, int(wallet * HOUSE_BAIL_WALLET_PCT)))
+                                   max(BAIL_AMOUNT, int(wealth * HOUSE_BAIL_WALLET_PCT)))
                     else:
                         bail = BAIL_AMOUNT
                     economy.jail_user(

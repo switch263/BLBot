@@ -1820,6 +1820,50 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
         return 0
 
 
+def get_wealth(guild_id: int, user_id: int) -> int:
+    """Wallet + bank total for one player (applies accrued bank interest as a
+    side effect). The basis for wealth-scaled punishments — heist bail and
+    fines — so parking everything in the bank doesn't shrink a 25%-of-what-
+    you-have penalty down to 25% of an empty wallet."""
+    return get_coins(guild_id, user_id) + bank_balance(guild_id, user_id)
+
+
+def fine_user_wealth(guild_id: int, user_id: int, amount: int) -> int:
+    """A fine that reaches into the bank: destroy up to `amount` coins, wallet
+    first, then the player's bank account (interest applied before the take).
+    Same money-sink semantics as fine_user, just bank-aware — banking is not a
+    way to dodge a heist fine. Atomic. Returns the coins actually collected."""
+    if amount <= 0:
+        return 0
+    try:
+        with _tx("fine_user_wealth") as conn:
+            row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            wallet = row[0] if row else 0
+            from_wallet = min(int(amount), max(0, wallet))
+            if from_wallet > 0:
+                conn.execute(
+                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    (from_wallet, guild_id, user_id),
+                )
+            remaining = int(amount) - from_wallet
+            from_bank = 0
+            if remaining > 0:
+                banked = _accrue_bank_interest(conn, guild_id, user_id)
+                from_bank = min(remaining, banked)
+                if from_bank > 0:
+                    conn.execute(
+                        "UPDATE cog_kv SET value = value - ? "
+                        "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                        (from_bank, guild_id, user_id, _BANK_NS, _BANK_KEY),
+                    )
+        return from_wallet + from_bank
+    except sqlite3.Error:
+        return 0
+
+
 def release_from_jail(guild_id: int, user_id: int) -> dict:
     """Try to clear a player's jail sentence — the Get Out of Jail Free card.
 

@@ -109,7 +109,9 @@ DUO_FAIL_MESSAGES = [
     "{accomplice} brought their mom. {victim}'s mom happened to be home. They became friends. Heist abandoned. Fined **{fine:,}**.",
 ]
 
-# Steal 5-15% of victim's coins on success, fine is 10-20% of thief's coins on fail
+# Steal 5-15% of victim's WALLET coins on success (the bank stays un-heistable);
+# fine is 10-20% of thief's total wealth (wallet + bank) on fail — banking your
+# stack doesn't shrink the penalty, and collection reaches into the bank too.
 STEAL_MIN_PCT = 0.05
 STEAL_MAX_PCT = 0.15
 FINE_MIN_PCT = 0.10
@@ -138,8 +140,9 @@ from economy import (
     BOT_HEIST_BOTH_ODDS, BOT_HEIST_BOXES_ODDS, BOT_HEIST_VAULT_ODDS,
 )
 
-# Bail: someone ELSE pays a random share of the JAILED user's own wallet to
-# spring you — so the bigger your stack, the costlier you are to free.
+# Bail: someone ELSE pays a random share of the JAILED user's own wealth
+# (wallet + bank) to spring you — so the bigger your stack, the costlier you
+# are to free, and an all-banked stack doesn't roll a 1-coin bail.
 # Multiplier grows with prior offenses, capped so it doesn't become unpayable.
 BAIL_PCT_MIN = 0.25
 BAIL_PCT_MAX = 1.00
@@ -607,14 +610,15 @@ class Heist(commands.Cog):
             return 1.0
         return min(BAIL_REPEAT_CAP, 1.0 + BAIL_REPEAT_STEP * (offenses - 1))
 
-    def _roll_bail(self, guild_id: int, wallet_size: int, offenses: int) -> int:
-        """Bail = random 25-100% of the JAILED user's own wallet × repeat
-        multiplier, then capped at the LOWER of the per-offender hard ceiling
-        (BAIL_HARD_CAP_BASE × the same repeat multiplier — dynamic, not a flat
-        100M) and BAIL_ECONOMY_CAP_PCT × total guild economy."""
+    def _roll_bail(self, guild_id: int, wealth: int, offenses: int) -> int:
+        """Bail = random 25-100% of the JAILED user's own wealth (wallet +
+        bank) × repeat multiplier, then capped at the LOWER of the per-offender
+        hard ceiling (BAIL_HARD_CAP_BASE × the same repeat multiplier —
+        dynamic, not a flat 100M) and BAIL_ECONOMY_CAP_PCT × total guild
+        economy."""
         mult = self._bail_multiplier(offenses)
         pct = random.uniform(BAIL_PCT_MIN, BAIL_PCT_MAX)
-        rolled = int(wallet_size * pct * mult)
+        rolled = int(wealth * pct * mult)
         effective_cap = int(BAIL_HARD_CAP_BASE * mult)
         econ_cap = int(economy.get_total_economy(guild_id) * BAIL_ECONOMY_CAP_PCT)
         if econ_cap > 0:
@@ -699,7 +703,7 @@ class Heist(commands.Cog):
         # both scaled by their own prior bot-heist offenses.
         thief_offenses = economy.increment_bot_heist_offenses(guild_id, thief.id)
         thief_seconds = self._roll_jail_seconds(thief_offenses)
-        thief_bail = self._roll_bail(guild_id, economy.get_coins(guild_id, thief.id), thief_offenses)
+        thief_bail = self._roll_bail(guild_id, economy.get_wealth(guild_id, thief.id), thief_offenses)
         economy.jail_user(
             guild_id, thief.id, thief_seconds,
             reason="Attempted to rob the house",
@@ -721,7 +725,7 @@ class Heist(commands.Cog):
             else:
                 acc_offenses = economy.increment_bot_heist_offenses(guild_id, accomplice.id)
                 acc_seconds = self._roll_jail_seconds(acc_offenses)
-                accomplice_bail = self._roll_bail(guild_id, economy.get_coins(guild_id, accomplice.id), acc_offenses)
+                accomplice_bail = self._roll_bail(guild_id, economy.get_wealth(guild_id, accomplice.id), acc_offenses)
                 economy.jail_user(
                     guild_id, accomplice.id, acc_seconds,
                     reason="Accomplice in house robbery",
@@ -804,7 +808,6 @@ class Heist(commands.Cog):
 
         # Check balances
         victim_coins = economy.get_coins(guild_id, victim.id)
-        thief_coins = economy.get_coins(guild_id, thief.id)
 
         if victim_coins < MIN_VICTIM_COINS:
             return discord.Embed(description=f"{victim.display_name} only has **{victim_coins:,}** coins. Not worth the risk!", color=discord.Color.red()), None, None
@@ -868,16 +871,17 @@ class Heist(commands.Cog):
             embed = discord.Embed(title="Heist Successful!", description=msg, color=discord.Color.green())
 
         else:
-            # Calculate fine
+            # Fine is a cut of total wealth (wallet + bank) and collection
+            # falls through wallet → bank, so a banked stack pays full freight.
             fine_pct = random.uniform(FINE_MIN_PCT, FINE_MAX_PCT)
-            fine = max(1, int(thief_coins * fine_pct))
+            fine = max(1, int(economy.get_wealth(guild_id, thief.id) * fine_pct))
 
-            economy.fine_user(guild_id, thief.id, fine)
+            economy.fine_user_wealth(guild_id, thief.id, fine)
 
             if is_duo:
-                accomplice_coins = economy.get_coins(guild_id, accomplice.id)
-                accomplice_fine = max(1, int(accomplice_coins * fine_pct))
-                economy.fine_user(guild_id, accomplice.id, accomplice_fine)
+                accomplice_wealth = economy.get_wealth(guild_id, accomplice.id)
+                accomplice_fine = max(1, int(accomplice_wealth * fine_pct))
+                economy.fine_user_wealth(guild_id, accomplice.id, accomplice_fine)
 
                 msg_template = random.choice(DUO_FAIL_MESSAGES)
                 msg = msg_template.format(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, fine=fine)
