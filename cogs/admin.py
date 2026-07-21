@@ -129,15 +129,15 @@ class Admin(commands.Cog):
     @commands.command(name="clear_economy")
     @commands.guild_only()
     async def clear_economy(self, ctx):
-        """Wipe the entire economy for this server. Requires two approvals from
-        OTHER admin-channel members before it runs. Admin channel only."""
+        """Wipe the entire economy for this server. Requires one approval from
+        another admin-channel member before it runs. Admin channel only."""
         if ctx.channel.id != ADMIN_CHANNEL_ID:
             return  # Silently ignore — admin channel only.
         view = ClearEconomyView(
             initiator=ctx.author,
             guild=ctx.guild,
             channel=ctx.channel,
-            required_approvals=2,
+            required_approvals=1,
         )
         msg = await ctx.send(view.status_text(), view=view)
         view.message = msg
@@ -182,12 +182,12 @@ class Admin(commands.Cog):
 # --------------------------------------------------------------------------
 
 class ClearEconomyView(discord.ui.View):
-    """Posts in the admin channel. Two distinct admin-channel members (not the
-    initiator) must click Approve before the wipe runs. The initiator — or any
+    """Posts in the admin channel. An admin-channel member other than the
+    initiator must click Approve before the wipe runs. The initiator — or any
     admin-channel member — can cancel. 5-minute timeout."""
 
     def __init__(self, initiator: discord.Member, guild: discord.Guild,
-                 channel: discord.TextChannel, required_approvals: int = 2):
+                 channel: discord.TextChannel, required_approvals: int = 1):
         super().__init__(timeout=300)
         self.initiator = initiator
         self.guild = guild
@@ -223,8 +223,8 @@ class ClearEconomyView(discord.ui.View):
             f"• loot-drop cooldowns (AM/PM)\n"
             f"• jail-bounty rate-limit history\n\n"
             f"**Preserved:** game stats (play counts, win counts) — leaderboards survive.\n\n"
-            f"**{self.required_approvals} approvals required** from other admin-channel "
-            f"members. The initiator's request does not count.\n"
+            f"**{self.required_approvals} approval{'s' if self.required_approvals != 1 else ''} "
+            f"required** from other admin-channel members. The initiator's request does not count.\n"
             f"**Approvals: {len(self.approvers)}/{self.required_approvals}**  ({self._approver_names()})"
         )
 
