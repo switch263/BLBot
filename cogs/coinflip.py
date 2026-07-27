@@ -44,6 +44,10 @@ class CoinFlip(commands.Cog):
         jmsg = economy.jail_message(guild_id, user_id)
         if jmsg:
             return discord.Embed(title="🚔 Jailed", description=jmsg, color=discord.Color.red())
+        ban = economy.casino_ban_message(guild_id, user_id)
+        if ban:
+            return discord.Embed(title="🎰 You Own This Place",
+                                 description=ban, color=discord.Color.dark_gold())
 
         call = call.lower()
         if call not in ("heads", "tails", "h", "t"):

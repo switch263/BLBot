@@ -1,7 +1,8 @@
 """parse_amount: the single source of truth for typed coin amounts."""
 import pytest
 
-from amount import parse_amount
+import economy
+from amount import MAX_AMOUNT, parse_amount
 
 
 @pytest.mark.parametrize("raw,want", [
@@ -42,3 +43,25 @@ def test_contextual_forms():
     assert parse_amount("150%", available=333) is None
     # plain forms still parse when available is passed
     assert parse_amount("2k", available=777) == 2_000
+
+
+def test_ceiling_matches_economy():
+    # amount.py duplicates the ceiling to stay a pure module — keep them equal.
+    assert MAX_AMOUNT == economy.MAX_COINS
+
+
+@pytest.mark.parametrize("raw", [
+    "9999t",                      # suffix form past the ceiling
+    "99999999999999999999",       # raw digits past the ceiling
+    MAX_AMOUNT + 1,               # already-int input past the ceiling
+    float(MAX_AMOUNT) * 10,
+])
+def test_rejects_above_ceiling(raw):
+    # Absurd stakes are refused outright, not silently clamped — a typed
+    # amount that big is a typo or a probe, never a real bet.
+    assert parse_amount(raw) is None
+
+
+def test_accepts_exactly_the_ceiling():
+    assert parse_amount(str(MAX_AMOUNT)) == MAX_AMOUNT
+    assert parse_amount("1000t") == MAX_AMOUNT

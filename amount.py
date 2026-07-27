@@ -35,6 +35,13 @@ _SUFFIXES = {
     "t": 1_000_000_000_000,
 }
 
+# The coin ceiling, mirrored from economy.MAX_COINS (a test pins them equal).
+# Duplicated rather than imported so this module stays pure — no DB, no config.
+# Anything a player types above it is rejected outright rather than clamped:
+# "9999t" is a typo or a probe, not a bet, and silently reinterpreting it as a
+# quadrillion-coin stake is worse than saying no.
+MAX_AMOUNT = 1_000_000_000_000_000
+
 # digits with optional , _ or space grouping, optional decimal, optional suffix
 _AMOUNT_RE = re.compile(r"^([0-9][0-9,_ ]*(?:\.[0-9]+)?)\s*([kmbt])?$", re.IGNORECASE)
 _PERCENT_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*%$")
@@ -55,13 +62,14 @@ def parse_amount(text, available: int | None = None) -> int | None:
     to be all OF unless the caller says so.
 
     Already-int input passes straight through (so handlers are safe to call it
-    twice or on a default). Booleans, negatives, and junk return None."""
+    twice or on a default). Booleans, negatives, junk, and anything above
+    MAX_AMOUNT return None."""
     if isinstance(text, bool):  # bool is an int subclass — reject explicitly
         return None
     if isinstance(text, int):
-        return text if text >= 0 else None
+        return text if 0 <= text <= MAX_AMOUNT else None
     if isinstance(text, float):
-        return int(text) if text >= 0 else None
+        return int(text) if 0 <= text <= MAX_AMOUNT else None
     if text is None:
         return None
 
@@ -96,6 +104,8 @@ def parse_amount(text, available: int | None = None) -> int | None:
     if suffix:
         value *= _SUFFIXES[suffix]
     if value < 0 or value != value or value in (float("inf"), float("-inf")):
+        return None
+    if value > MAX_AMOUNT:
         return None
     return int(value)
 

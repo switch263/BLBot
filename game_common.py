@@ -30,7 +30,8 @@ Pure glue — talks to economy.py, never to SQLite.
 """
 import discord
 
-from economy import check_bet, get_coins, jail_message, transfer_to_house
+from economy import (casino_ban_message, check_bet, get_coins, jail_message,
+                     transfer_to_house)
 from amount import parse_amount, amount_error
 
 
@@ -92,6 +93,13 @@ async def casino_prelude(
         await reply(jmsg)
         return None
 
+    # House shareholders don't gamble against their own casino. Also public —
+    # the whole point of buying in was for everyone to know.
+    ban = casino_ban_message(guild.id, user.id)
+    if ban:
+        await reply(ban)
+        return None
+
     if bet is None:
         return GameStart(guild, user, None, reply, is_slash)
 
@@ -118,6 +126,10 @@ async def casino_prelude(
         if not res.get("ok"):
             if res.get("error") == "broke":
                 await err(f"Too broke. Balance: **{res.get('have', 0):,}**")
+            elif res.get("error") == "shareholder":
+                # Backstop — the gate above should already have caught this.
+                await err(casino_ban_message(guild.id, user.id)
+                          or "You own a piece of the house.")
             else:
                 await err("Bet failed. Try again.")
             return None

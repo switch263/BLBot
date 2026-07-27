@@ -4,6 +4,7 @@ from discord import app_commands
 import logging
 import economy
 from amount import parse_amount, amount_error
+from taunts import ceiling_taunt
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,20 @@ class Gift(commands.Cog):
                 )
             if err == "invalid_amount":
                 return discord.Embed(description="Gift at least **1** coin.", color=discord.Color.red())
+            if err == "capped":
+                return discord.Embed(
+                    title="🧱 TOO RICH FOR THE ENGINE",
+                    description=(
+                        f"{recipient.mention} is already sitting on the maximum "
+                        f"**{economy.MAX_COINS:,}** coins.\n\n{ceiling_taunt()}"
+                    ),
+                    color=discord.Color.dark_gold(),
+                )
             return discord.Embed(description="Transfer failed. Try again.", color=discord.Color.red())
 
+        # The transfer trims itself to the recipient's remaining headroom under
+        # the coin ceiling, so report what actually moved, not what was asked.
+        amount = result.get("amount", amount)
         embed = discord.Embed(
             title="Gift Sent!",
             description=f"{sender.mention} gifted **{amount:,}** coins to {recipient.mention}!",

@@ -318,6 +318,9 @@ class CrewHeist(commands.Cog):
         jmsg = economy.jail_message(lobby.guild_id, user.id)
         if jmsg:
             return jmsg
+        ban = economy.casino_ban_message(lobby.guild_id, user.id)
+        if ban:
+            return ban
         cd = self._cooldown_remaining(lobby.guild_id, user.id)
         if cd:
             m, s = divmod(cd, 60)
@@ -407,6 +410,10 @@ class CrewHeist(commands.Cog):
         jmsg = economy.jail_message(guild.id, starter.id)
         if jmsg:
             await reply(jmsg)
+            return
+        ban = economy.casino_ban_message(guild.id, starter.id)
+        if ban:
+            await reply(ban)
             return
         cd = self._cooldown_remaining(guild.id, starter.id)
         if cd:

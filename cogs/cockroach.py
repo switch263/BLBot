@@ -5,7 +5,8 @@ import random
 import logging
 import asyncio
 
-from economy import get_coins, add_coins, deduct_coins, jail_message, memorial_tithe, record_game
+from economy import (get_coins, add_coins, casino_ban_message,
+                     deduct_coins, jail_message, memorial_tithe, record_game)
 from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,10 @@ class ChallengeView(discord.ui.View):
         jmsg = jail_message(c.guild_id, interaction.user.id)
         if jmsg:
             await interaction.response.send_message(jmsg, ephemeral=True)
+            return
+        ban = casino_ban_message(c.guild_id, interaction.user.id)
+        if ban:
+            await interaction.response.send_message(ban, ephemeral=True)
             return
         if get_coins(c.guild_id, c.opponent.id) < c.bet:
             await interaction.response.send_message(

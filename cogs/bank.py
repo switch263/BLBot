@@ -5,6 +5,7 @@ import logging
 
 import economy
 from amount import parse_amount
+from taunts import ceiling_taunt
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,15 @@ class Bank(commands.Cog):
                     f"💸 You only have **{result.get('have', 0):,}** coins on hand — "
                     f"can't deposit **{amount:,}**."
                 )
+            if result.get("error") == "capped":
+                return (
+                    f"🧱 Your account is full — it already holds the maximum "
+                    f"**{economy.MAX_COINS:,}** coins.\n{ceiling_taunt()}"
+                )
             return "⚠️ The teller's drawer jammed (database error). Try again."
+        # A deposit trims itself to the account's remaining room under the coin
+        # ceiling, so report what actually moved.
+        amount = result.get("amount", amount)
         msg = f"🏦 Deposited **{amount:,}** coins into the {BANK_NAME}."
         if show_balances:
             msg += f"\n💵 On hand: **{result['wallet']:,}** • 🏦 Banked: **{result['bank']:,}**"
@@ -101,7 +110,14 @@ class Bank(commands.Cog):
                     f"💸 Your account holds **{result.get('have', 0):,}** coins — "
                     f"can't withdraw **{amount:,}**."
                 )
+            if result.get("error") == "capped":
+                return (
+                    f"🧱 Your wallet is full — it already holds the maximum "
+                    f"**{economy.MAX_COINS:,}** coins. Spend some first.\n"
+                    f"{ceiling_taunt()}"
+                )
             return "⚠️ The vault door stuck (database error). Try again."
+        amount = result.get("amount", amount)
         msg = f"💵 Withdrew **{amount:,}** coins. Cash in hand — go lose it responsibly."
         if show_balances:
             msg += f"\n💵 On hand: **{result['wallet']:,}** • 🏦 Banked: **{result['bank']:,}**"

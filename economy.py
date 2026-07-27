@@ -13,6 +13,81 @@ logger = logging.getLogger(__name__)
 DB_FILE = os.path.join(DATA_DIR, "economy.db")
 STARTING_COINS = 100
 
+# --- The coin ceiling -------------------------------------------------------
+# SQLite's INTEGER is a signed 64-bit value, and when an integer expression
+# overflows that range SQLite does NOT raise — it silently promotes the result
+# to REAL. `coins = coins + 1` on a big enough wallet quietly turns the column
+# into 9.223372036854776e+18, every read after that hands cogs a float,
+# f"{coins:,}" prints scientific-notation garbage, and anything doing exact
+# integer money math downstream breaks. So no stored coin figure is ever
+# allowed anywhere near the 64-bit edge.
+#
+# MAX_COINS is the hard ceiling on every stored money figure: wallets, both
+# house buckets, bank accounts, and the lifetime total_won/total_lost/net_won
+# counters. One quadrillion leaves ~9,200x of headroom under the 64-bit limit,
+# so even SUM()ing every balance in the guild (get_total_economy, /serverstats)
+# can't overflow either.
+#
+# Credits SATURATE at the ceiling — they never wrap and never promote to REAL.
+# Two-sided moves (transfers, payouts) shrink the move to the receiver's
+# remaining headroom BEFORE debiting the sender, so saturation never destroys
+# coins mid-transfer. Practically: a maxed-out wallet simply can't be paid
+# more, and the coins stay where they were.
+MAX_COINS = 1_000_000_000_000_000  # 1e15
+_SQLITE_MAX_INT = 2**63 - 1
+
+
+def coins_int(value) -> int:
+    """Coerce a money figure read out of the DB to a plain, sane int.
+
+    Anything that came back as a REAL (a pre-ceiling row that already
+    overflowed) is truncated, junk becomes 0, and the result is clamped to
+    [0, MAX_COINS]. Use on every coin figure economy.py hands to a cog, so a
+    legacy corrupted row can never leak a float into game math or a format
+    string."""
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if n <= 0:
+        return 0
+    return n if n <= MAX_COINS else MAX_COINS
+
+
+def clamp_amount(value) -> int:
+    """Coerce an amount coming INTO an economy helper to [0, MAX_COINS].
+    Same as coins_int; named for the input side so call sites read clearly."""
+    return coins_int(value)
+
+
+def _signed_int(value) -> int:
+    """coins_int for counters that are legitimately negative (net_won)."""
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(-MAX_COINS, min(MAX_COINS, n))
+
+
+def headroom(current: int) -> int:
+    """Coins that can still be credited to a balance of `current` before it
+    hits the ceiling. Two-sided moves clamp to this so nothing is destroyed."""
+    return max(0, MAX_COINS - coins_int(current))
+
+
+# Saturating-credit SQL fragments. A bare `coins = coins + ?` is exactly what
+# walks a column into 64-bit overflow; these pin the result at the ceiling
+# instead. Use them for EVERY money credit in this file — MAX_COINS is an int
+# literal interpolated at import, never user input. A column that is already a
+# corrupted REAL heals on its first write through one of these, because
+# MIN(9.2e18, 1e15) returns the integer ceiling.
+_ADD_COINS = f"coins = MIN(coins + ?, {MAX_COINS})"
+_ADD_TOTAL_WON = f"total_won = MIN(total_won + ?, {MAX_COINS})"
+_ADD_TOTAL_LOST = f"total_lost = MIN(total_lost + ?, {MAX_COINS})"
+_ADD_NET_WON = f"net_won = MAX(-{MAX_COINS}, MIN(net_won + ?, {MAX_COINS}))"
+_SUB_NET_WON = f"net_won = MAX(-{MAX_COINS}, MIN(net_won - ?, {MAX_COINS}))"
+_ADD_KV_VALUE = f"value = MIN(value + ?, {MAX_COINS})"
+
 # --- Weekly winnings tax --------------------------------------------------
 # The economy's main coin sink (cogs/taxes.py). It's an income tax on GROSS
 # winnings: once a week each player is assessed WINNINGS_TAX_PCT of everything
@@ -58,9 +133,10 @@ WEALTH_TAX_DAY = 15                      # day of the month it fires
 
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
-    error string if the bet is non-positive, else None. There is no bet cap.
-    Call at the top of every game's bet flow, before transfer_to_house /
-    deduct, e.g.:
+    error string if the bet is non-positive or past the MAX_COINS ceiling,
+    else None. There is no bet cap below the ceiling — and the ceiling is a
+    storage limit, not a game-balance one (see the MAX_COINS note). Call at the
+    top of every game's bet flow, before transfer_to_house / deduct, e.g.:
 
         err = check_bet(bet)
         if err:
@@ -69,6 +145,8 @@ def check_bet(bet: int) -> str | None:
     """
     if bet <= 0:
         return "Bet must be greater than 0."
+    if bet > MAX_COINS:
+        return f"Bet is too large — the ceiling is {MAX_COINS:,} coins."
     return None
 
 
@@ -134,7 +212,7 @@ def set_house_id(new_id: int):
                     (guild_id, new_id),
                 )
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                     (coins, guild_id, new_id),
                 )
             conn.execute(
@@ -198,6 +276,64 @@ def _backfill_game_stats(conn: sqlite3.Connection):
             inserted += 1
     if inserted:
         logger.info(f"Backfilled {inserted} game_stats rows from legacy wallet columns.")
+
+
+# Every stored money figure, as (table, column, allow_negative). The repair
+# migration and the read paths both work off this list — add a new money column
+# here and it's covered.
+_MONEY_COLUMNS = [
+    ("wallets", "coins", False),
+    ("wallets", "total_won", False),
+    ("wallets", "total_lost", False),
+    ("wallets", "net_won", True),
+    ("house_reserve", "coins", False),
+]
+
+
+def _repair_overflowed_money(conn: sqlite3.Connection):
+    """One-shot migration: heal money that ran past 64-bit and got silently
+    promoted to REAL, plus anything sitting above the new ceiling.
+
+    A column SQLite turned into 9.223372036854776e+18 reads back as a float
+    forever after — that's the scientific notation showing up in wallets and
+    payouts. This pins every money figure back into [0, MAX_COINS] (or
+    [-MAX_COINS, MAX_COINS] for net_won) as a real INTEGER. It's a haircut on
+    balances that were nonsense anyway; the saturating credits added alongside
+    it mean nothing can climb back out of range."""
+    repaired = 0
+    for table, column, allow_negative in _MONEY_COLUMNS:
+        floor = -MAX_COINS if allow_negative else 0
+        try:
+            # COALESCE + inner CAST before the clamp: MIN(NULL, x) is NULL, and
+            # SQLite sorts TEXT above every number, so a null or junk cell would
+            # otherwise "repair" to NULL or to the ceiling. Both become 0.
+            cur = conn.execute(
+                f"UPDATE {table} SET {column} = "
+                f"CAST(MAX(?, MIN(CAST(COALESCE({column}, 0) AS INTEGER), ?)) AS INTEGER) "
+                f"WHERE typeof({column}) != 'integer' OR {column} > ? OR {column} < ?",
+                (floor, MAX_COINS, MAX_COINS, floor),
+            )
+        except sqlite3.OperationalError:
+            continue  # table/column not on this DB yet
+        repaired += cur.rowcount or 0
+    # Bank balances live in cog_kv, where `value` is deliberately untyped —
+    # only the balance rows are money (interest_ts is a REAL on purpose).
+    try:
+        cur = conn.execute(
+            "UPDATE cog_kv SET value = "
+            "CAST(MAX(0, MIN(CAST(COALESCE(value, 0) AS INTEGER), ?)) AS INTEGER) "
+            "WHERE namespace = ? AND key = ? "
+            "AND (typeof(value) != 'integer' OR value > ? OR value < 0)",
+            (MAX_COINS, _BANK_NS, _BANK_KEY, MAX_COINS),
+        )
+        repaired += cur.rowcount or 0
+    except sqlite3.OperationalError:
+        pass
+    if repaired:
+        logger.warning(
+            f"Repaired {repaired} money value(s) that had overflowed 64-bit "
+            f"into floats or exceeded the {MAX_COINS:,} coin ceiling."
+        )
 
 
 def _init_db():
@@ -368,10 +504,14 @@ def _init_db():
                     pass
             # Schema version. Bump when introducing a one-shot migration.
             #   1 = backfill `game_stats` from per-game wallet columns.
+            #   2 = repair money columns that overflowed 64-bit into REAL.
             current_version = conn.execute("PRAGMA user_version").fetchone()[0]
             if current_version < 1:
                 _backfill_game_stats(conn)
                 conn.execute("PRAGMA user_version = 1")
+            if current_version < 2:
+                _repair_overflowed_money(conn)
+                conn.execute("PRAGMA user_version = 2")
             conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error initializing economy: {e}")
@@ -398,9 +538,12 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
                 (guild_id, user_id)
             )
             row = cursor.fetchone()
+            # coins_int, not raw row values: a row that overflowed before the
+            # ceiling existed comes back as a float, and cogs must never see one.
             return {
-                "coins": row[0], "total_won": row[1], "total_lost": row[2],
-                "spins": row[3], "jackpots": row[4],
+                "coins": coins_int(row[0]), "total_won": coins_int(row[1]),
+                "total_lost": coins_int(row[2]),
+                "spins": int(row[3] or 0), "jackpots": int(row[4] or 0),
             }
     except sqlite3.Error as e:
         logger.error(f"Database error getting wallet: {e}")
@@ -451,17 +594,20 @@ def get_coins(guild_id: int, user_id: int) -> int:
 def update_wallet(guild_id: int, user_id: int, delta: int, is_jackpot: bool = False):
     """Update wallet after a game. Positive delta = winnings, negative = loss. Increments spins."""
     try:
+        delta = max(-MAX_COINS, min(MAX_COINS, int(delta)))
         with sqlite3.connect(DB_FILE) as conn:
             if delta > 0:
                 # `delta` is already the NET result for these games (slots,
                 # coinflip), so it feeds net_won directly (the tax basis).
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, net_won = net_won + ?, spins = spins + 1, jackpots = jackpots + ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON}, {_ADD_NET_WON}, "
+                    "spins = spins + 1, jackpots = jackpots + ? WHERE guild_id = ? AND user_id = ?",
                     (delta, delta, delta, 1 if is_jackpot else 0, guild_id, user_id)
                 )
             else:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_lost = total_lost + ?, net_won = net_won + ?, spins = spins + 1 WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET coins = coins + ?, {_ADD_TOTAL_LOST}, "
+                    f"{_ADD_NET_WON}, spins = spins + 1 WHERE guild_id = ? AND user_id = ?",
                     (delta, abs(delta), delta, guild_id, user_id)
                 )
             conn.commit()
@@ -472,10 +618,11 @@ def update_wallet(guild_id: int, user_id: int, delta: int, is_jackpot: bool = Fa
 def add_coins(guild_id: int, user_id: int, amount: int):
     """Add coins without incrementing spins (for loot, daily, etc)."""
     get_wallet(guild_id, user_id)  # ensure exists
+    amount = clamp_amount(amount)
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
-                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id)
             )
             conn.commit()
@@ -485,10 +632,11 @@ def add_coins(guild_id: int, user_id: int, amount: int):
 
 def deduct_coins(guild_id: int, user_id: int, amount: int):
     """Deduct coins without incrementing spins."""
+    amount = clamp_amount(amount)
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
-                "UPDATE wallets SET coins = coins - ?, total_lost = total_lost + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET coins = coins - ?, {_ADD_TOTAL_LOST} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id)
             )
             conn.commit()
@@ -498,6 +646,7 @@ def deduct_coins(guild_id: int, user_id: int, amount: int):
 
 def fine_user(guild_id: int, user_id: int, amount: int):
     """Fine a user (coins can't go below 0)."""
+    amount = clamp_amount(amount)
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
@@ -513,12 +662,18 @@ def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> dict
     """Atomically transfer coins between users (BEGIN IMMEDIATE + balance check).
 
     Returns a dict:
-      {"ok": True, "sender_balance": X, "receiver_balance": Y}
+      {"ok": True, "sender_balance": X, "receiver_balance": Y, "amount": moved}
       {"ok": False, "error": "invalid_amount"}
       {"ok": False, "error": "broke", "have": X, "need": amount}
+      {"ok": False, "error": "capped"}   # receiver is already at MAX_COINS
       {"ok": False, "error": "db"}
     Sender/receiver wallets are created in-transaction if missing.
+
+    `amount` is trimmed to the receiver's remaining headroom under MAX_COINS
+    (`"amount"` reports what actually moved) so the ceiling never swallows
+    coins mid-transfer — the untransferable remainder stays with the sender.
     """
+    amount = clamp_amount(amount)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
@@ -536,29 +691,33 @@ def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> dict
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, from_id),
             ).fetchone()
-            sender_coins = sender_row[0] if sender_row else 0
+            sender_coins = coins_int(sender_row[0] if sender_row else 0)
             if sender_coins < amount:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "have": sender_coins, "need": amount}
+            recv_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, to_id),
+            ).fetchone()
+            receiver_coins = coins_int(recv_row[0] if recv_row else 0)
+            amount = min(amount, headroom(receiver_coins))
+            if amount <= 0:
+                conn.rollback()
+                return {"ok": False, "error": "capped", "have": receiver_coins}
             conn.execute(
                 "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, from_id),
             )
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, to_id),
             )
-            sender_balance = sender_coins - amount
-            recv_row = conn.execute(
-                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
-                (guild_id, to_id),
-            ).fetchone()
-            receiver_balance = recv_row[0] if recv_row else 0
             conn.commit()
             return {
                 "ok": True,
-                "sender_balance": sender_balance,
-                "receiver_balance": receiver_balance,
+                "sender_balance": sender_coins - amount,
+                "receiver_balance": receiver_coins + amount,
+                "amount": amount,
             }
     except sqlite3.Error as e:
         logger.error(f"Database error transferring coins: {e}")
@@ -622,6 +781,7 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
     Use this in cogs to take a bet; it closes the TOCTOU window between a balance
     check and the actual deduction. Wallet is created in-transaction if missing.
     """
+    amount = clamp_amount(amount)
     if amount <= 0:
         return False
     try:
@@ -631,7 +791,7 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
                 (guild_id, user_id, STARTING_COINS),
             )
             cursor = conn.execute(
-                "UPDATE wallets SET coins = coins - ?, total_lost = total_lost + ? "
+                f"UPDATE wallets SET coins = coins - ?, {_ADD_TOTAL_LOST} "
                 "WHERE guild_id = ? AND user_id = ? AND coins >= ?",
                 (amount, amount, guild_id, user_id, amount),
             )
@@ -658,6 +818,28 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
 # the effective growth equals the APR exactly.
 HOUSE_INTEREST_APR = 0.15
 _SECONDS_PER_YEAR = 365.25 * 24 * 3600
+
+# Elapsed time is clamped before compounding: a corrupt or zeroed timestamp
+# would otherwise ask for (1.15 ** a_few_thousand), which is inf as a float and
+# a balance that instantly pins at the ceiling.
+_MAX_INTEREST_YEARS = 50.0
+
+
+def _grow(balance: int, apr: float, years: float) -> int:
+    """Compound `balance` at `apr` for `years`, clamped to the coin ceiling.
+
+    Both interest accruals (house reserve, player bank) go through this so
+    neither can compound a balance into 64-bit overflow — which is what turned
+    wallets into floats in the first place."""
+    balance = coins_int(balance)
+    if balance <= 0 or years <= 0:
+        return balance
+    years = min(years, _MAX_INTEREST_YEARS)
+    try:
+        grown = int(balance * ((1.0 + apr) ** years))
+    except (OverflowError, ValueError):
+        return MAX_COINS
+    return coins_int(grown)
 
 # Per-event drain caps as random ranges. A successful event rolls uniform(min, max)
 # and takes that fraction of on-hand. Living here (not in their cogs) so /pot can
@@ -726,15 +908,16 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
         "SELECT coins, last_interest_ts FROM house_reserve WHERE guild_id = ?",
         (guild_id,),
     ).fetchone()
-    reserve_coins = row[0] or 0
+    reserve_coins = coins_int(row[0])
     last_ts = row[1] or 0
     # Compound interest on any existing reserve. APR-based: elapsed seconds
     # are converted to fractional years and the growth factor is (1+APR)^years.
     # This stays invariant to read frequency — same end balance whether read once
-    # per year or 1000 times per day.
+    # per year or 1000 times per day. Compounding is the main engine that walks
+    # a balance toward the 64-bit edge, so the result is ceiling-clamped.
     if reserve_coins > 0 and last_ts > 0 and now > last_ts:
         elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
-        reserve_coins = int(reserve_coins * ((1.0 + HOUSE_INTEREST_APR) ** elapsed_years))
+        reserve_coins = _grow(reserve_coins, HOUSE_INTEREST_APR, elapsed_years)
     # Self-heal: a payout that tapped the reserve leaves it below the seed.
     # Refill the deficit from on-hand (a transfer, nothing minted) so the
     # insurance bucket is always the first thing house revenue rebuilds.
@@ -778,20 +961,27 @@ def _memorial_house_tithe(conn: sqlite3.Connection, guild_id: int, amount: int) 
         "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
         (guild_id, house_id),
     ).fetchone()
-    house_coins = house_row[0] if house_row else 0
-    pay = min(tithe, max(0, house_coins))
+    house_coins = coins_int(house_row[0] if house_row else 0)
+    pay = min(tithe, house_coins)
     if pay <= 0:
         return 0
     conn.execute(
         "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
         (guild_id, MEMORIAL_USER_ID),
     )
+    memorial_row = conn.execute(
+        "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+        (guild_id, MEMORIAL_USER_ID),
+    ).fetchone()
+    pay = min(pay, headroom(memorial_row[0] if memorial_row else 0))
+    if pay <= 0:
+        return 0
     conn.execute(
         "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
         (pay, guild_id, house_id),
     )
     conn.execute(
-        "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+        f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
         (pay, guild_id, MEMORIAL_USER_ID),
     )
     return pay
@@ -831,9 +1021,25 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
     burning coins) pass is_bet=False so they don't shrink the tax basis.
 
     Same return shape as transfer_coins. `receiver_balance` is the on-hand
-    wallet, not the total house net worth."""
+    wallet, not the total house net worth.
+
+    Unlike transfer_coins this does NOT refuse when the house on-hand is at
+    MAX_COINS — refusing would make every game unplayable. The credit saturates
+    instead, so a stake collected into a maxed-out house is simply burned. That
+    only bites at a quadrillion coins on hand, and burning is the safe
+    direction to fail.
+
+    A BET from a house shareholder is refused outright (`shareholder`) — they
+    hold a piece of the house, so they don't play against it. Non-bet payments
+    (is_bet=False: tax, bail, fees) still go through. Living in this one
+    function is what makes the rule impossible to bypass. Their dividend is
+    NOT taken here: it comes out of profit on a poll (settle_house_dividends),
+    so nothing is skimmed off the top of a stake."""
+    amount = clamp_amount(amount)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
+    if is_bet and is_shareholder(guild_id, user_id):
+        return {"ok": False, "error": "shareholder"}
     house_id = get_house_id()
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -847,7 +1053,7 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
-            sender_coins = sender_row[0] if sender_row else 0
+            sender_coins = coins_int(sender_row[0] if sender_row else 0)
             if sender_coins < amount:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "have": sender_coins, "need": amount}
@@ -855,7 +1061,7 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
             # matching win restores it via casino_payout. Non-bet sinks skip this.
             if is_bet:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins - ?, net_won = net_won - ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET coins = coins - ?, {_SUB_NET_WON} WHERE guild_id = ? AND user_id = ?",
                     (amount, amount, guild_id, user_id),
                 )
             else:
@@ -864,7 +1070,7 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
                     (amount, guild_id, user_id),
                 )
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, house_id),
             )
             sender_balance = sender_coins - amount
@@ -877,12 +1083,13 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
             ).fetchone()
-            receiver_balance = recv_row[0] if recv_row else 0
+            receiver_balance = coins_int(recv_row[0] if recv_row else 0)
             conn.commit()
             return {
                 "ok": True,
                 "sender_balance": sender_balance,
                 "receiver_balance": receiver_balance,
+                "amount": amount,
             }
     except sqlite3.Error as e:
         logger.error(f"Database error in transfer_to_house: {e}")
@@ -902,6 +1109,7 @@ def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
       {"ok": False, "error": "broke", "have": X, "need": Y}
       {"ok": False, "error": "invalid_amount" | "db"}
     """
+    amount = clamp_amount(amount)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
@@ -920,7 +1128,7 @@ def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
-            sender_coins = row[0] if row else 0
+            sender_coins = coins_int(row[0] if row else 0)
             if sender_coins < amount:
                 conn.rollback()
                 return {"ok": False, "error": "broke",
@@ -930,7 +1138,7 @@ def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
                 (amount, guild_id, user_id),
             )
             conn.execute(
-                "UPDATE house_reserve SET coins = coins + ? WHERE guild_id = ?",
+                f"UPDATE house_reserve SET {_ADD_COINS} WHERE guild_id = ?",
                 (amount, guild_id),
             )
             conn.commit()
@@ -948,7 +1156,14 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
     the safe-harbor reserve by exactly what's needed for this payout — so a
     drained on-hand bucket doesn't silently shortchange a winner. The reserve
     is still invisible to heist/jackpot drains; only payouts can tap it.
+
+    The payout is also trimmed to the winner's remaining headroom under
+    MAX_COINS — a wallet at the ceiling simply can't be paid more, and the
+    untaken coins stay in the house rather than overflowing the column. That
+    clamp deliberately happens AFTER the bankruptcy check, so hitting the
+    ceiling is never mistaken for the house being short.
     """
+    amount = clamp_amount(amount)
     if amount <= 0:
         return 0
     house_id = get_house_id()
@@ -965,22 +1180,22 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
             ).fetchone()
-            house_coins = house_row[0] if house_row else 0
+            house_coins = coins_int(house_row[0] if house_row else 0)
             shortfall = amount - house_coins
             if shortfall > 0:
                 reserve_row = conn.execute(
                     "SELECT coins FROM house_reserve WHERE guild_id = ?",
                     (guild_id,),
                 ).fetchone()
-                reserve_coins = reserve_row[0] if reserve_row else 0
-                topup = min(shortfall, max(0, reserve_coins))
+                reserve_coins = coins_int(reserve_row[0] if reserve_row else 0)
+                topup = min(shortfall, reserve_coins)
                 if topup > 0:
                     conn.execute(
                         "UPDATE house_reserve SET coins = coins - ? WHERE guild_id = ?",
                         (topup, guild_id),
                     )
                     conn.execute(
-                        "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                        f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                         (topup, guild_id, house_id),
                     )
                     house_coins += topup
@@ -991,6 +1206,17 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 # which covers the shortfall out of player bank accounts and
                 # opens the economy-reset referendum.
                 _record_bankruptcy_event(conn, guild_id, user_id, amount, pay)
+            # Ceiling clamp, after the bankruptcy check: coins the winner has
+            # no room for are left in the house, not overflowed into their wallet.
+            winner_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            capped = min(pay, headroom(winner_row[0] if winner_row else 0))
+            if capped < pay:
+                # Their wallet, their problem — cogs/coincap.py says so out loud.
+                _record_ceiling_event(conn, guild_id, user_id, pay, capped, "payout")
+            pay = capped
             if pay <= 0:
                 conn.commit()  # keep the interest normalization + the event
                 return 0
@@ -999,7 +1225,7 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 (pay, guild_id, house_id),
             )
             conn.execute(
-                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, net_won = net_won + ? "
+                f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON}, {_ADD_NET_WON} "
                 "WHERE guild_id = ? AND user_id = ?",
                 (pay, pay, pay, guild_id, user_id),
             )
@@ -1019,7 +1245,9 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
     WITHOUT touching total_won / net_won and without the memorial tithe — this
     is a refund (dissolved lobby, cancelled event), not a win. Draws on-hand
     first, then the reserve, exactly like casino_payout. Returns actual coins
-    refunded (0 only if both house buckets are empty)."""
+    refunded (0 only if both house buckets are empty, or the player is at the
+    MAX_COINS ceiling)."""
+    amount = clamp_amount(amount)
     if amount <= 0:
         return 0
     house_id = get_house_id()
@@ -1036,35 +1264,43 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
             ).fetchone()
-            house_coins = house_row[0] if house_row else 0
+            house_coins = coins_int(house_row[0] if house_row else 0)
             shortfall = amount - house_coins
             if shortfall > 0:
                 reserve_row = conn.execute(
                     "SELECT coins FROM house_reserve WHERE guild_id = ?",
                     (guild_id,),
                 ).fetchone()
-                reserve_coins = reserve_row[0] if reserve_row else 0
-                topup = min(shortfall, max(0, reserve_coins))
+                reserve_coins = coins_int(reserve_row[0] if reserve_row else 0)
+                topup = min(shortfall, reserve_coins)
                 if topup > 0:
                     conn.execute(
                         "UPDATE house_reserve SET coins = coins - ? WHERE guild_id = ?",
                         (topup, guild_id),
                     )
                     conn.execute(
-                        "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                        f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                         (topup, guild_id, house_id),
                     )
                     house_coins += topup
-            pay = min(amount, max(0, house_coins))
+            player_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            affordable = min(amount, max(0, house_coins))
+            pay = min(affordable, headroom(player_row[0] if player_row else 0))
+            if pay < affordable:
+                _record_ceiling_event(conn, guild_id, user_id, affordable, pay, "refund")
             if pay <= 0:
-                conn.rollback()
+                # Nothing moved, but a logged ceiling strike must survive.
+                conn.commit()
                 return 0
             conn.execute(
                 "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
                 (pay, guild_id, house_id),
             )
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (pay, guild_id, user_id),
             )
             conn.commit()
@@ -1100,10 +1336,10 @@ def get_house_state(guild_id: int) -> dict:
             ).fetchone()
             conn.commit()
             return {
-                "on_hand": (house_row[0] if house_row else 0),
-                "reserve": (reserve_row[0] if reserve_row else 0),
+                "on_hand": coins_int(house_row[0] if house_row else 0),
+                "reserve": coins_int(reserve_row[0] if reserve_row else 0),
                 "apr": HOUSE_INTEREST_APR,
-                "banked": int(banked_row[0] if banked_row else 0),
+                "banked": coins_int(banked_row[0] if banked_row else 0),
                 "bank_apr": BANK_INTEREST_APR,
             }
     except sqlite3.Error as e:
@@ -1127,19 +1363,19 @@ def replenish_house_if_low(guild_id: int) -> dict:
             conn.execute("BEGIN IMMEDIATE")
             _ensure_house_wallet(conn, guild_id)
             _normalize_house(conn, guild_id)
-            on_hand = (conn.execute(
+            on_hand = coins_int((conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, get_house_id()),
-            ).fetchone() or [0])[0] or 0
-            reserve = (conn.execute(
+            ).fetchone() or [0])[0])
+            reserve = coins_int((conn.execute(
                 "SELECT coins FROM house_reserve WHERE guild_id = ?",
                 (guild_id,),
-            ).fetchone() or [0])[0] or 0
+            ).fetchone() or [0])[0])
             total = on_hand + reserve
             added = 0
             if total < low_water:
                 added = HOUSE_STARTING_COINS - total
-                reserve += added
+                reserve = coins_int(reserve + added)
                 conn.execute(
                     "UPDATE house_reserve SET coins = ? WHERE guild_id = ?",
                     (reserve, guild_id),
@@ -1165,21 +1401,54 @@ def replenish_house_if_low(guild_id: int) -> dict:
 # accounts (cover_house_shortfall).
 
 _BANKRUPTCY_NS = "bankruptcy"
-_BANKRUPTCY_PENDING_KEY = "pending"
+_PENDING_KEY = "pending"  # shared key name for every guild-scoped event queue
 _BANKRUPTCY_MAX_PENDING = 10  # backstop against a broke house shorting in a loop
 
 BANKRUPTCY_ROB_CHANCE = 0.01  # odds the debt is taken from everyone's banks
                               # instead of minted
 
 
-def _record_bankruptcy_event(conn: sqlite3.Connection, guild_id: int,
-                             user_id: int, owed: int, paid: int):
-    """Within an open transaction, append one bankruptcy event to the guild's
-    pending list (cog_kv, guild-scoped). cogs/bankruptcy.py drains the list."""
+# --- Ceiling strikes -------------------------------------------------------
+# A payout the MAX_COINS ceiling refused to deliver. The winner is rich enough
+# to have broken the storage engine, so the coins stay in the house and
+# cogs/coincap.py drains this queue to tell them, publicly, exactly whose fault
+# that is. Same guild-scoped pending-list plumbing as bankruptcy events, so no
+# game cog needs to know this exists — every path through casino_payout /
+# refund_from_house / mint_house_bailout participates for free.
+_CEILING_NS = "coincap"
+_CEILING_MAX_PENDING = 10
+
+
+def _record_ceiling_event(conn: sqlite3.Connection, guild_id: int, user_id: int,
+                          owed: int, paid: int, source: str):
+    """Within an open transaction, log that the coin ceiling swallowed part of
+    a payout. `owed` is what the player had coming, `paid` what their wallet
+    had room for; the difference is what their hoarding cost them."""
+    lost = int(owed) - int(paid)
+    if lost <= 0:
+        return
+    _append_pending_event(conn, guild_id, _CEILING_NS,
+                          {"user_id": user_id, "owed": int(owed),
+                           "paid": int(paid), "lost": lost, "source": source},
+                          _CEILING_MAX_PENDING)
+
+
+def pop_ceiling_events(guild_id: int) -> list[dict]:
+    """Atomically take (and clear) the guild's pending ceiling strikes.
+    Each is {"user_id", "owed", "paid", "lost", "source", "ts"}."""
+    return _pop_pending_events(guild_id, _CEILING_NS, "pop_ceiling_events")
+
+
+def _append_pending_event(conn: sqlite3.Connection, guild_id: int, namespace: str,
+                          event: dict, max_pending: int):
+    """Within an open transaction, append one event to a guild-scoped pending
+    list in cog_kv (user_id=0, key `pending`). Silently drops the event once
+    the list is `max_pending` long — a backstop against a broken loop filling
+    the row forever. A watcher cog drains it with _pop_pending_events."""
     import time as _t
     row = conn.execute(
         "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace=? AND key=?",
-        (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY),
+        (guild_id, namespace, _PENDING_KEY),
     ).fetchone()
     try:
         events = json.loads(row[0]) if row and row[0] else []
@@ -1187,31 +1456,29 @@ def _record_bankruptcy_event(conn: sqlite3.Connection, guild_id: int,
             events = []
     except (json.JSONDecodeError, TypeError):
         events = []
-    if len(events) >= _BANKRUPTCY_MAX_PENDING:
+    if len(events) >= max_pending:
         return
-    events.append({"user_id": user_id, "owed": int(owed), "paid": int(paid),
-                   "ts": int(_t.time())})
+    events.append({**event, "ts": int(_t.time())})
     conn.execute(
         "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,0,?,?,?) "
         "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=excluded.value",
-        (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY, json.dumps(events)),
+        (guild_id, namespace, _PENDING_KEY, json.dumps(events)),
     )
 
 
-def pop_bankruptcy_events(guild_id: int) -> list[dict]:
-    """Atomically take (and clear) the guild's pending bankruptcy events.
-    Each is {"user_id", "owed", "paid", "ts"}. Empty list if none."""
+def _pop_pending_events(guild_id: int, namespace: str, op: str) -> list[dict]:
+    """Atomically take (and clear) a guild's pending event list."""
     try:
-        with _tx("pop_bankruptcy_events") as conn:
+        with _tx(op) as conn:
             row = conn.execute(
                 "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace=? AND key=?",
-                (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY),
+                (guild_id, namespace, _PENDING_KEY),
             ).fetchone()
             if not row or not row[0]:
                 raise _Abort([])
             conn.execute(
                 "DELETE FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace=? AND key=?",
-                (guild_id, _BANKRUPTCY_NS, _BANKRUPTCY_PENDING_KEY),
+                (guild_id, namespace, _PENDING_KEY),
             )
             try:
                 events = json.loads(row[0])
@@ -1224,6 +1491,21 @@ def pop_bankruptcy_events(guild_id: int) -> list[dict]:
         return []
 
 
+def _record_bankruptcy_event(conn: sqlite3.Connection, guild_id: int,
+                             user_id: int, owed: int, paid: int):
+    """Within an open transaction, append one bankruptcy event to the guild's
+    pending list. cogs/bankruptcy.py drains the list."""
+    _append_pending_event(conn, guild_id, _BANKRUPTCY_NS,
+                          {"user_id": user_id, "owed": int(owed), "paid": int(paid)},
+                          _BANKRUPTCY_MAX_PENDING)
+
+
+def pop_bankruptcy_events(guild_id: int) -> list[dict]:
+    """Atomically take (and clear) the guild's pending bankruptcy events.
+    Each is {"user_id", "owed", "paid", "ts"}. Empty list if none."""
+    return _pop_pending_events(guild_id, _BANKRUPTCY_NS, "pop_bankruptcy_events")
+
+
 def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict:
     """Emergency bankruptcy cover: seize an equal percentage of EVERY player
     bank account (the winner's own and the memorial player's excepted) into the
@@ -1234,8 +1516,9 @@ def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict
 
     Returns {"pct", "seized", "accounts", "paid", "still_short"}.
     """
+    shortfall = clamp_amount(shortfall)
     out = {"pct": 0.0, "seized": 0, "accounts": 0, "paid": 0,
-           "still_short": max(0, int(shortfall))}
+           "still_short": shortfall}
     if shortfall <= 0:
         return out
     house_id = get_house_id()
@@ -1275,30 +1558,36 @@ def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict
                 accounts += 1
             if seized > 0:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                     (seized, guild_id, house_id),
                 )
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, winner_id, STARTING_COINS),
+            )
             house_row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, house_id),
             ).fetchone()
-            pay = min(int(shortfall), max(0, house_row[0] if house_row else 0))
+            winner_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, winner_id),
+            ).fetchone()
+            pay = min(shortfall,
+                      coins_int(house_row[0] if house_row else 0),
+                      headroom(winner_row[0] if winner_row else 0))
             if pay > 0:
-                conn.execute(
-                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
-                    (guild_id, winner_id, STARTING_COINS),
-                )
                 conn.execute(
                     "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
                     (pay, guild_id, house_id),
                 )
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, "
-                    "net_won = net_won + ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON}, "
+                    f"{_ADD_NET_WON} WHERE guild_id = ? AND user_id = ?",
                     (pay, pay, pay, guild_id, winner_id),
                 )
             out = {"pct": pct, "seized": seized, "accounts": accounts,
-                   "paid": pay, "still_short": int(shortfall) - pay}
+                   "paid": pay, "still_short": shortfall - pay}
         return out
     except sqlite3.Error:
         return out
@@ -1309,7 +1598,9 @@ def mint_house_bailout(guild_id: int, winner_id: int, amount: int) -> int:
     coins straight into the winner's wallet (with the total_won/net_won bumps a
     casino win gets — this IS their winnings, just inflation-funded). This is
     deliberate money creation, same class as replenish_house_if_low. Atomic.
-    Returns the coins minted (== amount, or 0 on bad input / DB error)."""
+    Returns the coins actually minted (== amount unless the winner's wallet is
+    at the MAX_COINS ceiling, or 0 on bad input / DB error)."""
+    amount = clamp_amount(amount)
     if amount <= 0:
         return 0
     try:
@@ -1318,12 +1609,24 @@ def mint_house_bailout(guild_id: int, winner_id: int, amount: int) -> int:
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, winner_id, STARTING_COINS),
             )
+            row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, winner_id),
+            ).fetchone()
+            room = min(amount, headroom(row[0] if row else 0))
+            if room < amount:
+                # Don't _Abort on a fully-capped bailout: that would roll back
+                # the strike we just logged. Commit the event, mint nothing.
+                _record_ceiling_event(conn, guild_id, winner_id, amount, room, "bailout")
+            amount = room
+            if amount <= 0:
+                return 0
             conn.execute(
-                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ?, "
-                "net_won = net_won + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON}, "
+                f"{_ADD_NET_WON} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, amount, guild_id, winner_id),
             )
-        return int(amount)
+        return amount
     except sqlite3.Error:
         return 0
 
@@ -1409,13 +1712,18 @@ def kv_all_in_namespace(guild_id: int, namespace: str) -> dict:
 
 def kv_incr(guild_id: int, user_id: int, namespace: str, key: str, by: int = 1):
     """Atomically add `by` to a numeric value (an unset key counts as 0) and
-    return the new total. `by` may be negative."""
+    return the new total. `by` may be negative.
+
+    Saturates at ±MAX_COINS: cog counters have no business anywhere near the
+    64-bit edge, where SQLite would silently turn the value into a float."""
+    by = _signed_int(by)
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
-                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value = value + ?",
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET "
+                f"value = MAX(-{MAX_COINS}, MIN(value + ?, {MAX_COINS}))",
                 (guild_id, user_id, namespace, key, by, by),
             )
             row = conn.execute(
@@ -1587,7 +1895,7 @@ def _accrue_bank_interest(conn: sqlite3.Connection, guild_id: int, user_id: int)
         "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
         (guild_id, user_id, _BANK_NS, _BANK_KEY),
     ).fetchone()
-    balance = int(row[0]) if row and row[0] else 0
+    balance = coins_int(row[0] if row else 0)
     if balance <= 0:
         # Reset any stale clock so a later deposit can't back-accrue across
         # the empty period. UPDATE only — don't create rows for non-customers.
@@ -1610,7 +1918,7 @@ def _accrue_bank_interest(conn: sqlite3.Connection, guild_id: int, user_id: int)
         )
         return balance
     elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
-    grown = int(balance * ((1.0 + BANK_INTEREST_APR) ** elapsed_years))
+    grown = _grow(balance, BANK_INTEREST_APR, elapsed_years)
     if grown <= balance:
         return balance  # sub-coin gain: leave the clock running
     conn.execute(
@@ -1631,18 +1939,23 @@ def bank_balance(guild_id: int, user_id: int) -> int:
             balance = _accrue_bank_interest(conn, guild_id, user_id)
         return balance
     except sqlite3.Error:
-        return int(kv_get(guild_id, user_id, _BANK_NS, _BANK_KEY, 0) or 0)
+        return coins_int(kv_get(guild_id, user_id, _BANK_NS, _BANK_KEY, 0))
 
 
 def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
     """Atomically move coins from a player's wallet into their bank account.
 
     Returns:
-      {"ok": True, "wallet": X, "bank": Y}
+      {"ok": True, "wallet": X, "bank": Y, "amount": moved}
       {"ok": False, "error": "invalid_amount"}
       {"ok": False, "error": "broke", "have": X, "need": amount}
+      {"ok": False, "error": "capped"}   # account is already at MAX_COINS
       {"ok": False, "error": "db"}
+
+    The deposit is trimmed to the account's remaining headroom under MAX_COINS
+    so the ceiling can't eat coins on the way in.
     """
+    amount = clamp_amount(amount)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     import time as _t
@@ -1657,16 +1970,19 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
-            have = row[0] if row else 0
+            have = coins_int(row[0] if row else 0)
             if have < amount:
                 raise _Abort({"ok": False, "error": "broke", "have": have, "need": amount})
+            amount = min(amount, headroom(banked))
+            if amount <= 0:
+                raise _Abort({"ok": False, "error": "capped", "have": banked})
             conn.execute(
                 "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, user_id),
             )
             conn.execute(
                 "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
-                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value = value + ?",
+                f"ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET {_ADD_KV_VALUE}",
                 (guild_id, user_id, _BANK_NS, _BANK_KEY, amount, amount),
             )
             # First deposit starts the interest clock (no-op if it's running —
@@ -1676,7 +1992,8 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
                 "ON CONFLICT(guild_id, user_id, namespace, key) DO NOTHING",
                 (guild_id, user_id, _BANK_NS, _BANK_TS_KEY, _t.time()),
             )
-        return {"ok": True, "wallet": have - amount, "bank": banked + amount}
+        return {"ok": True, "wallet": have - amount, "bank": banked + amount,
+                "amount": amount}
     except _Abort as a:
         return a.result
     except sqlite3.Error:
@@ -1685,7 +2002,9 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
 
 def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
     """Atomically move coins from a player's bank account back to their wallet.
-    Same return shape as bank_deposit; "broke" means the BANK is short."""
+    Same return shape as bank_deposit; "broke" means the BANK is short, and
+    "capped" means the wallet is already at MAX_COINS."""
+    amount = clamp_amount(amount)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
@@ -1694,24 +2013,31 @@ def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
             if banked < amount:
                 raise _Abort({"ok": False, "error": "broke", "have": banked, "need": amount})
             conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            have_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            amount = min(amount, headroom(have_row[0] if have_row else 0))
+            if amount <= 0:
+                raise _Abort({"ok": False, "error": "capped", "have": banked})
+            conn.execute(
                 "UPDATE cog_kv SET value = value - ? "
                 "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (amount, guild_id, user_id, _BANK_NS, _BANK_KEY),
             )
             conn.execute(
-                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
-                (guild_id, user_id, STARTING_COINS),
-            )
-            conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, user_id),
             )
             wallet_row = conn.execute(
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
-        return {"ok": True, "wallet": wallet_row[0] if wallet_row else amount,
-                "bank": banked - amount}
+        return {"ok": True, "wallet": coins_int(wallet_row[0] if wallet_row else amount),
+                "bank": banked - amount, "amount": amount}
     except _Abort as a:
         return a.result
     except sqlite3.Error:
@@ -1764,7 +2090,7 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
                 # Interest accrues up to the moment the boxes crack — the raid
                 # skims the fully-grown balance.
                 balance = _accrue_bank_interest(conn, guild_id, uid)
-                take = int(int(balance) * pct)
+                take = clamp_amount(balance * pct)
                 if take <= 0:
                     continue
                 conn.execute(
@@ -1780,7 +2106,7 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
                     (guild_id, thief_id, STARTING_COINS),
                 )
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                     (total, guild_id, thief_id),
                 )
             conn.commit()
@@ -1795,6 +2121,7 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
     a player's bank straight to the house on-hand. Used by tax enforcement so
     parking coins in the bank isn't a way to dodge a seizure. Returns the coins
     actually moved (0 if the account is empty)."""
+    amount = clamp_amount(amount)
     if amount <= 0:
         return 0
     try:
@@ -1810,7 +2137,7 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
             )
             _ensure_house_wallet(conn, guild_id)
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (take, guild_id, get_house_id()),
             )
         return take
@@ -1818,6 +2145,265 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
         return a.result
     except sqlite3.Error:
         return 0
+
+
+def burn_purchase(guild_id: int, user_id: int, amount: int, namespace: str,
+                  increments: list[tuple[str, int]]) -> dict:
+    """Destroy `amount` coins from a wallet and bump cog_kv counters, atomically.
+
+    The buy-a-sink primitive: coins go to the VOID (not the house — nothing is
+    minted or transferred anywhere), and the counters that record the purchase
+    move in the same transaction, so a player can never be charged without
+    getting credited or vice versa. `increments` is [(key, delta), ...] in
+    `namespace`, e.g. [("owned:gold_toilet", 1), ("total_burned", 12_000_000)].
+
+    Deliberately generic — any future "spend coins to permanently record
+    something" sink should use this rather than composing try_deduct + kv_incr
+    and hoping the process doesn't die between them.
+
+    Returns:
+      {"ok": True, "spent": X, "balance": Y, "counters": {key: new_value}}
+      {"ok": False, "error": "invalid_amount"}
+      {"ok": False, "error": "broke", "have": X, "need": amount}
+      {"ok": False, "error": "db"}
+    """
+    amount = clamp_amount(amount)
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    try:
+        with _tx("burn_purchase") as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            have = coins_int(row[0] if row else 0)
+            if have < amount:
+                raise _Abort({"ok": False, "error": "broke", "have": have,
+                              "need": amount})
+            conn.execute(
+                f"UPDATE wallets SET coins = coins - ?, {_ADD_TOTAL_LOST} "
+                "WHERE guild_id = ? AND user_id = ?",
+                (amount, amount, guild_id, user_id),
+            )
+            counters = {}
+            for key, delta in increments:
+                conn.execute(
+                    "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) "
+                    "VALUES (?,?,?,?,?) ON CONFLICT(guild_id, user_id, namespace, key) "
+                    f"DO UPDATE SET value = MAX(-{MAX_COINS}, MIN(value + ?, {MAX_COINS}))",
+                    (guild_id, user_id, namespace, key, _signed_int(delta),
+                     _signed_int(delta)),
+                )
+                new_row = conn.execute(
+                    "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? "
+                    "AND namespace=? AND key=?",
+                    (guild_id, user_id, namespace, key),
+                ).fetchone()
+                counters[key] = _signed_int(new_row[0] if new_row else delta)
+        return {"ok": True, "spent": amount, "balance": have - amount,
+                "counters": counters}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return {"ok": False, "error": "db"}
+
+
+# --- House profit sharing ---------------------------------------------------
+# The Tier 7 splurge "Buy Into the House" (splurges.py) is the one purchase in
+# the catalog that isn't cosmetic. A buyer becomes a SHAREHOLDER:
+#
+#   * They draw a dividend from house PROFIT. HOUSE_PROFIT_SHARE_PCT of every
+#     new coin of profit the house makes is split among shareholders pro-rata
+#     by shares held. Buy the only share and you take the whole 25%; when
+#     somebody else buys in, you're diluted. That's what buying in means.
+#   * They CANNOT PLAY. Every bet a shareholder tries to place is refused.
+#     You're on the other side of the table now — that's the trade.
+#
+# Profit is measured against a HIGH-WATER MARK, exactly like a real
+# profit-share: only growth above the best the house has ever done (after
+# previous dividends) pays out. A losing streak pays nothing and must be
+# earned back before dividends resume — there is no clawback and no dividend
+# on a house that is merely recovering.
+#
+# That high-water rule is what makes this safe where a cut of TURNOVER was
+# not: dividends can only ever come out of money the house actually made, so
+# shareholders can never drive the house into a structural loss no matter how
+# many shares exist or how heavily the tables are played.
+#
+# Dividends settle on a poll (cogs/dividends.py); nothing happens on the hot
+# bet path beyond the shareholder bet-refusal check.
+HOUSE_PROFIT_SHARE_PCT = 0.25
+
+_SHARES_NS = "splurge"              # shares the splurge cog's namespace
+# Deliberately the SAME cog_kv row the splurge catalog credits when someone
+# buys the item ("owned:" + splurges.SHARES_KEY) rather than a parallel
+# counter — one row means share count and inventory can never drift apart.
+# A test pins the two module constants together.
+SHARES_KEY = "owned:house_share"
+_PROFIT_HWM_KEY = "profit_highwater"  # guild-scoped (user_id=0)
+
+
+def house_shares(guild_id: int, user_id: int) -> int:
+    """How many house shares this player holds."""
+    try:
+        return max(0, int(kv_get(guild_id, user_id, _SHARES_NS, SHARES_KEY, 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_shareholder(guild_id: int, user_id: int) -> bool:
+    """True if this player holds any house share (and so may not gamble)."""
+    return house_shares(guild_id, user_id) > 0
+
+
+def get_shareholders(guild_id: int) -> list[tuple[int, int]]:
+    """Every (user_id, shares) holder in the guild, largest stake first."""
+    rows = kv_top(guild_id, _SHARES_NS, SHARES_KEY, limit=1000)
+    return [(uid, int(n)) for uid, n in rows if int(n) > 0]
+
+
+def total_house_shares(guild_id: int) -> int:
+    """Shares outstanding — the denominator every dividend is split by."""
+    return sum(n for _, n in get_shareholders(guild_id))
+
+
+def casino_ban_message(guild_id: int, user_id: int) -> str | None:
+    """Standard "you're on the house's side of the table" gate, or None if the
+    player is free to bet. Call it right next to jail_message at the top of any
+    casino command — game_common.casino_prelude already does for every cog
+    built on it, and transfer_to_house refuses shareholder bets as a hard
+    backstop."""
+    shares = house_shares(guild_id, user_id)
+    if shares <= 0:
+        return None
+    total = total_house_shares(guild_id)
+    pct = (shares / total * HOUSE_PROFIT_SHARE_PCT * 100) if total else 0
+    return ("🏛️ **You own a piece of the house.** Shareholders don't gamble "
+            "against their own casino — you don't get to play anymore.\n"
+            f"You hold **{shares}** of **{total}** share(s), drawing "
+            f"**{pct:.1f}%** of house profit instead. That was the deal.")
+
+
+def _house_total(conn: sqlite3.Connection, guild_id: int) -> int:
+    """On-hand + reserve, read inside an open transaction."""
+    on_hand = conn.execute(
+        "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+        (guild_id, get_house_id()),
+    ).fetchone()
+    reserve = conn.execute(
+        "SELECT coins FROM house_reserve WHERE guild_id = ?", (guild_id,)
+    ).fetchone()
+    return coins_int(on_hand[0] if on_hand else 0) + coins_int(reserve[0] if reserve else 0)
+
+
+def settle_house_dividends(guild_id: int) -> dict:
+    """Pay shareholders their cut of any NEW house profit. Atomic; idempotent
+    in the sense that calling it twice in a row pays nothing the second time.
+
+    Profit is house funds (on-hand + reserve) above the high-water mark. We
+    pay HOUSE_PROFIT_SHARE_PCT of that growth, pro-rata by shares, out of
+    house on-hand, then set the mark to the post-dividend total so the same
+    profit is never paid twice. A house below its mark pays nothing and the
+    mark does not move.
+
+    Returns {"paid": total, "profit": gain, "payouts": [(user_id, coins)],
+             "shares": outstanding, "high_water": new_mark, "baseline": bool}.
+    `baseline` is True on the first call after shares exist, when the mark is
+    simply initialised — profit made before anyone bought in isn't theirs.
+    """
+    empty = {"paid": 0, "profit": 0, "payouts": [], "shares": 0,
+             "high_water": 0, "baseline": False}
+    holders = get_shareholders(guild_id)
+    if not holders:
+        return empty
+    outstanding = sum(n for _, n in holders)
+    try:
+        with _tx("settle_house_dividends") as conn:
+            _ensure_house_wallet(conn, guild_id)
+            _normalize_house(conn, guild_id)
+            total = _house_total(conn, guild_id)
+            mark_row = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=0 "
+                "AND namespace=? AND key=?",
+                (guild_id, _SHARES_NS, _PROFIT_HWM_KEY),
+            ).fetchone()
+
+            def set_mark(value):
+                conn.execute(
+                    "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) "
+                    "VALUES (?,0,?,?,?) ON CONFLICT(guild_id, user_id, namespace, key) "
+                    "DO UPDATE SET value = excluded.value",
+                    (guild_id, _SHARES_NS, _PROFIT_HWM_KEY, int(value)),
+                )
+
+            if mark_row is None or mark_row[0] is None:
+                # First settle after the first buy-in: start the clock here so
+                # profit the house made before anyone invested isn't paid out.
+                set_mark(total)
+                return {**empty, "shares": outstanding, "high_water": total,
+                        "baseline": True}
+
+            mark = coins_int(mark_row[0])
+            gain = total - mark
+            if gain <= 0:
+                return {**empty, "shares": outstanding, "high_water": mark}
+
+            pool = int(gain * HOUSE_PROFIT_SHARE_PCT)
+            house_id = get_house_id()
+            on_hand_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, house_id),
+            ).fetchone()
+            pool = min(pool, coins_int(on_hand_row[0] if on_hand_row else 0))
+            if pool <= 0:
+                return {**empty, "shares": outstanding, "high_water": mark,
+                        "profit": gain}
+
+            payouts = []
+            paid_total = 0
+            for uid, shares in holders:
+                cut = pool * shares // outstanding
+                if cut <= 0:
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) "
+                    "VALUES (?, ?, 0)", (guild_id, uid),
+                )
+                holder_row = conn.execute(
+                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                    (guild_id, uid),
+                ).fetchone()
+                cut = min(cut, headroom(holder_row[0] if holder_row else 0))
+                if cut <= 0:
+                    continue
+                conn.execute(
+                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    (cut, guild_id, house_id),
+                )
+                conn.execute(
+                    f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON} "
+                    "WHERE guild_id = ? AND user_id = ?",
+                    (cut, cut, guild_id, uid),
+                )
+                payouts.append((uid, cut))
+                paid_total += cut
+
+            # Mark moves by what was ACTUALLY paid — integer division and
+            # ceiling clamps can leave a few coins in the house, and those
+            # stay profit rather than being silently forgiven.
+            new_mark = total - paid_total
+            set_mark(new_mark)
+            return {"paid": paid_total, "profit": gain, "payouts": payouts,
+                    "shares": outstanding, "high_water": new_mark,
+                    "baseline": False}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return empty
 
 
 def get_wealth(guild_id: int, user_id: int) -> int:
@@ -1954,9 +2540,10 @@ def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> di
       {"ok": False, "error": "broke", "have": X, "need": T}
       {"ok": False, "error": "db"}
     """
+    payments = [(uid, clamp_amount(amt)) for uid, amt in payments]
     if not payments or any(amt <= 0 for _, amt in payments):
         return {"ok": False, "error": "invalid_amount"}
-    total = sum(amt for _, amt in payments)
+    total = clamp_amount(sum(amt for _, amt in payments))
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -1968,7 +2555,7 @@ def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> di
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, from_id),
             ).fetchone()
-            sender_coins = sender_row[0] if sender_row else 0
+            sender_coins = coins_int(sender_row[0] if sender_row else 0)
             if sender_coins < total:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "have": sender_coins, "need": total}
@@ -1982,7 +2569,7 @@ def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> di
                     (guild_id, recipient_id, STARTING_COINS),
                 )
                 conn.execute(
-                    "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? "
+                    f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON} "
                     "WHERE guild_id = ? AND user_id = ?",
                     (amt, amt, guild_id, recipient_id),
                 )
@@ -1996,10 +2583,11 @@ def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> di
 def award_coins(guild_id: int, user_id: int, amount: int):
     """Award coins and track as winnings without incrementing spins."""
     get_wallet(guild_id, user_id)  # ensure exists
+    amount = clamp_amount(amount)
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
-                "UPDATE wallets SET coins = coins + ?, total_won = total_won + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id)
             )
             conn.commit()
@@ -2063,7 +2651,7 @@ def get_all_wallets(guild_id: int) -> list:
                 "SELECT user_id, coins FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id()),
             ).fetchall()
-            return [(r[0], r[1]) for r in rows]
+            return [(r[0], coins_int(r[1])) for r in rows]
     except sqlite3.Error as e:
         logger.error(f"Database error in get_all_wallets: {e}")
         return []
@@ -2080,7 +2668,7 @@ def get_all_winnings(guild_id: int) -> list:
                 "SELECT user_id, total_won FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id()),
             ).fetchall()
-            return [(r[0], r[1] or 0) for r in rows]
+            return [(r[0], coins_int(r[1])) for r in rows]
     except sqlite3.Error as e:
         logger.error(f"Database error in get_all_winnings: {e}")
         return []
@@ -2103,7 +2691,7 @@ def get_all_net_winnings(guild_id: int) -> list:
                 "SELECT user_id, net_won FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id()),
             ).fetchall()
-            return [(r[0], r[1] or 0) for r in rows]
+            return [(r[0], _signed_int(r[1])) for r in rows]
     except sqlite3.Error as e:
         logger.error(f"Database error in get_all_net_winnings: {e}")
         return []
@@ -2130,6 +2718,9 @@ def get_total_economy(guild_id: int) -> int:
                 "WHERE guild_id = ? AND namespace = ? AND key = ?",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchone()[0] or 0
+            # int(), not coins_int(): the guild-wide total legitimately exceeds
+            # a single wallet's ceiling. Every term is <= MAX_COINS, so the sum
+            # stays far under 64 bits.
             return int(wallets_total) + int(reserve_total) + int(bank_total)
     except sqlite3.Error as e:
         logger.error(f"Database error reading total economy: {e}")
@@ -2152,13 +2743,13 @@ def get_server_stats(guild_id: int) -> dict:
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchone()[0] or 0
             return {
-                "players": row[0] or 0,
-                "total_coins": row[1] or 0,
+                "players": int(row[0] or 0),
+                "total_coins": int(row[1] or 0),
                 "total_banked": int(banked),
-                "total_won": row[2] or 0,
-                "total_lost": row[3] or 0,
-                "total_spins": row[4] or 0,
-                "total_jackpots": row[5] or 0,
+                "total_won": int(row[2] or 0),
+                "total_lost": int(row[3] or 0),
+                "total_spins": int(row[4] or 0),
+                "total_jackpots": int(row[5] or 0),
             }
     except sqlite3.Error as e:
         logger.error(f"Database error getting server stats: {e}")
@@ -2353,7 +2944,7 @@ def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
             house_id = get_house_id()
             _ensure_house_wallet(conn, guild_id)
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (bail_amount, guild_id, house_id),
             )
             conn.execute(
@@ -2441,7 +3032,7 @@ def extend_jail(guild_id: int, jailed_user_id: int, payer_user_id: int,
             house_id = get_house_id()
             _ensure_house_wallet(conn, guild_id)
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (cost, guild_id, house_id),
             )
             conn.execute(
@@ -2538,7 +3129,7 @@ def place_jail_bounty(guild_id: int, placer_user_id: int, target_user_id: int,
             house_id = get_house_id()
             _ensure_house_wallet(conn, guild_id)
             conn.execute(
-                "UPDATE wallets SET coins = coins + ? WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
                 (bet, guild_id, house_id),
             )
             conn.execute(

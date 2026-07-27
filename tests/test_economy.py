@@ -245,3 +245,227 @@ def test_fine_user_wealth_falls_through_to_bank():
     assert economy.get_coins(G, U) == 0
     assert economy.bank_balance(G, U) == 0
     assert economy.fine_user_wealth(G, U, 0) == 0
+
+
+# --- The coin ceiling -------------------------------------------------------
+# SQLite silently promotes an overflowed INTEGER expression to REAL, which is
+# how wallets turned into 9.2e+18 floats. These pin down that no money value
+# can climb there again, and that the repair migration heals a DB that already
+# did.
+
+def _raw_money(table, column, **where):
+    """Read a money cell straight from SQLite, with its storage type."""
+    clause = " AND ".join(f"{k} = ?" for k in where)
+    with sqlite3.connect(economy.DB_FILE) as conn:
+        return conn.execute(
+            f"SELECT {column}, typeof({column}) FROM {table} WHERE {clause}",
+            tuple(where.values()),
+        ).fetchone()
+
+
+def test_credits_saturate_instead_of_overflowing():
+    G, U = 9201, 1
+    economy.add_coins(G, U, economy.MAX_COINS)
+    for _ in range(5):
+        economy.add_coins(G, U, economy.MAX_COINS)
+        economy.award_coins(G, U, economy.MAX_COINS)
+        economy.update_wallet(G, U, economy.MAX_COINS)
+    value, storage_type = _raw_money("wallets", "coins", guild_id=G, user_id=U)
+    assert storage_type == "integer"  # never promoted to REAL
+    assert value == economy.MAX_COINS
+    assert economy.get_wallet(G, U)["total_won"] == economy.MAX_COINS
+
+
+def test_payout_leaves_coins_in_house_when_winner_is_capped():
+    G, U = 9202, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, U, economy.MAX_COINS)  # winner is at the ceiling
+    economy.add_coins(G, 2, 500_000)
+    assert economy.transfer_to_house(G, 2, 500_000)["ok"]
+    on_hand_before = economy.get_house_state(G)["on_hand"]
+    assert economy.casino_payout(G, U, 400_000) == 0  # no room, nothing paid
+    assert economy.get_house_state(G)["on_hand"] == on_hand_before  # house kept it
+    assert economy.get_coins(G, U) == economy.MAX_COINS
+    # ...and the ceiling is not mistaken for the house being broke.
+    assert economy.pop_bankruptcy_events(G) == []
+
+
+def test_transfer_trims_to_receiver_headroom_without_burning_coins():
+    G, A, B = 9203, 1, 2
+    economy.add_coins(G, A, 10_000)
+    # Leave B exactly 4,000 short of the ceiling (the wallet opens at
+    # STARTING_COINS, so subtract that too).
+    economy.add_coins(G, B, economy.MAX_COINS - 4_000 - economy.STARTING_COINS)
+    start_total = economy.get_total_economy(G)
+    res = economy.transfer_coins(G, A, B, 10_000)
+    assert res["ok"] and res["amount"] == 4_000  # only what fit moved
+    assert economy.get_coins(G, B) == economy.MAX_COINS
+    assert economy.get_total_economy(G) == start_total  # remainder stayed with A
+    # A receiver with no headroom at all refuses rather than eating the coins.
+    assert economy.transfer_coins(G, A, B, 1_000) == {
+        "ok": False, "error": "capped", "have": economy.MAX_COINS}
+
+
+def test_bank_deposit_and_interest_cannot_overflow():
+    G, U = 9204, 1
+    economy.add_coins(G, U, economy.MAX_COINS)
+    economy.bank_deposit(G, U, economy.MAX_COINS)
+    assert economy.bank_balance(G, U) == economy.MAX_COINS
+    # Backdate the clock a century: compounding must clamp, not explode.
+    with sqlite3.connect(economy.DB_FILE) as conn:
+        conn.execute(
+            "UPDATE cog_kv SET value=? WHERE guild_id=? AND namespace='bank' AND key='interest_ts'",
+            (time.time() - 100 * economy._SECONDS_PER_YEAR, G))
+        conn.commit()
+    assert economy.bank_balance(G, U) == economy.MAX_COINS
+    value, storage_type = _raw_money(
+        "cog_kv", "value", guild_id=G, user_id=U, namespace="bank", key="balance")
+    assert storage_type == "integer" and value == economy.MAX_COINS
+
+
+def test_grow_survives_absurd_elapsed_time():
+    # A zeroed/corrupt timestamp asks for (1.15 ** a_billion) — inf as a float,
+    # and int(inf) raises. Elapsed time clamps first, so the result stays a
+    # sane, finite int instead of pinning the balance at the ceiling.
+    grown = economy._grow(1_000, 0.15, 10**9)
+    assert grown == int(1_000 * 1.15 ** economy._MAX_INTEREST_YEARS)
+    assert 1_000 < grown < economy.MAX_COINS
+    # A big balance compounding for a long time still clamps at the ceiling.
+    assert economy._grow(economy.MAX_COINS, 0.15, 10**9) == economy.MAX_COINS
+    assert economy._grow(1_000, 0.15, 0) == 1_000
+    assert economy._grow(0, 0.15, 5) == 0
+
+
+def test_repair_migration_heals_overflowed_money():
+    G, U = 9205, 1
+    economy.get_wallet(G, U)
+    overflowed = 9.223372036854776e18  # what SQLite leaves behind on overflow
+    with sqlite3.connect(economy.DB_FILE) as conn:
+        conn.execute(
+            "UPDATE wallets SET coins = ?, total_won = ?, net_won = ? "
+            "WHERE guild_id = ? AND user_id = ?",
+            (overflowed, overflowed, -overflowed, G, U))
+        conn.execute(
+            "INSERT OR REPLACE INTO cog_kv (guild_id, user_id, namespace, key, value) "
+            "VALUES (?,?,?,?,?)", (G, U, "bank", "balance", overflowed))
+        conn.commit()
+        assert _raw_money("wallets", "coins", guild_id=G, user_id=U)[1] == "real"
+        economy._repair_overflowed_money(conn)
+        conn.commit()
+    value, storage_type = _raw_money("wallets", "coins", guild_id=G, user_id=U)
+    assert storage_type == "integer" and value == economy.MAX_COINS
+    wallet = economy.get_wallet(G, U)
+    assert wallet["coins"] == economy.MAX_COINS
+    assert wallet["total_won"] == economy.MAX_COINS
+    assert economy.bank_balance(G, U) == economy.MAX_COINS
+    net = _raw_money("wallets", "net_won", guild_id=G, user_id=U)
+    assert net == (-economy.MAX_COINS, "integer")
+
+
+def test_reads_never_hand_a_cog_a_float():
+    G, U = 9206, 1
+    economy.get_wallet(G, U)
+    with sqlite3.connect(economy.DB_FILE) as conn:
+        conn.execute("UPDATE wallets SET coins = ? WHERE guild_id = ? AND user_id = ?",
+                     (9.223372036854776e18, G, U))
+        conn.commit()
+    # Repair hasn't run for this row; the read path still must not leak a float.
+    assert isinstance(economy.get_coins(G, U), int)
+    assert isinstance(economy.get_wallet(G, U)["coins"], int)
+    assert economy.get_coins(G, U) == economy.MAX_COINS
+
+
+def test_check_bet_rejects_stakes_above_the_ceiling():
+    assert economy.check_bet(economy.MAX_COINS) is None
+    assert economy.check_bet(economy.MAX_COINS + 1) is not None
+    assert economy.check_bet(0) is not None
+
+
+def test_ceiling_leaves_room_for_guild_wide_sums():
+    # get_total_economy sums every wallet; the ceiling must sit far enough
+    # below 64 bits that a whole guild's worth of maxed wallets still fits.
+    assert economy.MAX_COINS * 1_000 < economy._SQLITE_MAX_INT
+
+
+def test_repair_handles_null_and_text_money():
+    G, U = 9207, 1
+    economy.get_wallet(G, U)
+    with sqlite3.connect(economy.DB_FILE) as conn:
+        conn.execute("UPDATE wallets SET coins = NULL, total_won = 'junk' "
+                     "WHERE guild_id = ? AND user_id = ?", (G, U))
+        conn.commit()
+        economy._repair_overflowed_money(conn)
+        conn.commit()
+    assert _raw_money("wallets", "coins", guild_id=G, user_id=U) == (0, "integer")
+    assert _raw_money("wallets", "total_won", guild_id=G, user_id=U) == (0, "integer")
+
+
+# --- Ceiling strikes --------------------------------------------------------
+# A payout the ceiling refused. economy.py logs it; cogs/coincap.py drains the
+# queue and blames the player publicly.
+
+def test_capped_payout_logs_a_ceiling_strike():
+    G, U = 9301, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, U, economy.MAX_COINS)      # winner is at the ceiling
+    economy.add_coins(G, 2, 900_000)
+    assert economy.transfer_to_house(G, 2, 900_000)["ok"]
+    assert economy.casino_payout(G, U, 400_000) == 0
+    events = economy.pop_ceiling_events(G)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["user_id"] == U
+    assert ev["owed"] == 400_000 and ev["paid"] == 0 and ev["lost"] == 400_000
+    assert ev["source"] == "payout"
+    assert economy.pop_ceiling_events(G) == []       # pop clears the queue
+    # A ceiling strike is NOT a bankruptcy — the house was flush.
+    assert economy.pop_bankruptcy_events(G) == []
+
+
+def test_partially_capped_payout_reports_only_the_lost_part():
+    G, U = 9302, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, U, economy.MAX_COINS - 1_000 - economy.STARTING_COINS)
+    economy.add_coins(G, 2, 900_000)
+    assert economy.transfer_to_house(G, 2, 900_000)["ok"]
+    assert economy.casino_payout(G, U, 5_000) == 1_000  # only what fit
+    ev = economy.pop_ceiling_events(G)[0]
+    assert (ev["owed"], ev["paid"], ev["lost"]) == (5_000, 1_000, 4_000)
+
+
+def test_uncapped_payout_logs_no_strike():
+    G, U = 9303, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, U, 10_000)
+    assert economy.transfer_to_house(G, U, 5_000)["ok"]
+    assert economy.casino_payout(G, U, 5_000) == 5_000
+    assert economy.pop_ceiling_events(G) == []
+
+
+def test_capped_bailout_survives_the_empty_mint():
+    # mint_house_bailout mints nothing when the winner is maxed — but the
+    # strike must still be committed, not rolled back with the empty write.
+    G, U = 9304, 1
+    economy.add_coins(G, U, economy.MAX_COINS)
+    assert economy.mint_house_bailout(G, U, 250_000) == 0
+    ev = economy.pop_ceiling_events(G)[0]
+    assert ev["source"] == "bailout" and ev["lost"] == 250_000
+
+
+def test_capped_refund_logs_a_strike():
+    G, U = 9305, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, 2, 800_000)
+    assert economy.transfer_to_house(G, 2, 800_000, is_bet=False)["ok"]
+    economy.add_coins(G, U, economy.MAX_COINS)
+    assert economy.refund_from_house(G, U, 300_000) == 0
+    ev = economy.pop_ceiling_events(G)[0]
+    assert ev["source"] == "refund" and ev["lost"] == 300_000
+
+
+def test_pending_event_queue_is_bounded():
+    G, U = 9306, 1
+    economy.add_coins(G, U, economy.MAX_COINS)
+    for _ in range(economy._CEILING_MAX_PENDING + 5):
+        economy.mint_house_bailout(G, U, 1_000)
+    assert len(economy.pop_ceiling_events(G)) == economy._CEILING_MAX_PENDING

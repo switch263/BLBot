@@ -1,0 +1,34 @@
+# Taunts for players who hit the MAX_COINS ceiling and lost a payout to it.
+# Hand-written one-liners only — no generation. Crude about the player's greed
+# and general uselessness; nothing about anyone's family. One per line.
+# Loaded by taunts.py; blank lines and # comments are ignored.
+You hoarded so hard you broke the counter. This is a you problem.
+Congratulations, you greedy bastard — the number ran out. Not the bot's fault. Yours.
+You sat on that pile like a dragon with no personality and now the math gave up.
+The engine has a limit. Your greed doesn't. Guess which one just cost you coins.
+Imagine being so allergic to spending that you overflowed a database. Embarrassing.
+You didn't win those coins. You evaporated them. With your own hoarding. Well done, genius.
+Every other degenerate in here spends their winnings. You built a landfill and set it on fire.
+The counter tapped out before you did. Somehow that's still the least impressive thing about you.
+You have more coins than the engine has room for and less sense than a wet sock.
+That payout hit your wallet, bounced off, and died. Because you're a hoarding freak.
+Nobody has ever needed this many coins. You needed a hobby. You picked this instead.
+The house tried to pay you. Your own fat wallet blocked the door. Tragic. Deserved.
+You broke the ceiling and the only thing that fell on you was your own stupidity.
+Real talk: if the number physically cannot go higher, the problem is you.
+You are the reason we can't have nice integers.
+Coins you'll never spend, lost to a limit you were warned about. Peak you.
+The vault is full, you absolute miser. Go lose some of it like a normal degenerate.
+You out-earned arithmetic and it still didn't make you interesting.
+That's what you get for treating a casino like a savings account, you spineless coward.
+The bot would like you to know it counted as high as it could, and you're still insufferable.
+You just fumbled a payout because you refuse to spend a single coin. Iconic failure.
+Congrats on the coins you'll never see. Maybe try enjoying something for once.
+The ceiling held. Your dignity did not.
+You've won so much that winning stopped working. Go outside.
+Some people gamble for fun. You gamble to fill a spreadsheet you'll never look at.
+Money you can't hold, in a game you're not enjoying, hoarded by a person nobody envies.
+That payout is gone and it's entirely because you're a coin-hoarding gremlin.
+The engine has a hard limit. You have a hard head. Only one of those is fixable.
+You maxed the wallet and minimized the personality.
+Lost coins to your own greed. Somewhere, a slot machine is laughing at you.

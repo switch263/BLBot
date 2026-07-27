@@ -85,6 +85,10 @@ class Slots(commands.Cog):
         jmsg = economy.jail_message(guild_id, user_id)
         if jmsg:
             return discord.Embed(title="🚔 Jailed", description=jmsg, color=discord.Color.red())
+        ban = economy.casino_ban_message(guild_id, user_id)
+        if ban:
+            return discord.Embed(title="🎰 You Own This Place",
+                                 description=ban, color=discord.Color.dark_gold())
 
         wallet = economy.get_wallet(guild_id, user_id)
 
@@ -125,6 +129,10 @@ class Slots(commands.Cog):
         jmsg = economy.jail_message(guild_id, user_id)
         if jmsg:
             return discord.Embed(title="🚔 Jailed", description=jmsg, color=discord.Color.red())
+        ban = economy.casino_ban_message(guild_id, user_id)
+        if ban:
+            return discord.Embed(title="🎰 You Own This Place",
+                                 description=ban, color=discord.Color.dark_gold())
         if not economy.consume_item(guild_id, user_id, BONUS_SPIN):
             return discord.Embed(
                 title="🎰 No Bonus Spins",

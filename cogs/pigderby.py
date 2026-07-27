@@ -6,7 +6,8 @@ import logging
 import asyncio
 import time
 
-from economy import get_coins, add_coins, deduct_coins, jail_message, memorial_tithe, record_game
+from economy import (get_coins, add_coins, casino_ban_message,
+                     deduct_coins, jail_message, memorial_tithe, record_game)
 from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,10 @@ class PigButton(discord.ui.Button):
         jmsg = jail_message(d.guild_id, interaction.user.id)
         if jmsg:
             await interaction.response.send_message(jmsg, ephemeral=True)
+            return
+        ban = casino_ban_message(d.guild_id, interaction.user.id)
+        if ban:
+            await interaction.response.send_message(ban, ephemeral=True)
             return
         balance = get_coins(d.guild_id, interaction.user.id)
         if balance < d.buy_in:
