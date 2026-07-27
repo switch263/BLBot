@@ -381,10 +381,48 @@ def test_check_bet_rejects_stakes_above_the_ceiling():
     assert economy.check_bet(0) is not None
 
 
-def test_ceiling_leaves_room_for_guild_wide_sums():
-    # get_total_economy sums every wallet; the ceiling must sit far enough
-    # below 64 bits that a whole guild's worth of maxed wallets still fits.
-    assert economy.MAX_COINS * 1_000 < economy._SQLITE_MAX_INT
+def test_ceiling_is_exactly_int64_max():
+    # The ceiling now sits ON the storage limit — there is no margin left, so
+    # this is a deliberate pin, not an inequality. Raising it further requires
+    # abandoning INTEGER storage, not editing this constant.
+    assert economy.MAX_COINS == economy._SQLITE_MAX_INT == 2**63 - 1
+
+
+def test_a_maxed_value_actually_round_trips_through_sqlite():
+    # The whole ceiling is worthless if the cap itself can't be stored.
+    G, U = 9270, 1
+    economy.add_coins(G, U, economy.MAX_COINS)
+    assert economy.get_coins(G, U) == economy.MAX_COINS
+    value, kind = _raw_money("wallets", "coins", guild_id=G, user_id=U)
+    assert kind == "integer" and value == economy.MAX_COINS
+
+
+def test_saturating_credit_absorbs_an_overflowing_intermediate():
+    # MIN(coins + ?, MAX) is safe even when `coins + ?` overflows: SQLite
+    # promotes the sum to a REAL further from zero than the cap, so the clamp
+    # returns the integer cap. This is why the ceiling is not bound by 2*MAX.
+    with sqlite3.connect(":memory:") as conn:
+        cap = economy._SQLITE_MAX_INT - 1
+        raw = conn.execute("SELECT typeof(? + ?)", (cap, cap)).fetchone()[0]
+        assert raw == "real"          # the intermediate really does overflow
+        value, kind = conn.execute(
+            f"SELECT MIN(? + ?, {cap}), typeof(MIN(? + ?, {cap}))",
+            (cap, cap, cap, cap)).fetchone()
+        assert kind == "integer" and value == cap
+
+
+def test_guild_totals_survive_many_maxed_wallets():
+    # Guild-wide totals are summed in Python, so they are NOT bounded by 64
+    # bits — 50 maxed wallets sum to 5e19, well past what SQL SUM() could hold.
+    G = 9250
+    for uid in range(1, 51):
+        economy.add_coins(G, uid, economy.MAX_COINS)
+    total = economy.get_total_economy(G)
+    assert total > economy._SQLITE_MAX_INT
+    assert total >= 50 * economy.MAX_COINS
+    stats = economy.get_server_stats(G)
+    assert stats["total_coins"] >= 50 * economy.MAX_COINS
+    assert stats["players"] == 50
 
 
 def test_repair_handles_null_and_text_money():
@@ -469,3 +507,21 @@ def test_pending_event_queue_is_bounded():
     for _ in range(economy._CEILING_MAX_PENDING + 5):
         economy.mint_house_bailout(G, U, 1_000)
     assert len(economy.pop_ceiling_events(G)) == economy._CEILING_MAX_PENDING
+
+
+def test_wealth_leaderboard_survives_maxed_wallets():
+    # `wealth` used to be `w.coins + COALESCE(b.value, 0)` in SQL, with no
+    # clamp to absorb an overflow — at a high ceiling that returns a float and
+    # /richest prints scientific notation. It is summed in Python now.
+    G = 9260
+    economy.add_coins(G, 1, economy.MAX_COINS)
+    economy.bank_deposit(G, 1, economy.MAX_COINS // 2)
+    economy.add_coins(G, 2, economy.MAX_COINS // 4)
+    rows = economy.get_wealth_leaderboard(G)
+    assert rows[0][0] == 1
+    for row in rows:
+        for value in row:
+            assert isinstance(value, int), f"non-int in leaderboard row: {row}"
+    uid, wealth, coins, banked, _, _ = rows[0]
+    assert wealth == coins + banked
+    assert wealth > economy.MAX_COINS   # a real total above any single cap

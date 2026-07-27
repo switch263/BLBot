@@ -24,16 +24,40 @@ STARTING_COINS = 100
 #
 # MAX_COINS is the hard ceiling on every stored money figure: wallets, both
 # house buckets, bank accounts, and the lifetime total_won/total_lost/net_won
-# counters. One quadrillion leaves ~9,200x of headroom under the 64-bit limit,
-# so even SUM()ing every balance in the guild (get_total_economy, /serverstats)
-# can't overflow either.
+# counters.
+#
+# WHY THIS EXACT NUMBER. It is the literal maximum a SQLite INTEGER can hold —
+# the ceiling is now the storage limit itself, with NO margin left. Getting
+# here required proving nothing binds below it:
+#
+#   * The saturating credits `MIN(coins + ?, MAX_COINS)` are safe at any cap.
+#     If the inner add overflows, SQLite promotes it to a REAL that is by
+#     definition further from zero than the cap, so MIN()/MAX() returns the
+#     integer cap and the overflow is absorbed. Verified, not assumed.
+#   * Guild-wide totals are summed in Python (_sum_money), where ints are
+#     arbitrary precision, so a server of N maxed wallets is not a constraint.
+#     Keeping SUM() in SQL would have forced a far lower ceiling.
+#   * The wealth leaderboard's `w.coins + COALESCE(b.value, 0)` was the one
+#     money expression with no clamp to absorb a promotion; it sums in Python.
+#
+# THE RULE THAT KEEPS THIS SAFE, now that the buffer is gone: every money
+# expression SQL evaluates must be a single column, a SUBTRACTION, or an
+# addition wrapped in a MIN()/MAX() clamp. A bare multi-term money sum in SQL
+# (`a + b`, unclamped) promotes straight to REAL at these values and silently
+# corrupts the row — the exact bug this ceiling exists to prevent. Sum in
+# Python instead; it costs nothing at per-guild row counts.
+#
+# Past this point the only way up is abandoning INTEGER storage for zero-padded
+# TEXT with all arithmetic in Python. Ordering and the `WHERE coins >= ?`
+# balance guard survive that; SQL arithmetic does not, and net_won would need a
+# bias offset for negatives. That is a full migration of every money write.
 #
 # Credits SATURATE at the ceiling — they never wrap and never promote to REAL.
 # Two-sided moves (transfers, payouts) shrink the move to the receiver's
 # remaining headroom BEFORE debiting the sender, so saturation never destroys
 # coins mid-transfer. Practically: a maxed-out wallet simply can't be paid
 # more, and the coins stay where they were.
-MAX_COINS = 1_000_000_000_000_000  # 1e15
+MAX_COINS = 2**63 - 1  # 9,223,372,036,854,775,807 — int64 max, the hard edge
 _SQLITE_MAX_INT = 2**63 - 1
 
 
@@ -1310,6 +1334,20 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
         return 0
 
 
+def _sum_money(conn: sqlite3.Connection, sql: str, params: tuple) -> int:
+    """Sum a money column by fetching the rows and adding them up in Python.
+
+    Deliberately NOT `SELECT SUM(col)`: SQLite computes SUM in 64-bit ints and
+    silently promotes the result to REAL on overflow, which would make the
+    guild-wide totals the binding constraint on MAX_COINS (a guild of N maxed
+    wallets would have to stay under 2**63). Python ints are arbitrary
+    precision, so the aggregates can never overflow no matter how rich the
+    server gets, and the ceiling only has to keep a SINGLE value in range.
+    Row counts here are per-guild player counts — summing them costs nothing.
+    """
+    return sum(coins_int(r[0]) for r in conn.execute(sql, params).fetchall())
+
+
 def get_house_state(guild_id: int) -> dict:
     """Snapshot of the safe harbor and the on-hand pot. Applies reserve
     interest as a side effect. `banked` is the sum of every player bank
@@ -1329,17 +1367,16 @@ def get_house_state(guild_id: int) -> dict:
                 "SELECT coins FROM house_reserve WHERE guild_id = ?",
                 (guild_id,),
             ).fetchone()
-            banked_row = conn.execute(
-                "SELECT COALESCE(SUM(value), 0) FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=?",
-                (guild_id, _BANK_NS, _BANK_KEY),
-            ).fetchone()
+            banked = _sum_money(
+                conn,
+                "SELECT value FROM cog_kv WHERE guild_id=? AND namespace=? AND key=?",
+                (guild_id, _BANK_NS, _BANK_KEY))
             conn.commit()
             return {
                 "on_hand": coins_int(house_row[0] if house_row else 0),
                 "reserve": coins_int(reserve_row[0] if reserve_row else 0),
                 "apr": HOUSE_INTEREST_APR,
-                "banked": coins_int(banked_row[0] if banked_row else 0),
+                "banked": banked,
                 "bank_apr": BANK_INTEREST_APR,
             }
     except sqlite3.Error as e:
@@ -2616,7 +2653,15 @@ def get_wealth_leaderboard(guild_id: int, limit: int = 10) -> list:
     Accrues each account's bank interest first so banked figures match /bank.
     Returns (user_id, wealth, coins, banked, total_won, total_lost) rows.
     /richest ranks on this; the slots leaderboard and the rank-1 achievement
-    stay on the wallet-only get_leaderboard on purpose."""
+    stay on the wallet-only get_leaderboard on purpose.
+
+    `wealth` is summed and sorted in PYTHON, not SQL. It's the one money
+    expression in the schema with no saturating clamp around it — the credits
+    survive an overflow because MIN()/MAX() absorb the promoted REAL, but a
+    bare `w.coins + COALESCE(b.value, 0)` has nothing to absorb it and would
+    hand /richest a float to print in scientific notation. Doing it here also
+    means the ceiling is bounded only by single-value storage, not by
+    2 * MAX_COINS."""
     try:
         with _tx("get_wealth_leaderboard") as conn:
             holders = conn.execute(
@@ -2626,16 +2671,22 @@ def get_wealth_leaderboard(guild_id: int, limit: int = 10) -> list:
             ).fetchall()
             for (uid,) in holders:
                 _accrue_bank_interest(conn, guild_id, uid)
-            return conn.execute(
-                "SELECT w.user_id, w.coins + COALESCE(b.value, 0) AS wealth, "
-                "w.coins, COALESCE(b.value, 0), w.total_won, w.total_lost "
+            rows = conn.execute(
+                "SELECT w.user_id, w.coins, COALESCE(b.value, 0), "
+                "w.total_won, w.total_lost "
                 "FROM wallets w LEFT JOIN cog_kv b "
                 "ON b.guild_id = w.guild_id AND b.user_id = w.user_id "
                 "AND b.namespace = ? AND b.key = ? "
-                "WHERE w.guild_id = ? AND w.user_id != ? "
-                "ORDER BY wealth DESC LIMIT ?",
-                (_BANK_NS, _BANK_KEY, guild_id, get_house_id(), limit),
+                "WHERE w.guild_id = ? AND w.user_id != ?",
+                (_BANK_NS, _BANK_KEY, guild_id, get_house_id()),
             ).fetchall()
+            ranked = [
+                (r[0], coins_int(r[1]) + coins_int(r[2]), coins_int(r[1]),
+                 coins_int(r[2]), coins_int(r[3]), coins_int(r[4]))
+                for r in rows
+            ]
+            ranked.sort(key=lambda row: row[1], reverse=True)
+            return ranked[:limit]
     except sqlite3.Error as e:
         logger.error(f"Database error getting wealth leaderboard: {e}")
         return []
@@ -2704,24 +2755,20 @@ def get_total_economy(guild_id: int) -> int:
     toward total circulation."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
-            wallets_total = conn.execute(
-                "SELECT COALESCE(SUM(coins), 0) FROM wallets WHERE guild_id = ?",
-                (guild_id,),
-            ).fetchone()[0] or 0
+            wallets_total = _sum_money(
+                conn, "SELECT coins FROM wallets WHERE guild_id = ?", (guild_id,))
             reserve_row = conn.execute(
                 "SELECT coins FROM house_reserve WHERE guild_id = ?",
                 (guild_id,),
             ).fetchone()
             reserve_total = (reserve_row[0] if reserve_row else 0) or 0
-            bank_total = conn.execute(
-                "SELECT COALESCE(SUM(value), 0) FROM cog_kv "
-                "WHERE guild_id = ? AND namespace = ? AND key = ?",
-                (guild_id, _BANK_NS, _BANK_KEY),
-            ).fetchone()[0] or 0
-            # int(), not coins_int(): the guild-wide total legitimately exceeds
-            # a single wallet's ceiling. Every term is <= MAX_COINS, so the sum
-            # stays far under 64 bits.
-            return int(wallets_total) + int(reserve_total) + int(bank_total)
+            bank_total = _sum_money(
+                conn,
+                "SELECT value FROM cog_kv WHERE guild_id = ? AND namespace = ? AND key = ?",
+                (guild_id, _BANK_NS, _BANK_KEY))
+            # Summed in Python: the guild-wide total legitimately exceeds any
+            # single wallet's ceiling, and must not be clamped to it.
+            return wallets_total + int(reserve_total) + bank_total
     except sqlite3.Error as e:
         logger.error(f"Database error reading total economy: {e}")
         return 0
@@ -2731,25 +2778,26 @@ def get_server_stats(guild_id: int) -> dict:
     """Get aggregate economy stats for a server. Excludes the house (bot) wallet."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.execute(
-                "SELECT COUNT(*), SUM(coins), SUM(total_won), SUM(total_lost), SUM(spins), SUM(jackpots) "
+            # Money columns are summed in Python (see _sum_money) so a rich
+            # server can't overflow the aggregate; spins/jackpots are small
+            # counters and stay in SQL.
+            rows = conn.execute(
+                "SELECT coins, total_won, total_lost, spins, jackpots "
                 "FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id())
-            )
-            row = cursor.fetchone()
-            banked = conn.execute(
-                "SELECT COALESCE(SUM(value), 0) FROM cog_kv "
-                "WHERE guild_id = ? AND namespace = ? AND key = ?",
-                (guild_id, _BANK_NS, _BANK_KEY),
-            ).fetchone()[0] or 0
+            ).fetchall()
+            banked = _sum_money(
+                conn,
+                "SELECT value FROM cog_kv WHERE guild_id = ? AND namespace = ? AND key = ?",
+                (guild_id, _BANK_NS, _BANK_KEY))
             return {
-                "players": int(row[0] or 0),
-                "total_coins": int(row[1] or 0),
-                "total_banked": int(banked),
-                "total_won": int(row[2] or 0),
-                "total_lost": int(row[3] or 0),
-                "total_spins": int(row[4] or 0),
-                "total_jackpots": int(row[5] or 0),
+                "players": len(rows),
+                "total_coins": sum(coins_int(r[0]) for r in rows),
+                "total_banked": banked,
+                "total_won": sum(coins_int(r[1]) for r in rows),
+                "total_lost": sum(coins_int(r[2]) for r in rows),
+                "total_spins": sum(int(r[3] or 0) for r in rows),
+                "total_jackpots": sum(int(r[4] or 0) for r in rows),
             }
     except sqlite3.Error as e:
         logger.error(f"Database error getting server stats: {e}")

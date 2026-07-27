@@ -14,6 +14,11 @@ from amount import MAX_AMOUNT, parse_amount
     ("5m", 5_000_000),
     ("1b", 1_000_000_000),
     ("1t", 1_000_000_000_000),
+    ("1q", 1_000_000_000_000_000),
+    ("1qa", 1_000_000_000_000_000),
+    ("2.5q", 2_500_000_000_000_000),
+    ("1qi", 1_000_000_000_000_000_000),
+    ("0.5QI", 500_000_000_000_000_000),
     ("$5k", 5_000),
     (" 10K ", 10_000),
     (42, 42),
@@ -51,8 +56,8 @@ def test_ceiling_matches_economy():
 
 
 @pytest.mark.parametrize("raw", [
-    "9999t",                      # suffix form past the ceiling
-    "99999999999999999999",       # raw digits past the ceiling
+    "9999qi",                     # suffix form past the ceiling
+    "99999999999999999999999",    # raw digits past the ceiling
     MAX_AMOUNT + 1,               # already-int input past the ceiling
     float(MAX_AMOUNT) * 10,
 ])
@@ -63,5 +68,18 @@ def test_rejects_above_ceiling(raw):
 
 
 def test_accepts_exactly_the_ceiling():
+    # Exact to the last digit — this is why parsing uses Decimal, not float.
+    # float(str(MAX_AMOUNT)) rounds UP past the cap and would reject it.
     assert parse_amount(str(MAX_AMOUNT)) == MAX_AMOUNT
-    assert parse_amount("1000t") == MAX_AMOUNT
+    assert parse_amount(str(MAX_AMOUNT + 1)) is None
+    assert parse_amount("9qi") == 9_000_000_000_000_000_000
+    assert parse_amount("1000000t") == 1_000_000_000_000_000_000
+
+
+def test_large_amounts_keep_every_digit():
+    # float() carries 53 bits of mantissa (~9e15), so these used to round.
+    assert parse_amount("1000000000000000001") == 1_000_000_000_000_000_001
+    assert parse_amount("9223372036854775806") == 9_223_372_036_854_775_806
+    # ...and a percentage of a huge balance must be exact too.
+    assert parse_amount("50%", available=MAX_AMOUNT) == MAX_AMOUNT // 2
+    assert parse_amount("all", available=MAX_AMOUNT) == MAX_AMOUNT

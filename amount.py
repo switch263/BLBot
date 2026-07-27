@@ -11,6 +11,8 @@ instead of long strings of zeros:
     5m             -> 5000000
     1b             -> 1000000000
     1t             -> 1000000000000
+    1q / 1qa       -> 1000000000000000      (quadrillion)
+    1qi            -> 1000000000000000000   (quintillion — the cap)
 
 When the caller passes `available=` (a balance the amount is drawn against),
 contextual amounts work too:
@@ -27,34 +29,48 @@ It's a pure module — no Discord, no DB.
 """
 
 import re
+from decimal import Decimal, InvalidOperation
 
 _SUFFIXES = {
     "k": 1_000,
     "m": 1_000_000,
     "b": 1_000_000_000,
     "t": 1_000_000_000_000,
+    # Balances run to a quintillion (economy.MAX_COINS), so `t` alone would
+    # leave players typing thirteen zeros for a routine amount.
+    "q": 1_000_000_000_000_000,      # quadrillion
+    "qa": 1_000_000_000_000_000,     # ...spelled out, same thing
+    "qi": 1_000_000_000_000_000_000,  # quintillion — the ceiling itself
 }
 
 # The coin ceiling, mirrored from economy.MAX_COINS (a test pins them equal).
 # Duplicated rather than imported so this module stays pure — no DB, no config.
 # Anything a player types above it is rejected outright rather than clamped:
-# "9999t" is a typo or a probe, not a bet, and silently reinterpreting it as a
-# quadrillion-coin stake is worse than saying no.
-MAX_AMOUNT = 1_000_000_000_000_000
+# "9999qi" is a typo or a probe, not a bet, and silently reinterpreting it as a
+# quintillion-coin stake is worse than saying no.
+MAX_AMOUNT = 2**63 - 1  # 9,223,372,036,854,775,807 — see economy.MAX_COINS
+
+# Amounts are parsed with Decimal, never float. A float carries only 53 bits of
+# mantissa (~9e15), so at this ceiling `float("9223372036854775807")` rounds UP
+# past the cap and the exact maximum would be rejected, and typing
+# "1000000000000000001" would silently land on ...000. Decimal is exact for
+# both the integer and the `1.5k` decimal forms.
 
 # digits with optional , _ or space grouping, optional decimal, optional suffix
-_AMOUNT_RE = re.compile(r"^([0-9][0-9,_ ]*(?:\.[0-9]+)?)\s*([kmbt])?$", re.IGNORECASE)
+_AMOUNT_RE = re.compile(r"^([0-9][0-9,_ ]*(?:\.[0-9]+)?)\s*(qa|qi|k|m|b|t|q)?$",
+                         re.IGNORECASE)
 _PERCENT_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*%$")
 
 # Shown to the user when their amount couldn't be read.
-AMOUNT_HELP = "Try a number like `500`, `100,000`, `2k`, `1.5m`, or `1b`."
+AMOUNT_HELP = "Try a number like `500`, `100,000`, `2k`, `1.5m`, `1b`, or `2.5q`."
 CONTEXT_HELP = AMOUNT_HELP[:-1] + " — or `all`, `half`, or `50%`."
 
 
 def parse_amount(text, available: int | None = None) -> int | None:
     """Parse a human-typed coin amount into a non-negative int, or None if it
     isn't a valid amount. Accepts thousands separators (`,` `_` space) and the
-    suffixes k/m/b/t (case-insensitive), with or without a decimal (`1.5k`).
+    suffixes k/m/b/t/q(a)/qi (case-insensitive), with or without a
+    decimal (`1.5k`).
 
     With `available=` (the balance the amount draws on), also accepts the
     contextual forms `all`/`max`, `half`, and percentages like `50%`. Those
@@ -69,7 +85,9 @@ def parse_amount(text, available: int | None = None) -> int | None:
     if isinstance(text, int):
         return text if 0 <= text <= MAX_AMOUNT else None
     if isinstance(text, float):
-        return int(text) if 0 <= text <= MAX_AMOUNT else None
+        if not (0 <= text <= MAX_AMOUNT):
+            return None
+        return int(text)
     if text is None:
         return None
 
@@ -84,10 +102,14 @@ def parse_amount(text, available: int | None = None) -> int | None:
             return available // 2
         pm = _PERCENT_RE.match(s)
         if pm:
-            pct = float(pm.group(1))
+            try:
+                pct = Decimal(pm.group(1))
+            except (InvalidOperation, ValueError):
+                return None
             if not 0 <= pct <= 100:
                 return None
-            return int(available * pct / 100)
+            # Decimal, not float: 50% of a 9-quintillion balance must be exact.
+            return int(Decimal(available) * pct / 100)
 
     m = _AMOUNT_RE.match(s)
     if not m:
@@ -98,14 +120,12 @@ def parse_amount(text, available: int | None = None) -> int | None:
     if num_part in ("", "."):
         return None
     try:
-        value = float(num_part)
-    except ValueError:
+        value = Decimal(num_part)
+    except (InvalidOperation, ValueError):
         return None
     if suffix:
         value *= _SUFFIXES[suffix]
-    if value < 0 or value != value or value in (float("inf"), float("-inf")):
-        return None
-    if value > MAX_AMOUNT:
+    if not value.is_finite() or value < 0 or value > MAX_AMOUNT:
         return None
     return int(value)
 

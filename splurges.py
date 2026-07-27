@@ -34,7 +34,7 @@ Pure data module — no Discord, no DB (same contract as items.py).
 # The coin ceiling, mirrored from economy.MAX_COINS (a test pins them equal).
 # Duplicated rather than imported so this module stays pure. Escalated prices
 # clamp here: nothing may cost more than a wallet can physically hold.
-MAX_PRICE = 1_000_000_000_000_000
+MAX_PRICE = 2**63 - 1  # mirrors economy.MAX_COINS; a test pins them equal
 
 # Each repeat purchase of the same splurge costs this much more than the last.
 ESCALATION = 1.6
