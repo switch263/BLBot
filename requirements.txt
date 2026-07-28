@@ -3,5 +3,5 @@
 # breaking majors on rebuild.
 discord.py~=2.4
 aiohttp~=3.11
-Pillow~=10.1
+Pillow~=12.3
 lenny~=0.1.3

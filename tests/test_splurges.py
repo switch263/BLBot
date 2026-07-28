@@ -367,3 +367,43 @@ def test_dividends_never_mint():
     assert res["paid"] > 0
     # House -> shareholder is a transfer; the guild-wide total doesn't move.
     assert economy.get_total_economy(G) == total_before
+
+
+# --- The ladder must stay sized against the ceiling -------------------------
+# The catalog went bottom-heavy once already: MAX_COINS was raised 9,200x and
+# the top tier was left unlocking at 0.005% of the cap, so the richest players
+# unlocked everything immediately and had nothing left to buy. These pin the
+# shape of the ladder to the ceiling so that can't happen silently again.
+
+def test_top_tier_unlocks_near_the_ceiling():
+    top = max(splurges.TIERS)
+    req = splurges.tier_requirement(top)
+    share = req / economy.MAX_COINS
+    # Reachable, but genuinely late-game: somewhere in the last order of
+    # magnitude of the wealth curve.
+    assert 0.01 <= share <= 0.5, (
+        f"top tier unlocks at {share:.4%} of MAX_COINS — the ladder has drifted "
+        f"out of sync with the ceiling; rescale the tiers.")
+
+
+def test_priciest_splurge_is_a_real_fraction_of_the_ceiling():
+    top_price = max(e["price"] for e in splurges.SPLURGES.values())
+    share = top_price / economy.MAX_COINS
+    assert 0.1 <= share <= 1.0, (
+        f"priciest splurge is {share:.4%} of MAX_COINS — nothing in the catalog "
+        f"meaningfully drains a maxed-out player.")
+
+
+def test_tiers_are_evenly_spaced_with_no_dead_zone():
+    # No gap between consecutive unlocks bigger than 1000x: a gap larger than
+    # that is a stretch of the wealth curve with nothing new to buy.
+    reqs = [splurges.tier_requirement(t) for t in sorted(splurges.TIERS)][1:]
+    for lower, higher in zip(reqs, reqs[1:]):
+        assert higher <= lower * 1_000, (
+            f"dead zone between {lower:,} and {higher:,} — {higher // lower}x "
+            f"of wealth with no new tier")
+
+
+def test_every_tier_is_fully_stocked():
+    for tier in splurges.TIERS:
+        assert len(splurges.by_tier(tier)) == 8, f"tier {tier} is not stocked"

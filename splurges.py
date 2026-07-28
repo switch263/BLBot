@@ -12,6 +12,12 @@ Two escalators keep it interesting as a player gets richer:
     station energy drink; a player brushing the MAX_COINS ceiling sees the
     option to buy a share of the house itself. You can only buy from tiers
     you've unlocked, so the catalog grows with the fortune.
+
+    The ladder is sized against economy.MAX_COINS, NOT against round numbers:
+    the top tier must unlock somewhere near the ceiling, or the richest
+    players unlock everything early and the catalog dies. When the ceiling
+    moves, these thresholds and the top tiers' prices move with it — a test
+    pins the top tier to a sane fraction of the cap so this can't drift back.
   * REPEAT PURCHASES cost more every time — `price_for()` multiplies the base
     price by ESCALATION per copy already owned. Buying the same thing forever
     gets exponentially more expensive, which is the point.
@@ -21,7 +27,7 @@ no items, no odds, no coins back — they're trophies in `/flex` and nothing
 else. A sink that pays out isn't a sink, and anything with a mechanical effect
 would eventually be worth farming.
 
-The exception is SHARES_KEY ("Buy Into the House", Tier 7): each share draws a
+The exception is SHARES_KEY ("Buy Into the House", top tier): each share draws a
 slice of economy.HOUSE_PROFIT_SHARE_PCT of house PROFIT, split pro-rata among
 shareholders, and any shareholder is permanently barred from gambling. Shares
 are repeatable and dilutive — a second buyer thins everyone's slice. The
@@ -60,8 +66,15 @@ TIERS = {
         "A trillion, or get out of the lobby."),
     6: ("Post-Economic", 100_000_000_000_000,
         "Money stopped meaning anything a hundred trillion ago."),
-    7: ("Engine-Breaking", 500_000_000_000_000,
-        "Half a quadrillion. At this point you're the problem."),
+    7: ("Mythological", 1_000_000_000_000_000,
+        "A quadrillion. You have left the realm of things that exist."),
+    8: ("Cosmological", 10_000_000_000_000_000,
+        "Ten quadrillion. Astronomers work with smaller numbers than this."),
+    9: ("Ontological", 100_000_000_000_000_000,
+        "A hundred quadrillion. What you can buy stopped being the question."),
+    10: ("Engine-Breaking", 1_000_000_000_000_000_000,
+         "A quintillion. You are within arm's reach of the largest number "
+         "this bot can physically store."),
 }
 
 # --- Catalog ---------------------------------------------------------------
@@ -326,15 +339,12 @@ SPLURGES = {
         "flavor": "Coastal cities have questions. You have a moon.",
     },
 
-    # --- Tier 7: Engine-Breaking --------------------------------------------
-    SHARES_KEY: {
-        "name": "Buy Into the House", "emoji": "🏛️", "tier": 7, "price": 300_000_000_000_000,
-        "blurb": ("**THE ONLY SPLURGE THAT DOES SOMETHING.** One share of the "
-                  "casino. Shareholders split **25% of house profit**, paid out "
-                  "as the house earns it — and are **barred from gambling** for "
-                  "good. Buy more shares for a bigger slice; every new investor "
-                  "dilutes everyone."),
-        "flavor": "You stopped playing the game and started owning a piece of it. Congratulations, allegedly.",
+    # --- Tier 7: Mythological -----------------------------------------------
+    "own_religion": {
+        "name": "Found a Religion Around Yourself", "emoji": "🛕", "tier": 7, "price": 300_000_000_000_000,
+        "unique": True,
+        "blurb": "Doctrine, holidays, a dietary restriction you invented at lunch.",
+        "flavor": "Forty thousand adherents. None of them have met you. All of them are disappointed.",
     },
     "own_luck": {
         "name": "Sole Ownership of Luck", "emoji": "🍀", "tier": 7, "price": 350_000_000_000_000,
@@ -370,10 +380,151 @@ SPLURGES = {
         "blurb": "Total identity transfer. You are the house now. Forever.",
         "flavor": "You have read every bet ever placed. You wish you hadn't.",
     },
+    "bound_dragon": {
+        "name": "A Dragon, Bound By Contract", "emoji": "🐉", "tier": 7, "price": 900_000_000_000_000,
+        "unique": True,
+        "blurb": "Genuine, enormous, and legally obligated to tolerate you.",
+        "flavor": "It has read the contract more carefully than you did. It is waiting.",
+    },
+
+    # --- Tier 8: Cosmological -----------------------------------------------
+    "name_a_galaxy": {
+        "name": "Name a Galaxy After Your Worst Bad Beat", "emoji": "🌌", "tier": 8, "price": 1_000_000_000_000_000,
+        "blurb": "A hundred billion stars, permanently commemorating one hand of blackjack.",
+        "flavor": "Every astronomer who cites it has to say the whole thing out loud.",
+    },
+    "redirect_comet": {
+        "name": "Redirect a Comet For The Bit", "emoji": "☄️", "tier": 8, "price": 2_000_000_000_000_000,
+        "blurb": "A small course correction. A very large object.",
+        "flavor": "It now passes close enough to be visible, and slightly menacing, every nine years.",
+    },
+    "extra_planet": {
+        "name": "Add a Planet to the Solar System", "emoji": "🪐", "tier": 8, "price": 3_000_000_000_000_000,
+        "blurb": "Between Mars and Jupiter. There was room. There is less now.",
+        "flavor": "Textbooks have been reprinted. Children resent you specifically.",
+    },
+    "rearrange_constellations": {
+        "name": "Rearrange the Constellations", "emoji": "🌠", "tier": 8, "price": 4_000_000_000_000_000,
+        "blurb": "Every myth, every navigation chart, rewritten around your initials.",
+        "flavor": "Sailors are lost. Ancient cultures are retroactively confused. You think it looks better.",
+    },
+    "slow_time_one_room": {
+        "name": "Slow Down Time in One Room", "emoji": "🕰️", "tier": 8, "price": 5_000_000_000_000_000,
+        "blurb": "Local physics, locally adjusted. You picked the laundry room.",
+        "flavor": "A load takes eleven days now. You have not admitted this was a mistake.",
+    },
+    "delete_a_star": {
+        "name": "Delete a Star From Every Telescope", "emoji": "🔭", "tier": 8, "price": 6_000_000_000_000_000,
+        "blurb": "It's still there. Nobody can see it. That's the purchase.",
+        "flavor": "Observatories log it as an equipment fault. Every observatory. Forever.",
+    },
+    "turn_off_night": {
+        "name": "Turn Off the Night", "emoji": "🌑", "tier": 8, "price": 8_000_000_000_000_000,
+        "blurb": "In one hemisphere. On alternate Thursdays. Because you can.",
+        "flavor": "Nocturnal animals have filed something that is legally almost a grievance.",
+    },
+    "reverse_magnetic_north": {
+        "name": "Reverse Magnetic North", "emoji": "🧲", "tier": 8, "price": 9_000_000_000_000_000,
+        "blurb": "Every compass on the planet now points at you, roughly.",
+        "flavor": "Migratory birds have arrived somewhere unexpected and are furious about it.",
+    },
+
+    # --- Tier 9: Ontological ------------------------------------------------
+    "own_question_mark": {
+        "name": "Buy the Question Mark", "emoji": "❓", "tier": 9, "price": 10_000_000_000_000_000,
+        "blurb": "The punctuation mark. Every use of it now licenses through you.",
+        "flavor": "Enquiry is a subscription service now. You have made asking things worse.",
+    },
+    "own_reflections": {
+        "name": "Own Every Reflection of Yourself", "emoji": "🪞", "tier": 9, "price": 15_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Mirrors, windows, still water. All of them are licensed property.",
+        "flavor": "One of them has stopped copying you exactly. You've decided not to investigate.",
+    },
+    "purchase_regret": {
+        "name": "Purchase the Idea of Regret", "emoji": "💭", "tier": 9, "price": 25_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Nobody may feel it without your say-so. Including you.",
+        "flavor": "You cannot regret this purchase. That was, on reflection, the entire trap.",
+    },
+    "write_into_books": {
+        "name": "Write Yourself Into Every Book", "emoji": "📖", "tier": 9, "price": 35_000_000_000_000_000,
+        "blurb": "A minor character. Always present. Never important.",
+        "flavor": "You die in chapter four of most of them. You paid extra for that, apparently.",
+    },
+    "unmake_a_word": {
+        "name": "Unmake One Word, Permanently", "emoji": "🔇", "tier": 9, "price": 45_000_000_000_000_000,
+        "blurb": "Gone from every language, every dictionary, every mouth.",
+        "flavor": "Nobody can name what's missing, which is exactly the problem you created.",
+    },
+    "own_elsewhere": {
+        "name": "Buy the Concept of Elsewhere", "emoji": "🚪", "tier": 9, "price": 60_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Everywhere that isn't here. Yours. All of it.",
+        "flavor": "You are, by definition, never in the part you own. It cost you everything anyway.",
+    },
+    "trademark_infinity": {
+        "name": "Trademark Infinity", "emoji": "♾️", "tier": 9, "price": 75_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Mathematicians must now display a small ® when working.",
+        "flavor": "The paperwork was, appropriately, never finished.",
+    },
+    "delete_from_memory": {
+        "name": "Delete Yourself From Everyone's Memory", "emoji": "🫥", "tier": 9, "price": 90_000_000_000_000_000,
+        "unique": True,
+        "blurb": "The most expensive way to be left alone ever devised.",
+        "flavor": "Your balance remains. The leaderboard remembers. Nothing else does.",
+    },
+
+    # --- Tier 10: Engine-Breaking -------------------------------------------
+    "buy_largest_number": {
+        "name": "Buy the Largest Number", "emoji": "🔢", "tier": 10, "price": 100_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Not a big number. THE big one. 9,223,372,036,854,775,807. Deeded to you.",
+        "flavor": "Everyone else has to stop just short of it now. Including you, technically.",
+    },
+    "retire_counting": {
+        "name": "Retire Counting", "emoji": "🧮", "tier": 10, "price": 300_000_000_000_000_000,
+        "blurb": "It served well. It is being let go. Estimates only from here.",
+        "flavor": "Nobody can tell you how much this cost, which you consider a feature.",
+    },
+    "purchase_the_database": {
+        "name": "Purchase the Database You Live In", "emoji": "💾", "tier": 10, "price": 600_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Every row, every wallet, every jail sentence. The file itself.",
+        "flavor": "You own the record of owning it. It is in there. You checked. Twice.",
+    },
     "overflow_the_counter": {
-        "name": "Deliberately Overflow the Coin Counter", "emoji": "💥", "tier": 7, "price": 900_000_000_000_000,
+        "name": "Deliberately Overflow the Coin Counter", "emoji": "💥", "tier": 10, "price": 1_000_000_000_000_000_000,
         "blurb": "You've heard the engine has a limit. You'd like to pay to find it.",
         "flavor": "It held. It always holds now. You spent a fortune proving someone patched it.",
+    },
+    "buy_the_ceiling": {
+        "name": "Buy the Ceiling Itself", "emoji": "🧱", "tier": 10, "price": 2_000_000_000_000_000_000,
+        "unique": True,
+        "blurb": "The wall every payout bounces off. You own the wall now.",
+        "flavor": "It still stops you. Ownership and permission turn out to be different things.",
+    },
+    SHARES_KEY: {
+        "name": "Buy Into the House", "emoji": "🏛️", "tier": 10, "price": 3_000_000_000_000_000_000,
+        "blurb": ("**THE ONLY SPLURGE THAT DOES SOMETHING.** One share of the "
+                  "casino. Shareholders split **25% of house profit**, paid out "
+                  "as the house earns it — and are **barred from gambling** for "
+                  "good. Buy more shares for a bigger slice; every new investor "
+                  "dilutes everyone."),
+        "flavor": "You stopped playing the game and started owning a piece of it. Congratulations, allegedly.",
+    },
+    "heat_death": {
+        "name": "Buy the Heat Death of the Universe", "emoji": "⚰️", "tier": 10, "price": 4_000_000_000_000_000_000,
+        "unique": True,
+        "blurb": "Scheduled, deeded, and now technically a private event.",
+        "flavor": "You may not attend. Nobody may attend. That is rather the nature of it.",
+    },
+    "end_the_catalog": {
+        "name": "End the Catalog", "emoji": "🔚", "tier": 10, "price": 5_000_000_000_000_000_000,
+        "unique": True,
+        "blurb": "The last thing there is to buy. After this the list is just a list.",
+        "flavor": "You reached the end of a casino's gift shop. There was never anything here.",
     },
 }
 
