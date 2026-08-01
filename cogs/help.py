@@ -38,6 +38,7 @@ def _build_pages() -> list[discord.Embed]:
         "`/8ball` - Ask the magic 8-ball\n"
         "`/mock` - SpOnGeBoB mOcKiNg tExT\n"
         "`/roast` - Roast someone\n"
+        "`/yourmother` - Your mother jokes, sometimes illustrated\n"
         "`!fortune` - Crack a fortune cookie\n"
         "`/headline` - Fake news headline\n"
         "`/floridaman` - Florida Man headline\n"

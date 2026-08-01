@@ -1,0 +1,387 @@
+"""The "your mother" catalog: pure data + a picker.
+
+Same contract as items.py / splurges.py / taunts.py — repo root, no Discord,
+no DB, no I/O. cogs/yourmother.py is the only thing that knows about Discord.
+
+Structure: every category holds a list of interchangeable SETUPS and a list of
+PUNCHLINES. Any setup in a category grammatically fits any punchline in that
+same category, so the joke space is setups x punchlines per category — over
+1300 distinct jokes, and `tests/test_yomama.py` pins that floor.
+
+House rules for adding lines:
+  * Hand-written only. Nothing generated, nothing scraped.
+  * A punchline must land with EVERY setup in its category. If it only works
+    with one phrasing, it belongs in a different category or nowhere.
+  * Setups never end in punctuation; punchlines always do. The joke is
+    assembled as "{setup}, {punchline}".
+  * Crude is the point. Punching at the bit ("she", the fictional mother of
+    the yo-mama genre) is the point. Do not aim a line at anything a real
+    person can't laugh off — no race, no disability, no dead relatives.
+"""
+
+import random
+
+# Every entry: category name -> (setups, punchlines).
+CATEGORIES: dict[str, dict[str, list[str]]] = {
+    "fat": {
+        "setups": [
+            "Your mother is so fat",
+            "Your mom's so fat",
+            "Yo mama so fat",
+            "Your mother is so enormous",
+            "Your mom is so massive",
+            "Your mother is so wide",
+        ],
+        "punchlines": [
+            "when she sits around the house, she sits *around* the house.",
+            "her blood type is Ranch.",
+            "she stepped on a scale and it printed 'one at a time, please.'",
+            "when she goes camping, the bears hide their food.",
+            "she has her own gravitational field and two confirmed moons.",
+            "Google Maps lists her as a separate country.",
+            "she got baptized at SeaWorld.",
+            "her belt size is listed as 'Equator.'",
+            "she doesn't take selfies, she takes satellite imagery.",
+            "when she wears yellow, people run into the street yelling 'TAXI!'",
+            "she sat on a rainbow and squeezed out a pot of gold.",
+            "the all-you-can-eat buffet installed a turnstile and a warning light.",
+            "the airline charges her for a connecting flight between her thighs.",
+            "she broke a treadmill and the treadmill pressed charges.",
+            "her shadow needed its own zip code.",
+            "when she got in the pool, the lifeguard yelled 'no tsunamis!'",
+            "she showed up in a group photo by herself.",
+            "her passport photo had to be shot in landscape.",
+            "she irons her jeans on the driveway.",
+            "she uses a queen mattress as a yoga mat.",
+            "the doctor's scale just said 'to be continued.'",
+            "every time she walks in heels she strikes oil.",
+        ],
+    },
+    "old": {
+        "setups": [
+            "Your mother is so old",
+            "Your mom's so old",
+            "Yo mama so old",
+            "Your mother is so ancient",
+            "Your mom is so decrepit",
+            "Your mother is so geriatric",
+        ],
+        "punchlines": [
+            "her birth certificate is written in Roman numerals.",
+            "she still owes Jesus five bucks.",
+            "she has a signed first edition of the Ten Commandments.",
+            "her Social Security number is 1.",
+            "she knew Burger King when he was still a prince.",
+            "she waited tables at the Last Supper.",
+            "the candles cost more than the cake.",
+            "there's a fossil in the museum named after her.",
+            "when she was in school there was no history class.",
+            "her first pet was a dinosaur and she kept the leash.",
+            "she remembers when the Dead Sea was only sick.",
+            "she took her driving test on horseback and failed it for speeding.",
+            "she knew the Grand Canyon back when it was a ditch.",
+            "her memory foam mattress gave up trying to keep up.",
+            "she sneezed at the pharmacy and set off the smoke alarm.",
+            "she still has a rotary phone and it isn't ironic.",
+            "her back goes out more than she does.",
+            "she needs a nap to recover from a nap.",
+            "the museum keeps calling and asking her to come back before closing.",
+            "the lab carbon-dated her at the walk-in clinic.",
+            "she got a senior discount at the pyramids.",
+            "her family tree is drawn on a cave wall.",
+        ],
+    },
+    "stupid": {
+        "setups": [
+            "Your mother is so stupid",
+            "Your mom's so dumb",
+            "Yo mama so stupid",
+            "Your mother is so brainless",
+            "Your mom is so thick",
+            "Your mother is so clueless",
+        ],
+        "punchlines": [
+            "she stared at a carton of orange juice because it said 'concentrate.'",
+            "she got locked in a grocery store and nearly starved.",
+            "she tripped over a cordless phone.",
+            "she sold her car for gas money.",
+            "she brought a spoon to the Super Bowl.",
+            "she thought a quarterback was a refund.",
+            "she put lipstick on her forehead to make up her mind.",
+            "she studied all night for a blood test.",
+            "she took a ruler to bed to see how long she slept.",
+            "she got hit by a parked car.",
+            "she thought Taco Bell was a phone company.",
+            "she returned a jigsaw puzzle because it arrived broken.",
+            "she waited at the stop sign for it to change.",
+            "she asked for a price check at the dollar store.",
+            "she microwaved a thermometer to see if it was working.",
+            "she got fired from the M&M factory for throwing out the W's.",
+            "she tried to climb Mountain Dew.",
+            "she thought Dunkin' Donuts was a basketball team.",
+            "she ordered a cheeseburger with no cheese and sent it back as wrong.",
+            "she tried to alphabetize a bag of M&M's.",
+            "she failed a survey.",
+            "she stared at the microwave for twenty minutes waiting for it to finish first.",
+        ],
+    },
+    "ugly": {
+        "setups": [
+            "Your mother is so ugly",
+            "Your mom's so ugly",
+            "Yo mama so ugly",
+            "Your mother is so hideous",
+            "Your mom is so busted",
+            "Your mother is so rough-looking",
+        ],
+        "punchlines": [
+            "her mirror filed a restraining order.",
+            "when she walks into a bank they switch off the cameras.",
+            "even the bots on Tinder unmatch her.",
+            "she made an onion cry.",
+            "FaceApp uninstalled itself.",
+            "her shadow quit and took the summer off.",
+            "she scared the crap out of the toilet.",
+            "she entered an ugly contest and they said 'no professionals.'",
+            "her passport photo is used to train facial recognition on failure cases.",
+            "she looks like a court sketch drawn under oath.",
+            "when she was born the doctor slapped everyone else in the room.",
+            "her Halloween costume is taking the mask off.",
+            "the funhouse mirror is an improvement.",
+            "she toured a haunted house and left with a job offer.",
+            "the front-facing camera opens with a warning label.",
+            "the paint peeled itself off the wall to get away.",
+            "even her reflection ducks behind the frame.",
+            "her yearbook photo is printed with a hazard stripe around it.",
+            "the milk in the fridge went bad out of respect.",
+            "she gave a security camera a virus.",
+            "she showed up on a wanted poster and crime went down.",
+            "the sketch artist drew her and turned himself in.",
+        ],
+    },
+    "poor": {
+        "setups": [
+            "Your mother is so poor",
+            "Your mom's so broke",
+            "Yo mama so broke",
+            "Your mother is so flat broke",
+            "Your mom is so dead broke",
+            "Your mother is so penniless",
+        ],
+        "punchlines": [
+            "she put a milkshake on layaway at McDonald's.",
+            "her wallet has an echo.",
+            "she can't even pay attention.",
+            "the bank handed her a loan just to get her out of the lobby.",
+            "she chases the garbage truck with a grocery list.",
+            "her credit score is a phone number.",
+            "she goes to KFC to lick other people's fingers.",
+            "she does drive-bys on a bicycle.",
+            "her house has a rear-view mirror.",
+            "the roaches chipped in for rent and then moved out.",
+            "she window-shops at the pawn shop.",
+            "she orders tap water and asks for a to-go cup.",
+            "her ATM receipt came with a sympathy card.",
+            "the dollar store told her to shop around.",
+            "her savings account is a jar with a hole in it.",
+            "she pawned her ring for a scratch-off and lost.",
+            "she steals Wi-Fi from the parking lot of a Wendy's she can't afford.",
+            "the IRS sent her money by mistake and then apologized.",
+            "she celebrates when the vending machine gives her coin back.",
+            "she tried to borrow money from a slot machine.",
+            "her rent check bounced twice and came back with a note attached.",
+            "she puts loose change on layaway.",
+        ],
+    },
+    "hairy": {
+        "setups": [
+            "Your mother is so hairy",
+            "Your mom's so hairy",
+            "Yo mama so hairy",
+            "Your mother is so furry",
+            "Your mom is so shaggy",
+            "Your mother is so unshaven",
+        ],
+        "punchlines": [
+            "she gets a five o'clock shadow at noon.",
+            "Bigfoot takes blurry photos of her.",
+            "she shaves with a lawnmower and it stalls out.",
+            "her back has a part down the middle.",
+            "a razor company offered her a sponsorship.",
+            "she wore a fur coat in July and it was just her arms.",
+            "the DMV filed her under 'chia pet.'",
+            "the barber bills her by the acre.",
+            "she brushed her legs and found a comb she lost in 1998.",
+            "she donates to Locks of Love straight off her knuckles.",
+            "she has dandruff in her armpits.",
+            "TSA asked her to remove the coat and it was her shoulders.",
+            "her waxing appointment is invoiced as landscaping.",
+            "she sheds so much the Roomba unionized.",
+            "she can braid her ankles.",
+            "her last haircut required a county permit.",
+            "she uses conditioner on her elbows.",
+            "the dog looked at her and finally felt seen.",
+            "plucking one eyebrow took an entire season.",
+            "her hairline was rejected in a passport photo for being a hat.",
+            "she has to shave to find the tan lines she never got.",
+            "static electricity gives her a full weather event.",
+        ],
+    },
+    "tall": {
+        "setups": [
+            "Your mother is so tall",
+            "Your mom's so tall",
+            "Yo mama so tall",
+            "Your mother is so towering",
+            "Your mom is so freakishly tall",
+            "Your mother is so long",
+        ],
+        "punchlines": [
+            "she has to duck to hear a plane go by.",
+            "she was fined for standing too close to the moon.",
+            "the airline made her check her legs.",
+            "she does yoga in the parking lot because the ceiling said no.",
+            "she uses a satellite as a hair clip.",
+            "she trips in one area code and lands in another.",
+            "birds nest in her hat and pay her rent.",
+            "she gets a nosebleed from standing up.",
+            "her sneezes show up on weather radar.",
+            "she can dunk without leaving the locker room.",
+            "she high-fives helicopters.",
+            "she has to kneel to fit in the photo.",
+            "she buys her pants from a tent supplier.",
+            "the elevator ceiling has her forehead print on it.",
+            "she changes the stadium lights on her lunch break.",
+            "her shoes ship freight.",
+            "her chiropractor works off a ladder.",
+            "she uses the drive-thru window as a mail slot.",
+            "she got a speeding ticket while walking.",
+            "her bed is two beds in a trench coat.",
+            "her head and her feet get separate weather reports.",
+            "she waves at planes and the pilots wave back annoyed.",
+        ],
+    },
+    "short": {
+        "setups": [
+            "Your mother is so short",
+            "Your mom's so short",
+            "Yo mama so short",
+            "Your mother is so tiny",
+            "Your mom is so pint-sized",
+            "Your mother is so small",
+        ],
+        "punchlines": [
+            "she does backflips under the bed.",
+            "she poses for trophies.",
+            "she needs a ladder to pick up a penny.",
+            "she got run over by a remote control car.",
+            "she's the only person who can moonwalk under a closed door.",
+            "her passport photo is a full body shot.",
+            "she can sit on a dime and swing her legs.",
+            "she plays handball against the curb.",
+            "she got lost in a shag carpet for a long weekend.",
+            "she uses a stapler as a step stool.",
+            "the seatbelt light comes on when she rides in the cupholder.",
+            "she has to jump to reach the bottom shelf.",
+            "a squirrel took a wrong turn and made her late for work.",
+            "she needs a boost to reach everyone's low expectations.",
+            "she gets carded at the kids' menu.",
+            "she trains for marathons on a keyboard.",
+            "she can hide behind the price tag.",
+            "she can parallel park inside a shoebox.",
+            "she stubbed her toe on a grain of rice.",
+            "her high heels are still legally socks.",
+            "she watched the whole movie from inside the popcorn.",
+            "she has to look up to tie her shoes.",
+        ],
+    },
+    "lazy": {
+        "setups": [
+            "Your mother is so lazy",
+            "Your mom's so lazy",
+            "Yo mama so lazy",
+            "Your mother is so idle",
+            "Your mom is so work-shy",
+            "Your mother is so useless",
+        ],
+        "punchlines": [
+            "she has a remote for the remote.",
+            "she got tired watching the toaster.",
+            "she waits for the microwave to finish so she can go back to sleep.",
+            "there's a dust bunny living on her treadmill and it has a name.",
+            "she got a job as a speed bump and called in sick.",
+            "she aborted a sneeze halfway through for being too much effort.",
+            "she orders delivery from her own kitchen.",
+            "her step counter is still in the box.",
+            "she takes the elevator down to the gym and rides it back up.",
+            "she counts blinking as cardio.",
+            "she hired somebody to hold her phone.",
+            "she lets the machine get the doorbell.",
+            "she has bedsores from the couch.",
+            "she stopped charging her phone because plugging it in was a lot.",
+            "she took a sick day from being unemployed.",
+            "she drinks through a straw to avoid lifting the cup.",
+            "she keeps a bucket by the bed to skip the walk.",
+            "her yoga practice is lying down with intention.",
+            "she trained the dog to bring in the mail and then to open it.",
+            "she schedules a nap between two other naps.",
+            "there's a chair in her shower and a chair for that chair.",
+            "she sat still so long the couch claimed her as a dependent.",
+        ],
+    },
+    "nasty": {
+        "setups": [
+            "Your mother is so nasty",
+            "Your mom's so filthy",
+            "Yo mama so nasty",
+            "Your mother is so rank",
+            "Your mom is so funky",
+            "Your mother is so gross",
+        ],
+        "punchlines": [
+            "she made Right Guard turn left.",
+            "the shower gave up and rusted.",
+            "she has to sneak up on bathwater.",
+            "Febreze filed a formal complaint.",
+            "her deodorant ships with a warning label.",
+            "she scratched a lottery ticket and it got infected.",
+            "the flies moved out and left a note.",
+            "her armpits get their own weather advisory.",
+            "she put on perfume and it evaporated in protest.",
+            "she took a bath and came out with stock.",
+            "her dentist works in a hazmat suit and a helmet.",
+            "she opened her mouth and the smoke alarm went off.",
+            "the dog rolled in the yard to smell better after hugging her.",
+            "the tub asked to be replaced.",
+            "her breath fogged a window from outside the house.",
+            "the mouthwash spat itself out.",
+            "her socks have their own biome.",
+            "the laundromat charges her a biohazard fee.",
+            "she sweats gravy.",
+            "her toothbrush filed for hazard pay.",
+            "she got pulled over for a smell violation.",
+            "the hand sanitizer ran off.",
+        ],
+    },
+}
+
+
+def category_names() -> list[str]:
+    """Every category key, in catalog order."""
+    return list(CATEGORIES)
+
+
+def combo_count() -> int:
+    """How many distinct jokes the catalog can produce."""
+    return sum(len(c["setups"]) * len(c["punchlines"]) for c in CATEGORIES.values())
+
+
+def joke(category: str | None = None, rng: random.Random | None = None) -> str:
+    """One complete joke. Pass a category key to pin the flavor.
+
+    An unknown category falls back to a random one rather than raising — the
+    caller is a Discord command, and there's no failure worth a stack trace.
+    """
+    r = rng or random
+    cat = CATEGORIES.get(category or "") or r.choice(list(CATEGORIES.values()))
+    return f"{r.choice(cat['setups'])}, {r.choice(cat['punchlines'])}"
