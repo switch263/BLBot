@@ -48,11 +48,17 @@ class YourMother(commands.Cog):
 
     # ---- shared logic -----------------------------------------------------
 
-    def _joke_for(self, target: discord.abc.User, category: str | None) -> str | None:
-        """The joke text, or None if the target is off-limits."""
+    def _joke_for(self, target: discord.abc.User,
+                  category: str | None) -> tuple[str, str] | None:
+        """(chat text, caption text), or None if the target is off-limits.
+
+        Chat gets the mention so Discord renders it as a name; the portrait
+        gets the display name, since the renderer would draw a raw `<@id>`.
+        """
         if is_memorial(target.id):
             return None
-        return f"{target.mention} {yomama.joke(category)}"
+        body = yomama.joke(category)
+        return f"{target.mention} {body}", f"{target.display_name} {body}"
 
     async def _render(self, joke_text: str) -> discord.File | None:
         """Draw the joke off the event loop. None if rendering blew up."""
@@ -72,14 +78,15 @@ class YourMother(commands.Cog):
         target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
         category = next((w.lower() for w in arg.split()
                          if w.lower() in yomama.CATEGORIES), None)
-        joke = self._joke_for(target, category)
-        if joke is None:
+        result = self._joke_for(target, category)
+        if result is None:
             await ctx.send(random.choice(MEMORIAL_RESPONSES))
             return
+        joke, caption = result
 
         if random.random() < IMAGE_CHANCE:
             async with ctx.typing():
-                card = await self._render(joke)
+                card = await self._render(caption)
             if card is not None:
                 await ctx.send(f"{joke}\n*{random.choice(ART_INTROS)}*", file=card)
                 return
@@ -98,15 +105,16 @@ class YourMother(commands.Cog):
                                member: discord.Member = None,
                                category: app_commands.Choice[str] = None):
         target = member or interaction.user
-        joke = self._joke_for(target, category.value if category else None)
-        if joke is None:
+        result = self._joke_for(target, category.value if category else None)
+        if result is None:
             await interaction.response.send_message(random.choice(MEMORIAL_RESPONSES))
             return
+        joke, caption = result
 
         if random.random() < IMAGE_CHANCE:
             # Rendering outruns the 3s interaction window on a slow host.
             await interaction.response.defer()
-            card = await self._render(joke)
+            card = await self._render(caption)
             if card is not None:
                 await interaction.followup.send(
                     f"{joke}\n*{random.choice(ART_INTROS)}*", file=card)
