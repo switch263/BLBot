@@ -2184,6 +2184,94 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
         return 0
 
 
+# --- The ransom job (cogs/heist.py) ---------------------------------------
+# A PvP heist has a RANSOM_ODDS chance of escalating into a hostage situation
+# that reaches the victim's BANK — the one player-vs-player path that does.
+# The band is deliberately the same as a normal wallet steal (STEAL_MIN/MAX_PCT
+# in cogs/heist.py): the bank should stay the safer place to keep coins even
+# once it stops being untouchable.
+RANSOM_MIN_PCT = 0.05
+RANSOM_MAX_PCT = 0.15
+
+
+def ransom_collect(guild_id: int, victim_id: int, thief_id: int, amount: int) -> dict:
+    """Collect a hostage ransom: move up to `amount` from the victim to the
+    thief's wallet, **bank first, then wallet**.
+
+    The order is the whole point. This is the one PvP path that reaches a bank
+    account, so the vault pays first; the wallet fallthrough exists so a victim
+    who empties their bank during the standoff doesn't dodge the ransom — they
+    just moved the coins somewhere equally reachable.
+
+    Pure player->player: nothing is minted, no total_won/net_won bumps (a
+    ransom is theft, not winnings). Clamped to the thief's remaining headroom
+    under MAX_COINS *before* anything is debited, so the ceiling can't destroy
+    coins mid-transfer. The memorial player is neither a valid victim nor a
+    valid thief.
+
+    Returns:
+      {"ok": True, "amount": moved, "from_bank": X, "from_wallet": Y}
+      {"ok": False, "error": "invalid_amount" | "memorial" | "capped" | "empty" | "db"}
+    """
+    amount = clamp_amount(amount)
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    if is_memorial(victim_id) or is_memorial(thief_id):
+        return {"ok": False, "error": "memorial"}
+    try:
+        with _tx("ransom_collect") as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, thief_id, STARTING_COINS),
+            )
+            thief_row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, thief_id),
+            ).fetchone()
+            room = headroom(coins_int(thief_row[0] if thief_row else 0))
+            amount = min(amount, room)
+            if amount <= 0:
+                raise _Abort({"ok": False, "error": "capped"})
+
+            # The vault first — interest accrues right up to the handover.
+            banked = _accrue_bank_interest(conn, guild_id, victim_id)
+            from_bank = min(amount, banked)
+            if from_bank > 0:
+                conn.execute(
+                    "UPDATE cog_kv SET value = value - ? "
+                    "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                    (from_bank, guild_id, victim_id, _BANK_NS, _BANK_KEY),
+                )
+
+            # Then whatever is loose in the wallet.
+            from_wallet = 0
+            remaining = amount - from_bank
+            if remaining > 0:
+                victim_row = conn.execute(
+                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                    (guild_id, victim_id),
+                ).fetchone()
+                from_wallet = min(remaining, coins_int(victim_row[0] if victim_row else 0))
+                if from_wallet > 0:
+                    conn.execute(
+                        "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                        (from_wallet, guild_id, victim_id),
+                    )
+
+            moved = from_bank + from_wallet
+            if moved <= 0:
+                raise _Abort({"ok": False, "error": "empty"})
+            conn.execute(
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                (moved, guild_id, thief_id),
+            )
+        return {"ok": True, "amount": moved, "from_bank": from_bank, "from_wallet": from_wallet}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return {"ok": False, "error": "db"}
+
+
 def burn_purchase(guild_id: int, user_id: int, amount: int, namespace: str,
                   increments: list[tuple[str, int]]) -> dict:
     """Destroy `amount` coins from a wallet and bump cog_kv counters, atomically.

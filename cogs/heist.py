@@ -269,6 +269,64 @@ HEIST_BUILDUP_BOT = [
     "💰 The vault door groans open…",
 ]
 
+# --- The ransom job --------------------------------------------------------
+# RANSOM_ODDS of the time a plain PvP heist escalates into a hostage standoff
+# that reaches the victim's BANK. This is the ONLY player-vs-player path into a
+# bank account — everything else in the game reads wallet `coins` only — so it
+# is deliberately rare, gated on the victim actually having a vault worth
+# raiding, and it hands the victim a say in how it ends.
+RANSOM_ODDS = 0.01
+RANSOM_MIN_BANK = 1_000          # an empty vault isn't worth a kidnapping
+RANSOM_SUCCESS_RATE = 0.70       # if it rides, 70% the ransom gets paid
+RANSOM_PAYUP_DISCOUNT = 0.60     # settle now and it costs 60% of the demand
+RANSOM_TIMEOUT = 90              # seconds the victim has to answer the phone
+
+# Gone-wrong branch: the thief eats a sentence of their own. Deliberately NOT
+# routed through increment_bot_heist_offenses — that counter is for robbing the
+# house, and a botched kidnapping isn't the same rap sheet.
+RANSOM_JAIL_MIN_SECONDS = 2 * 60 * 60
+RANSOM_JAIL_MAX_SECONDS = 8 * 60 * 60
+RANSOM_BAIL_PCT = 0.20           # of the thief's total wealth; never 0, so bail works
+
+RANSOM_BUILDUP = [
+    "🚐 {thief} rolls up on {victim}. No ski mask this time. There's a van…",
+    "🕳️ Bag over the head, zip ties, doors slam. This escalated *significantly*…",
+    "🏦 {thief} isn't here for pocket change. They want the **vault**…",
+    "✂️ A ransom note gets assembled out of casino comp coupons and menu letters…",
+    "📠 The note goes out. The demand is specific. The deadline is not…",
+    "📞 Somewhere across town, {victim}'s phone starts ringing…",
+]
+
+RANSOM_TITLE = "🎬 THE RANSOM JOB…"
+RANSOM_STANDOFF_TITLE = "☎️ RANSOM DEMANDED"
+
+RANSOM_PAID_MESSAGES = [
+    "wired the ransom from the vault without arguing. **{amount:,} coins** change hands in a parking garage.",
+    "paid up. The handoff happens under a highway overpass and nobody makes eye contact. **{amount:,} coins**.",
+    "emptied part of the vault into a gym bag. **{amount:,} coins**, no questions, no cops.",
+    "coughed up **{amount:,} coins** from the safe-deposit box. The hostage is returned mostly intact.",
+]
+
+RANSOM_BLUFF_WIN_MESSAGES = [
+    "called the bluff — and {thief} was not bluffing. The vault gets drained for **{amount:,} coins**.",
+    "said \"you wouldn't dare.\" {thief} dared. **{amount:,} coins** out of the bank.",
+    "refused to negotiate. {thief} negotiated with the bank directly instead. **{amount:,} coins**.",
+]
+
+RANSOM_TIMEOUT_MESSAGES = [
+    "never answered the phone. {thief} got bored and improvised.",
+    "left {thief} on read during an active hostage situation. Bold.",
+    "was AFK for their own kidnapping. {thief} took that personally.",
+]
+
+RANSOM_BOTCH_MESSAGES = [
+    "the hostage chewed through the zip ties, took the van, and drove straight to the police station. {thief} is in a cell.",
+    "{thief} used their own phone for the ransom call. Caller ID is undefeated. Straight to jail.",
+    "the drop was a sting. Every single person at the handoff was a cop. Every one.",
+    "{thief} left the ransom note in the printer tray at work. With their name on the print job.",
+    "the hostage turned out to be a much better negotiator than {thief} and talked them into surrendering.",
+]
+
 HEIST_INPROGRESS_TITLE = "🎭 Heist in Progress…"
 BOT_HEIST_INPROGRESS_TITLE = "🏦 Robbing the House…"
 
@@ -478,6 +536,205 @@ class ExtendOptionsView(discord.ui.View):
             self.add_item(_ExtendTierButton(cog, guild_id, payer_id, target, hours, cost))
 
 
+class RansomView(discord.ui.View):
+    """The hostage standoff. Only the VICTIM can act — it's their vault on the
+    table — and the clock is the third option: answer in RANSOM_TIMEOUT seconds
+    or the thief improvises.
+
+    Three ways out, and the victim's choice sets the thief's risk too:
+      Pay up      — settles now for RANSOM_PAYUP_DISCOUNT of the demand. Certain,
+                    cheaper, and the thief walks away clean.
+      Call bluff  — rides the RANSOM_SUCCESS_RATE roll: usually the full demand
+                    comes out of the vault, but 30% of the time the job collapses
+                    and the thief eats a sentence instead.
+      Say nothing — same roll as calling the bluff. An AFK victim is never worse
+                    off than one who engages, which matters because most heists
+                    land on someone who isn't watching the channel.
+
+    Every path settles exactly once (`resolved`), so a double-click or a click
+    racing the timeout can't pay the ransom twice."""
+
+    def __init__(self, cog, guild_id: int, thief: discord.Member, victim: discord.Member,
+                 accomplice: discord.Member | None, demand: int, payup: int,
+                 story: list[str], channel_id: int):
+        super().__init__(timeout=RANSOM_TIMEOUT)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.thief = thief
+        self.victim = victim
+        self.accomplice = accomplice
+        self.demand = demand
+        self.payup = payup
+        self.story = "\n".join(story)
+        self.channel_id = channel_id
+        self.message: discord.Message | None = None
+        self.resolved = False
+        # _send_heist reads this to title the suspense log it streams first.
+        self.in_progress_title = RANSOM_TITLE
+
+    # ---- helpers ----------------------------------------------------------
+
+    def _claim(self) -> bool:
+        """Take the single settlement slot. False if someone already has it."""
+        if self.resolved:
+            return False
+        self.resolved = True
+        for child in self.children:
+            child.disabled = True
+        return True
+
+    def _embed(self, title: str, body: str, color: discord.Color) -> discord.Embed:
+        """Resolution embed that keeps the story log above the outcome."""
+        return discord.Embed(title=title, description=f"{self.story}\n\n{body}", color=color)
+
+    def _take(self, amount: int) -> tuple[int, str]:
+        """Collect `amount` from the victim (bank first) and split the accomplice's
+        cut. Returns (coins_actually_taken, extra_flavor_lines)."""
+        res = economy.ransom_collect(self.guild_id, self.victim.id, self.thief.id, amount)
+        if not res.get("ok"):
+            return 0, ""
+        got = res["amount"]
+        # Stamp the loss so a heist-insurance policy can pay out on it, exactly
+        # as a normal wallet heist does (see cogs/heistinsurance.py).
+        economy.kv_set(self.guild_id, self.victim.id, "heistins", "last_loss",
+                       f"{got}:{int(time.time())}")
+        notes = []
+        if res["from_bank"] > 0 and res["from_wallet"] > 0:
+            notes.append(
+                f"-# 🏦 **{res['from_bank']:,}** came out of the vault and "
+                f"**{res['from_wallet']:,}** off {self.victim.display_name} directly — "
+                f"moving it mid-standoff didn't help."
+            )
+        elif res["from_wallet"] > 0:
+            notes.append(
+                f"-# 🏦 The vault was already empty. {self.thief.display_name} took "
+                f"**{res['from_wallet']:,}** out of their pockets instead."
+            )
+        else:
+            notes.append(f"-# 🏦 Straight out of {self.victim.display_name}'s bank account.")
+        if self.accomplice is not None and got > 0:
+            cut = max(1, int(got * random.uniform(ACCOMPLICE_CUT_MIN, ACCOMPLICE_CUT_MAX)))
+            moved = economy.transfer_coins(self.guild_id, self.thief.id, self.accomplice.id, cut)
+            if moved.get("ok"):
+                notes.append(
+                    f"-# 🤝 {self.accomplice.display_name} drove the van and takes a "
+                    f"**{moved['amount']:,}** cut."
+                )
+        return got, "\n".join(notes)
+
+    def _record(self, success: bool):
+        economy.record_game(self.guild_id, self.thief.id, "heist", success)
+        if self.accomplice is not None:
+            economy.record_game(self.guild_id, self.accomplice.id, "heist", success)
+
+    def _botch(self) -> str:
+        """The job collapses: the thief is jailed and the crew eats a fine."""
+        seconds = random.randint(RANSOM_JAIL_MIN_SECONDS, RANSOM_JAIL_MAX_SECONDS)
+        wealth = economy.get_wealth(self.guild_id, self.thief.id)
+        bail = max(500, int(wealth * RANSOM_BAIL_PCT))
+        economy.jail_user(
+            self.guild_id, self.thief.id, seconds,
+            reason="Kidnapping and attempted extortion",
+            bail_amount=bail, channel_id=self.channel_id,
+        )
+        hours = max(1, round(seconds / 3600))
+        body = (
+            f"🚔 {random.choice(RANSOM_BOTCH_MESSAGES).format(thief=self.thief.display_name)}\n\n"
+            f"{self.thief.mention} is doing **{hours}h**. Bail: **{bail:,} coins**. "
+            f"{self.victim.mention} keeps every coin."
+        )
+        if self.accomplice is not None:
+            fine_pct = random.uniform(FINE_MIN_PCT, FINE_MAX_PCT)
+            fine = max(1, int(economy.get_wealth(self.guild_id, self.accomplice.id) * fine_pct))
+            collected = economy.fine_user_wealth(self.guild_id, self.accomplice.id, fine)
+            body += (
+                f"\n-# 🤝 {self.accomplice.display_name} was driving and got hit with a "
+                f"**{collected:,}** coin fine."
+            )
+        return body
+
+    def _ride_it_out(self, lead_in: str) -> discord.Embed:
+        """The RANSOM_SUCCESS_RATE roll — shared by 'call the bluff' and the timeout."""
+        if random.random() < RANSOM_SUCCESS_RATE:
+            got, notes = self._take(self.demand)
+            self._record(True)
+            if got <= 0:
+                return self._embed(
+                    "🪫 RANSOM UNCOLLECTABLE",
+                    f"{lead_in}\n\n💸 …and there was nothing left to take. "
+                    f"{self.thief.mention} kidnapped a broke person.",
+                    discord.Color.greyple(),
+                )
+            line = random.choice(RANSOM_BLUFF_WIN_MESSAGES).format(
+                thief=self.thief.display_name, amount=got)
+            return self._embed(
+                "💰 RANSOM COLLECTED",
+                f"{lead_in}\n\n**{self.victim.display_name}** {line}\n{notes}",
+                discord.Color.gold(),
+            )
+        self._record(False)
+        return self._embed("🚔 THE JOB FELL APART", f"{lead_in}\n\n{self._botch()}",
+                           discord.Color.dark_red())
+
+    # ---- interactions -----------------------------------------------------
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.victim.id:
+            await interaction.response.send_message(
+                f"You're not the one in the van. Only {self.victim.display_name} can answer this.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Pay the ransom", style=discord.ButtonStyle.success, emoji="💸")
+    async def pay(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._claim():
+            await interaction.response.send_message("Already settled.", ephemeral=True)
+            return
+        got, notes = self._take(self.payup)
+        self._record(got > 0)
+        if got <= 0:
+            embed = self._embed(
+                "🪫 NOTHING TO PAY WITH",
+                f"**{self.victim.display_name}** agreed to pay and then came up empty. "
+                f"{self.thief.mention} let them go out of sheer disappointment.",
+                discord.Color.greyple(),
+            )
+        else:
+            line = random.choice(RANSOM_PAID_MESSAGES).format(amount=got)
+            embed = self._embed(
+                "🤝 RANSOM PAID",
+                f"**{self.victim.display_name}** {line}\n{notes}\n\n"
+                f"-# Settling early cost {int(RANSOM_PAYUP_DISCOUNT * 100)}% of the "
+                f"**{self.demand:,}** demand — and {self.thief.display_name} walks clean.",
+                discord.Color.green(),
+            )
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    @discord.ui.button(label="Call their bluff", style=discord.ButtonStyle.danger, emoji="🔫")
+    async def bluff(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._claim():
+            await interaction.response.send_message("Already settled.", ephemeral=True)
+            return
+        embed = self._ride_it_out(
+            f"**{self.victim.display_name}** refused to pay a single coin.")
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    async def on_timeout(self):
+        if not self._claim():
+            return
+        line = random.choice(RANSOM_TIMEOUT_MESSAGES).format(thief=self.thief.display_name)
+        embed = self._ride_it_out(f"⌛ **{self.victim.display_name}** {line}")
+        if self.message:
+            try:
+                await self.message.edit(embed=embed, view=self)
+            except discord.HTTPException:
+                pass
+
+
 class Heist(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -570,6 +827,9 @@ class Heist(commands.Cog):
         # Keep the whole log, then append the outcome the result embed carried.
         outcome = final_embed.description or ""
         final_embed.description = "\n".join(buildup) + "\n\n" + outcome
+        if view is not None:
+            # on_timeout has no interaction to reply to — it needs the message.
+            view.message = message
         try:
             await message.edit(embed=final_embed, view=view)
         except discord.HTTPException:
@@ -591,9 +851,11 @@ class Heist(commands.Cog):
                 if view is not None:
                     view.message = msg
             return
-        # Streamed path — outcome already decided/applied; this is pure suspense.
+        # Streamed path — outcome already decided/applied (the ransom job is the
+        # one exception: its view is still live and settles after the log lands).
+        title = getattr(view, "in_progress_title", HEIST_INPROGRESS_TITLE)
         intro = discord.Embed(
-            title=HEIST_INPROGRESS_TITLE,
+            title=title,
             description=buildup[0],
             color=discord.Color.dark_grey(),
         )
@@ -602,7 +864,7 @@ class Heist(commands.Cog):
             message = await ctx_or_interaction.original_response()
         else:
             message = await ctx_or_interaction.send(embed=intro)
-        await self._reveal_heist(message, buildup, embed, view=view)
+        await self._reveal_heist(message, buildup, embed, view=view, in_progress_title=title)
 
     def _bail_multiplier(self, offenses: int) -> float:
         """Repeat offenders pay more. Capped so it stays remotely payable."""
@@ -744,7 +1006,7 @@ class Heist(commands.Cog):
         view = JailActionView(self, guild_id, thief, thief_bail, view_accomplice, accomplice_bail)
         return embed, view, buildup
 
-    async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None) -> tuple[discord.Embed, discord.ui.View | None, list[str] | None]:
+    async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None, channel_id: int = 0) -> tuple[discord.Embed, discord.ui.View | None, list[str] | None]:
         """Validate and run a heist. Returns (embed, view, buildup).
 
         - view is non-None when the caller must show a confirmation prompt first.
@@ -838,6 +1100,47 @@ class Heist(commands.Cog):
                 self._set_cooldown(guild_id, accomplice.id)
             return embed, None, None
 
+        # --- The ransom job ---------------------------------------------------
+        # RANSOM_ODDS of the time this stops being a pickpocket job and becomes a
+        # hostage standoff over the victim's BANK — the only PvP path that reads
+        # a bank account at all. Requires a vault actually worth raiding;
+        # otherwise fall through to the ordinary heist.
+        #
+        # The outcome is NOT decided here. RansomView settles it when the victim
+        # answers (or lets the clock run out), so the cooldown is burned here but
+        # record_game happens there, once, on the real result.
+        victim_bank = economy.bank_balance(guild_id, victim.id)
+        if victim_bank >= RANSOM_MIN_BANK and random.random() < RANSOM_ODDS:
+            self._set_cooldown(guild_id, thief.id)
+            if accomplice is not None:
+                self._set_cooldown(guild_id, accomplice.id)
+            pct = random.uniform(economy.RANSOM_MIN_PCT, economy.RANSOM_MAX_PCT)
+            demand = max(1, int(victim_bank * pct))
+            payup = max(1, int(demand * RANSOM_PAYUP_DISCOUNT))
+            ransom_buildup = [line.format(thief=thief.mention, victim=victim.display_name)
+                              for line in RANSOM_BUILDUP]
+            deadline = int(time.time()) + RANSOM_TIMEOUT
+            crew = f" {accomplice.mention} is driving." if accomplice is not None else ""
+            standoff = discord.Embed(
+                title=RANSOM_STANDOFF_TITLE,
+                description=(
+                    f"📟 {thief.mention} has **{victim.display_name}** in the back of a van "
+                    f"and is demanding **{demand:,} coins** out of their bank account.{crew}\n\n"
+                    f"{victim.mention} — **it's your call**, and the clock runs out "
+                    f"<t:{deadline}:R>:\n"
+                    f"💸 **Pay the ransom** — settle right now for **{payup:,}** "
+                    f"({int(RANSOM_PAYUP_DISCOUNT * 100)}% of the demand). Certain, cheaper, "
+                    f"and they walk away clean.\n"
+                    f"🔫 **Call their bluff** — pay nothing yet. Most of the time they drain "
+                    f"the full **{demand:,}** anyway, but it can fall apart badly for them.\n\n"
+                    f"-# Say nothing and they'll improvise. That's the same roll as calling the bluff."
+                ),
+                color=discord.Color.orange(),
+            )
+            view = RansomView(self, guild_id, thief, victim, accomplice,
+                              demand, payup, ransom_buildup, channel_id)
+            return standoff, view, ransom_buildup
+
         is_duo = accomplice is not None
         buildup = self._heist_buildup(thief, victim, accomplice)
         success_rate = DUO_SUCCESS_RATE if is_duo else SOLO_SUCCESS_RATE
@@ -910,7 +1213,7 @@ class Heist(commands.Cog):
         if victim is None:
             await ctx.send("Usage: `!heist @victim` or `!heist @victim @accomplice`")
             return
-        embed, view, buildup = await self._run_heist(ctx.guild.id, ctx.author, victim, accomplice)
+        embed, view, buildup = await self._run_heist(ctx.guild.id, ctx.author, victim, accomplice, ctx.channel.id)
         await self._send_heist(ctx, embed, view, buildup)
 
     @app_commands.command(name="heist", description="Attempt to steal coins from another user")
@@ -919,7 +1222,7 @@ class Heist(commands.Cog):
         accomplice="Optional partner in crime (gets 10-50% cut, improves odds)"
     )
     async def heist_slash(self, interaction: discord.Interaction, victim: discord.Member, accomplice: discord.Member = None):
-        embed, view, buildup = await self._run_heist(interaction.guild_id, interaction.user, victim, accomplice)
+        embed, view, buildup = await self._run_heist(interaction.guild_id, interaction.user, victim, accomplice, interaction.channel_id or 0)
         await self._send_heist(interaction, embed, view, buildup)
 
     def _format_duration(self, seconds: int) -> str:
