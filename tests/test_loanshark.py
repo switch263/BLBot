@@ -66,3 +66,76 @@ def test_loan_bounds_sane():
     assert 0 < MIN_LOAN < MAX_LOAN
     assert 0 < VIG_PCT < 1
     assert MAX_OWED_MULT > 1 + VIG_PCT
+
+
+# ---- collections: the goons scale with the debtor's wealth --------------------
+
+from loanshark import (  # noqa: E402
+    wealth_cut_pct, collection_demand, WEALTH_CUT_BRACKETS, STAGE_CUT_MULT,
+)
+
+OWED = 130_000
+
+
+def test_bracket_table_is_well_formed():
+    floors = [f for f, _ in WEALTH_CUT_BRACKETS]
+    assert floors == sorted(floors, reverse=True), "brackets must be richest-first"
+    assert floors[-1] == 0, "there must be a zero-wealth floor bracket"
+    cuts = [c for _, c in WEALTH_CUT_BRACKETS]
+    assert cuts == sorted(cuts, reverse=True), "richer must never mean a smaller cut"
+    assert all(0 < c <= 1 for c in cuts)
+
+
+def test_cut_pct_is_monotonic_in_wealth():
+    seen = [wealth_cut_pct(w) for w in
+            (0, 500_000, 5_000_000, 50_000_000, 500_000_000,
+             5_000_000_000, 50_000_000_000, 5_000_000_000_000)]
+    assert seen == sorted(seen)
+    assert seen[0] < seen[-1], "a billionaire must lose a bigger fraction than a pauper"
+
+
+def test_demand_is_never_below_the_tab():
+    for wealth in (0, 1, OWED // 2, OWED, 10 * OWED, 10**12):
+        for stage in (2, 3, 4):
+            assert collection_demand(OWED, wealth, stage) >= OWED
+
+
+def test_demand_never_exceeds_what_they_have_or_owe():
+    """The only ceiling: a stage can't invent money. Demand is at most the
+    debtor's whole wealth, unless the tab itself is bigger than their wealth."""
+    for wealth in (0, 1_000, 10**9, 10**15):
+        for stage in (2, 3, 4):
+            assert collection_demand(OWED, wealth, stage) <= max(OWED, wealth)
+
+
+def test_richer_debtor_pays_more_at_the_same_stage():
+    poor = collection_demand(OWED, 200_000, 2)
+    mid = collection_demand(OWED, 50_000_000, 2)
+    rich = collection_demand(OWED, 5_000_000_000, 2)
+    assert poor < mid < rich
+    # and the rich guy loses far more than the tab he actually owed
+    assert rich > 10 * OWED
+
+
+def test_later_stages_hit_harder():
+    wealth = 5_000_000_000
+    s2 = collection_demand(OWED, wealth, 2)
+    s3 = collection_demand(OWED, wealth, 3)
+    s4 = collection_demand(OWED, wealth, 4)
+    assert s2 < s3 < s4
+    assert s4 == wealth, "the final stage sweeps everything"
+
+
+def test_final_stage_takes_everything_even_from_a_small_tab():
+    assert collection_demand(1_000, 10**12, FINAL_STAGE) == 10**12
+
+
+def test_broke_debtor_demand_is_just_the_tab():
+    assert collection_demand(OWED, 0, 2) == OWED
+    assert collection_demand(OWED, 0, FINAL_STAGE) == OWED
+
+
+def test_stage_one_is_words_only():
+    """Stage 1 is the phone call — no seizure runs, and the multiplier says so."""
+    assert STAGE_CUT_MULT[1] == 0.0
+    assert collection_demand(OWED, 10**9, 1) == OWED

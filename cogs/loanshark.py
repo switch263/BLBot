@@ -11,17 +11,27 @@ The debt escalates in stages once the due date passes (one per 12h, tracked in
 the loan row so each fires exactly once even across restarts):
 
   stage 1 — the phone call:   juice added, public warning.
-  stage 2 — the goons:        juice added, wallet shaken down for what's owed.
-  stage 3 — the beating:      juice added, wallet AND bank cleaned out; still
-                              short -> 12h in the hospital ward (jail, no bail).
+  stage 2 — the goons:        juice added, wallet shaken down for the tab PLUS
+                              a wealth-scaled late fee.
+  stage 3 — the beating:      juice added, wallet AND bank hit at double the
+                              rate; still short -> 12h in the hospital ward
+                              (jail, no bail).
   stage 4 — the harsh stuff:  everything you have is swept, the rest of the
                               debt is settled in blood: 48h jail that no Get
                               Out of Jail Free card can spring, and Sal won't
                               lend to you again for a week.
 
+Collections are deliberately NOT capped at the tab. The debt is the floor;
+on top of it the goons take a cut of everything the debtor has, and the cut
+gets steeper the richer they are (see WEALTH_CUT_BRACKETS) — a guy sitting on
+a billion who let it run to stage 2 isn't broke, he's disrespectful. The basis
+is `get_wealth` (wallet + bank), the house convention for wealth-scaled
+punishment, so parking the fortune in the bank doesn't shrink the rate.
+
 Juice is capped at MAX_OWED_MULT x principal, so a forgotten loan can't
 compound into an unpayable number — per the house rule that no mechanic gets
-an unbounded drain.
+an unbounded drain. The seizure has its own ceiling: a stage can never take
+more than the debtor actually has, and only the final stage takes all of it.
 
 State lives in cog_kv namespace "loanshark": per-user "loan" (JSON row) and
 "blacklist_until" (epoch). Borrowing is deliberately NOT jail-gated — Sal will
@@ -93,6 +103,47 @@ JOB_OUTCOMES = [
      "appreciates that — but you're doing 45 minutes in a cell and the tab "
      "doesn't move."),
 ]
+
+
+# --- how hard the goons hit ------------------------------------------------
+# (wealth_floor, cut) — the fraction of TOTAL wealth taken on top of the tab,
+# checked richest-first. The last entry is the floor and must be (0, ...).
+WEALTH_CUT_BRACKETS = [
+    (1_000_000_000_000, 0.60),
+    (10_000_000_000,    0.50),
+    (1_000_000_000,     0.40),
+    (100_000_000,       0.30),
+    (10_000_000,        0.22),
+    (1_000_000,         0.15),
+    (0,                 0.08),
+]
+
+# Per-stage multiplier on the bracket cut. Stage 1 is words only; stage 2 is
+# the plain rate; stage 3 doubles it AND reaches the bank; FINAL_STAGE ignores
+# the brackets entirely and sweeps everything.
+STAGE_CUT_MULT = {1: 0.0, 2: 1.0, 3: 2.0}
+
+
+def wealth_cut_pct(wealth: int) -> float:
+    """The bracket cut for a debtor holding `wealth`. Monotonic: more money,
+    a bigger fraction taken."""
+    for floor, pct in WEALTH_CUT_BRACKETS:
+        if wealth >= floor:
+            return pct
+    return WEALTH_CUT_BRACKETS[-1][1]
+
+
+def collection_demand(owed: int, wealth: int, stage: int) -> int:
+    """What the goons try to take at `stage`: the outstanding tab as a floor,
+    plus a wealth-scaled cut on top, clamped to what the debtor actually holds.
+    FINAL_STAGE takes everything. Anything collected beyond `owed` is a late
+    fee — house profit, and it does NOT pay the tab down twice."""
+    owed = max(0, int(owed))
+    wealth = max(0, int(wealth))
+    if stage >= FINAL_STAGE:
+        return max(owed, wealth)
+    pct = wealth_cut_pct(wealth) * STAGE_CUT_MULT.get(stage, 1.0)
+    return max(owed, min(wealth, owed + int(wealth * pct)))
 
 
 def stage_for(now: float, due_ts: float) -> int:
@@ -383,7 +434,9 @@ class LoanShark(commands.Cog):
 
     def _seize(self, guild_id: int, user_id: int, amount: int, include_bank: bool) -> int:
         """Shake a debtor down for up to `amount`, wallet first and optionally
-        the bank after — same closed-loop pattern as tax enforcement."""
+        the bank after — same closed-loop pattern as tax enforcement. `amount`
+        is the stage's demand (see collection_demand), not the tab, so this
+        routinely takes more than is owed."""
         seized = 0
         take = min(amount, get_coins(guild_id, user_id))
         if take > 0 and transfer_to_house(guild_id, user_id, take, is_bet=False).get("ok"):
@@ -391,6 +444,23 @@ class LoanShark(commands.Cog):
         if include_bank and seized < amount:
             seized += bank_seize_to_house(guild_id, user_id, amount - seized)
         return seized
+
+    def _collect(self, guild_id: int, user_id: int, owed: int, stage: int,
+                 include_bank: bool) -> tuple[int, int, str]:
+        """Run one stage's shakedown. Demands `collection_demand` (the tab plus
+        a wealth-scaled cut), seizes what it can, and splits the take: the part
+        that pays the tab down, and the late fee on top — which is pure house
+        profit and must NOT be subtracted from the debt twice.
+
+        Returns (total_seized, remaining_owed, fee_note)."""
+        wealth = economy.get_wealth(guild_id, user_id)
+        demand = collection_demand(owed, wealth, stage)
+        seized = self._seize(guild_id, user_id, demand, include_bank=include_bank)
+        applied = min(seized, owed)
+        extra = seized - applied
+        note = (f"\n-# Sal added a **{extra:,}** late fee on top — you were "
+                f"visibly good for it." if extra > 0 else "")
+        return seized, owed - applied, note
 
     @tasks.loop(minutes=SCAN_INTERVAL_MINUTES)
     async def _collection_loop(self):
@@ -436,29 +506,29 @@ class LoanShark(commands.Cog):
             return
 
         if target == 2:
-            seized = self._seize(guild.id, user_id, owed, include_bank=False)
-            owed -= seized
+            seized, owed, fee = self._collect(guild.id, user_id, owed, 2,
+                                              include_bank=False)
             if owed <= 0:
                 self._settle(guild.id, user_id, BLACKLIST_SETTLED_SECONDS)
                 await self._announce(guild, channel_id, user_id,
                     f"🦈 {mention} — two guys in tracksuits just emptied **{seized:,}** out of your "
-                    f"pockets. Tab's square. Sal won't be lending to you for a few days.")
+                    f"pockets. Tab's square. Sal won't be lending to you for a few days.{fee}")
             else:
                 loan["owed"], loan["stage"] = owed, 2
                 self._save_loan(guild.id, user_id, loan)
                 await self._announce(guild, channel_id, user_id,
                     f"🦈 {mention} — the goons took **{seized:,}** off you and it *still* isn't enough. "
-                    f"**{owed:,}** left on the book. The next visit isn't about money.")
+                    f"**{owed:,}** left on the book. The next visit isn't about money.{fee}")
             return
 
         if target == 3:
-            seized = self._seize(guild.id, user_id, owed, include_bank=True)
-            owed -= seized
+            seized, owed, fee = self._collect(guild.id, user_id, owed, 3,
+                                              include_bank=True)
             if owed <= 0:
                 self._settle(guild.id, user_id, BLACKLIST_SETTLED_SECONDS)
                 await self._announce(guild, channel_id, user_id,
                     f"🦈 {mention} — they found the bank account. **{seized:,}** collected, tab closed. "
-                    f"You kept your kneecaps. Barely.")
+                    f"You kept your kneecaps. Barely.{fee}")
             else:
                 loan["owed"], loan["stage"] = owed, 3
                 self._save_loan(guild.id, user_id, loan)
@@ -468,20 +538,22 @@ class LoanShark(commands.Cog):
                 await self._announce(guild, channel_id, user_id,
                     f"🦈🏥 {mention} — wallet and bank cleaned out for **{seized:,}** and you're still "
                     f"**{owed:,}** short, so the boys gave you an education. Enjoy the hospital ward "
-                    f"({BEATING_JAIL_SECONDS // 3600}h, nobody's posting bail). One stage left. Don't find out.")
+                    f"({BEATING_JAIL_SECONDS // 3600}h, nobody's posting bail). One stage left. Don't find out.{fee}")
             return
 
-        # target == 4: you really made him mad.
-        seized = self._seize(guild.id, user_id, owed, include_bank=True)
+        # target == FINAL_STAGE: you really made him mad. Everything goes —
+        # this is the one stage that ignores the tab entirely and sweeps.
+        seized, _owed, _fee = self._collect(guild.id, user_id, owed, FINAL_STAGE,
+                                            include_bank=True)
         self._settle(guild.id, user_id, BLACKLIST_BLOOD_SECONDS)
         jail_user(guild.id, user_id, KNEECAP_JAIL_SECONDS,
                   reason="Settled a debt in blood (loanshark)", bail_amount=0,
                   channel_id=channel_id, no_release=True)
         await self._announce(guild, channel_id, user_id,
-            f"🦈🩸 {mention} — you really made Sal mad. Everything you had (**{seized:,}**) is gone, "
-            f"the rest of the debt was settled in blood, and you're in a hole for "
-            f"**{KNEECAP_JAIL_SECONDS // 3600} hours** — no bail, no cards, no calls. "
-            f"Sal's book says you don't exist for a week.")
+            f"🦈🩸 {mention} — you really made Sal mad. Everything you had (**{seized:,}**) is gone — "
+            f"wallet, bank, the coins in the couch — the rest of the debt was settled in blood, "
+            f"and you're in a hole for **{KNEECAP_JAIL_SECONDS // 3600} hours** — no bail, no cards, "
+            f"no calls. Sal's book says you don't exist for a week.")
 
     def _settle(self, guild_id: int, user_id: int, blacklist_seconds: int):
         kv_delete(guild_id, user_id, NAMESPACE, "loan")
