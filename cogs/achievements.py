@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 NS = "achievements"  # cog_kv namespace: key = achievement id, value = unlock ts
 
+# Backstop against a mass-unlock flood. Normal play unlocks one, rarely two, at
+# a time; a dozen at once means state was rebuilt underneath us (a wipe, a
+# backfill, a new condition added to the catalog). Award and pay them all —
+# they're genuinely earned — but collapse the announcement into one line
+# instead of spraying the channel.
+MAX_ANNOUNCED = 4
+
 
 class Achievements(commands.Cog):
     def __init__(self, bot):
@@ -26,8 +33,13 @@ class Achievements(commands.Cog):
         w = economy.get_wallet(guild_id, user_id)
         games = economy.get_game_stats(guild_id, user_id)
         inv = economy.get_inventory(guild_id, user_id)
-        top = economy.get_leaderboard(guild_id, limit=1)
-        rank = 1 if top and top[0][0] == user_id else 0
+        # Rank 1 means actually AHEAD, not merely first row returned. After a
+        # wipe every wallet sits at STARTING_COINS, and a tie at the starting
+        # stake would hand "Top Dog" to whoever typed a command first.
+        top = economy.get_leaderboard(guild_id, limit=2)
+        rank = 0
+        if top and top[0][0] == user_id and len(top) > 1 and top[0][1] > top[1][1]:
+            rank = 1
         return {
             "balance": w["coins"],
             "total_won": w["total_won"],
@@ -72,13 +84,21 @@ class Achievements(commands.Cog):
 
         if not newly or channel is None:
             return
-        lines = [f"🏆 **{user.display_name}** unlocked a new achievement!" if len(newly) == 1
-                 else f"🏆 **{user.display_name}** unlocked {len(newly)} achievements!"]
-        for aid, a, paid in newly:
-            reward_note = f" — **+{paid:,}** coins" if paid > 0 else ""
-            lines.append(f"{a['emoji']} **{a['name']}** ({points(aid)} pts){reward_note}\n   _{a['desc']}_")
+        if len(newly) > MAX_ANNOUNCED:
+            total_pts = sum(points(aid) for aid, _a, _p in newly)
+            total_paid = sum(paid for _aid, _a, paid in newly)
+            paid_note = f" and **+{total_paid:,}** coins" if total_paid > 0 else ""
+            text = (f"🏆 **{user.display_name}** unlocked **{len(newly)}** achievements at once "
+                    f"for **{total_pts}** points{paid_note}. `!achievements` for the list.")
+        else:
+            lines = [f"🏆 **{user.display_name}** unlocked a new achievement!" if len(newly) == 1
+                     else f"🏆 **{user.display_name}** unlocked {len(newly)} achievements!"]
+            for aid, a, paid in newly:
+                reward_note = f" — **+{paid:,}** coins" if paid > 0 else ""
+                lines.append(f"{a['emoji']} **{a['name']}** ({points(aid)} pts){reward_note}\n   _{a['desc']}_")
+            text = "\n".join(lines)
         try:
-            await channel.send("\n".join(lines))
+            await channel.send(text)
         except discord.HTTPException:
             pass
 

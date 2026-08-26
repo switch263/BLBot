@@ -3316,13 +3316,31 @@ _CLEAR_ECONOMY_TABLES = (
     "loot_cooldowns",
 )
 
+# cog_kv namespaces that SURVIVE a wipe. These hold permanent, already-earned
+# records whose unlock conditions are computed from tables the wipe PRESERVES
+# (`game_stats`). Clearing the ledger while the stats that earned it survive
+# means every achievement instantly re-qualifies on the next command — a
+# channel flood of re-announcements and a re-payment of every reward. Anything
+# keyed off preserved state belongs here.
+_CLEAR_ECONOMY_KEEP_NAMESPACES = (
+    "achievements",
+)
+
+_KEEP_NS_CLAUSE = (
+    " AND namespace NOT IN (%s)" % ",".join("?" for _ in _CLEAR_ECONOMY_KEEP_NAMESPACES)
+    if _CLEAR_ECONOMY_KEEP_NAMESPACES else ""
+)
+
 
 def delete_wallet(guild_id: int, user_id: int) -> dict:
     """Hard-reset ONE player in a guild: deletes their wallet, jail sentence,
     cog_kv state (inventory, tax baseline/bills, any feature flags), loot
     cooldowns, and bounty-log history (as placer or target). PRESERVES their
     game_stats so leaderboards/play counts survive — same policy as
-    clear_economy. The house pot/reserve is untouched (guild-level, not theirs).
+    clear_economy — and, for the same reason, the cog_kv namespaces listed in
+    _CLEAR_ECONOMY_KEEP_NAMESPACES (achievements: they were earned off stats
+    that survive, so wiping them re-awards the lot on the next command). The
+    house pot/reserve is untouched (guild-level, not theirs).
 
     After this, the next wallet read re-creates them fresh with STARTING_COINS.
     All deletions run in a single transaction. Returns {table: rows_deleted}.
@@ -3334,7 +3352,8 @@ def delete_wallet(guild_id: int, user_id: int) -> dict:
     deletions = [
         ("wallets", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
         ("jail", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
-        ("cog_kv", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
+        ("cog_kv", "guild_id = ? AND user_id = ?" + _KEEP_NS_CLAUSE,
+         (guild_id, user_id) + _CLEAR_ECONOMY_KEEP_NAMESPACES),
         ("loot_cooldowns", "guild_id = ? AND user_id = ?", (guild_id, user_id)),
         ("bounty_log",
          "guild_id = ? AND (placer_user_id = ? OR target_user_id = ?)",
@@ -3360,7 +3379,9 @@ def clear_economy(guild_id: int) -> dict:
     """Hard-reset the economy for one guild. Wipes wallets, the house pot
     (on-hand + reserve), all jail sentences, the cog_kv store (inventory and
     any cog-owned state), the bounty rate-limit log, and loot cooldowns.
-    PRESERVES `game_stats` so leaderboards aren't erased.
+    PRESERVES `game_stats` so leaderboards aren't erased, and the cog_kv
+    namespaces in _CLEAR_ECONOMY_KEEP_NAMESPACES (achievement unlocks, which
+    are earned off those same surviving stats).
 
     All deletions run in a single transaction — either every table clears or
     none do. Returns a dict {table_name: rows_deleted}.
@@ -3372,10 +3393,12 @@ def clear_economy(guild_id: int) -> dict:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("BEGIN IMMEDIATE")
             for tbl in _CLEAR_ECONOMY_TABLES:
+                where, params = "guild_id = ?", (guild_id,)
+                if tbl == "cog_kv":
+                    where += _KEEP_NS_CLAUSE
+                    params += _CLEAR_ECONOMY_KEEP_NAMESPACES
                 try:
-                    cur = conn.execute(
-                        f"DELETE FROM {tbl} WHERE guild_id = ?", (guild_id,),
-                    )
+                    cur = conn.execute(f"DELETE FROM {tbl} WHERE {where}", params)
                     counts[tbl] = cur.rowcount
                 except sqlite3.OperationalError:
                     # Table not present in this DB — log and continue.
