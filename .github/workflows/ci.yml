@@ -5,12 +5,18 @@ on:
     branches: [master]
   pull_request:
 
+# Actions run on Node 24: checkout@v5 / setup-python@v6 are the Node 24
+# releases, and the env var forces any other JavaScript action onto Node 24
+# ahead of GitHub retiring the Node 20 runtime.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
