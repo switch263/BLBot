@@ -369,29 +369,42 @@ def test_dividends_never_mint():
     assert economy.get_total_economy(G) == total_before
 
 
-# --- The ladder must stay sized against the ceiling -------------------------
-# The catalog went bottom-heavy once already: MAX_COINS was raised 9,200x and
-# the top tier was left unlocking at 0.005% of the cap, so the richest players
-# unlocked everything immediately and had nothing left to buy. These pin the
-# shape of the ladder to the ceiling so that can't happen silently again.
+# --- The ladder must stay sized against its anchor --------------------------
+# The catalog went bottom-heavy once already: the coin ceiling was raised
+# 9,200x and the top tier was left unlocking at 0.005% of it, so the richest
+# players unlocked everything immediately and had nothing left to buy. The
+# ceiling is a 1e300 guard now, so the ladder anchors to its own
+# LADDER_TOP instead; these pin the shape to that anchor so it can't drift
+# silently. When players actually live past LADDER_TOP, raise it AND add tiers.
 
-def test_top_tier_unlocks_near_the_ceiling():
+def test_top_tier_unlocks_near_the_ladder_top():
     top = max(splurges.TIERS)
     req = splurges.tier_requirement(top)
-    share = req / economy.MAX_COINS
+    share = req / splurges.LADDER_TOP
     # Reachable, but genuinely late-game: somewhere in the last order of
-    # magnitude of the wealth curve.
+    # magnitude of the wealth curve the catalog covers.
     assert 0.01 <= share <= 0.5, (
-        f"top tier unlocks at {share:.4%} of MAX_COINS — the ladder has drifted "
-        f"out of sync with the ceiling; rescale the tiers.")
+        f"top tier unlocks at {share:.4%} of LADDER_TOP — the ladder has drifted "
+        f"out of sync with its anchor; rescale the tiers or LADDER_TOP.")
 
 
-def test_priciest_splurge_is_a_real_fraction_of_the_ceiling():
+def test_priciest_splurge_is_a_real_fraction_of_the_ladder_top():
     top_price = max(e["price"] for e in splurges.SPLURGES.values())
-    share = top_price / economy.MAX_COINS
+    share = top_price / splurges.LADDER_TOP
     assert 0.1 <= share <= 1.0, (
-        f"priciest splurge is {share:.4%} of MAX_COINS — nothing in the catalog "
-        f"meaningfully drains a maxed-out player.")
+        f"priciest splurge is {share:.4%} of LADDER_TOP — nothing in the catalog "
+        f"meaningfully drains a player at the top of the ladder.")
+
+
+def test_ladder_top_sits_far_below_the_guard():
+    # The anchor is a design number, not the storage guard: the guard is
+    # meant to be unreachable, the ladder is meant to be climbed.
+    assert splurges.LADDER_TOP < economy.MAX_COINS // 10**50
+
+
+def test_escalation_survives_absurd_ownership_counts():
+    # 1.6 ** 5000 overflows a float; the price must clamp, not raise.
+    assert splurges.price_for("gold_toilet", 5_000) == splurges.MAX_PRICE
 
 
 def test_tiers_are_evenly_spaced_with_no_dead_zone():

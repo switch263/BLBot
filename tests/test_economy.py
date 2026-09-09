@@ -5,6 +5,8 @@ import sqlite3
 import time
 from unittest import mock
 
+import pytest
+
 import economy
 
 
@@ -263,7 +265,7 @@ def _raw_money(table, column, **where):
         ).fetchone()
 
 
-def test_credits_saturate_instead_of_overflowing():
+def test_credits_saturate_at_the_guard_instead_of_overflowing():
     G, U = 9201, 1
     economy.add_coins(G, U, economy.MAX_COINS)
     for _ in range(5):
@@ -271,8 +273,8 @@ def test_credits_saturate_instead_of_overflowing():
         economy.award_coins(G, U, economy.MAX_COINS)
         economy.update_wallet(G, U, economy.MAX_COINS)
     value, storage_type = _raw_money("wallets", "coins", guild_id=G, user_id=U)
-    assert storage_type == "integer"  # never promoted to REAL
-    assert value == economy.MAX_COINS
+    assert storage_type == "text"  # digits, never a promoted REAL
+    assert economy._to_int(value) == economy.MAX_COINS
     assert economy.get_wallet(G, U)["total_won"] == economy.MAX_COINS
 
 
@@ -320,7 +322,7 @@ def test_bank_deposit_and_interest_cannot_overflow():
     assert economy.bank_balance(G, U) == economy.MAX_COINS
     value, storage_type = _raw_money(
         "cog_kv", "value", guild_id=G, user_id=U, namespace="bank", key="balance")
-    assert storage_type == "integer" and value == economy.MAX_COINS
+    assert storage_type == "text" and economy._to_int(value) == economy.MAX_COINS
 
 
 def test_grow_survives_absurd_elapsed_time():
@@ -340,7 +342,8 @@ def test_repair_migration_heals_overflowed_money():
     G, U = 9205, 1
     economy.get_wallet(G, U)
     overflowed = 9.223372036854776e18  # what SQLite leaves behind on overflow
-    with sqlite3.connect(economy.DB_FILE) as conn:
+    healed = int(overflowed)           # 2**63 — the digits the float meant
+    with economy._connect() as conn:
         conn.execute(
             "UPDATE wallets SET coins = ?, total_won = ?, net_won = ? "
             "WHERE guild_id = ? AND user_id = ?",
@@ -349,17 +352,23 @@ def test_repair_migration_heals_overflowed_money():
             "INSERT OR REPLACE INTO cog_kv (guild_id, user_id, namespace, key, value) "
             "VALUES (?,?,?,?,?)", (G, U, "bank", "balance", overflowed))
         conn.commit()
-        assert _raw_money("wallets", "coins", guild_id=G, user_id=U)[1] == "real"
+        # A float written straight into a TEXT money column lands as SQLite's
+        # 17-digit rendering; the untyped cog_kv cell keeps the REAL itself.
+        raw = _raw_money("wallets", "coins", guild_id=G, user_id=U)
+        assert raw[1] == "text" and "e+" in raw[0]
+        assert _raw_money("cog_kv", "value", guild_id=G, user_id=U,
+                          namespace="bank", key="balance")[1] == "real"
         economy._repair_overflowed_money(conn)
         conn.commit()
     value, storage_type = _raw_money("wallets", "coins", guild_id=G, user_id=U)
-    assert storage_type == "integer" and value == economy.MAX_COINS
+    assert storage_type == "text" and value.isdigit()
+    assert abs(int(value) - healed) < 1_000       # the rendering's last digits
     wallet = economy.get_wallet(G, U)
-    assert wallet["coins"] == economy.MAX_COINS
-    assert wallet["total_won"] == economy.MAX_COINS
-    assert economy.bank_balance(G, U) == economy.MAX_COINS
+    assert wallet["coins"] == int(value)
+    assert wallet["total_won"] == int(value)
+    assert economy.bank_balance(G, U) == healed   # exact: it was still a REAL
     net = _raw_money("wallets", "net_won", guild_id=G, user_id=U)
-    assert net == (-economy.MAX_COINS, "integer")
+    assert net[1] == "text" and net[0] == "-" + value
 
 
 def test_reads_never_hand_a_cog_a_float():
@@ -372,7 +381,7 @@ def test_reads_never_hand_a_cog_a_float():
     # Repair hasn't run for this row; the read path still must not leak a float.
     assert isinstance(economy.get_coins(G, U), int)
     assert isinstance(economy.get_wallet(G, U)["coins"], int)
-    assert economy.get_coins(G, U) == economy.MAX_COINS
+    assert abs(economy.get_coins(G, U) - 2**63) < 1_000
 
 
 def test_check_bet_rejects_stakes_above_the_ceiling():
@@ -381,34 +390,43 @@ def test_check_bet_rejects_stakes_above_the_ceiling():
     assert economy.check_bet(0) is not None
 
 
-def test_ceiling_is_exactly_int64_max():
-    # The ceiling now sits ON the storage limit — there is no margin left, so
-    # this is a deliberate pin, not an inequality. Raising it further requires
-    # abandoning INTEGER storage, not editing this constant.
-    assert economy.MAX_COINS == economy._SQLITE_MAX_INT == 2**63 - 1
+def test_guard_is_far_past_int64_but_under_float_max():
+    # Money is arbitrary precision now; MAX_COINS is a sanity guard, not the
+    # storage limit. int64 is where values switch to text. The guard must stay
+    # below float max with room for a payout multiplier: cogs still compute
+    # int(bet * mult), and that raises OverflowError past ~1.8e308.
+    assert economy._SQLITE_MAX_INT == 2**63 - 1
+    assert economy.MAX_COINS == 10**300 - 1
+    assert economy.MAX_COINS > economy._SQLITE_MAX_INT ** 5
+    assert float(economy.MAX_COINS) * 1_000 < float("inf")
+    assert int(float(economy.MAX_COINS) * 100) > economy.MAX_COINS  # 100x a maxed bet still fits
 
 
 def test_a_maxed_value_actually_round_trips_through_sqlite():
-    # The whole ceiling is worthless if the cap itself can't be stored.
+    # The guard is worthless if the guard value itself can't be stored.
     G, U = 9270, 1
     economy.add_coins(G, U, economy.MAX_COINS)
     assert economy.get_coins(G, U) == economy.MAX_COINS
     value, kind = _raw_money("wallets", "coins", guild_id=G, user_id=U)
-    assert kind == "integer" and value == economy.MAX_COINS
+    assert kind == "text" and value == str(economy.MAX_COINS)
 
 
-def test_saturating_credit_absorbs_an_overflowing_intermediate():
-    # MIN(coins + ?, MAX) is safe even when `coins + ?` overflows: SQLite
-    # promotes the sum to a REAL further from zero than the cap, so the clamp
-    # returns the integer cap. This is why the ceiling is not bound by 2*MAX.
-    with sqlite3.connect(":memory:") as conn:
-        cap = economy._SQLITE_MAX_INT - 1
-        raw = conn.execute("SELECT typeof(? + ?)", (cap, cap)).fetchone()[0]
-        assert raw == "real"          # the intermediate really does overflow
+def test_money_functions_do_exact_arithmetic_past_int64():
+    # The money_* SQL functions run in Python, so a sum that would overflow
+    # a 64-bit SQLite integer comes back as exact digits, not a REAL.
+    with economy._connect() as conn:
+        big = economy._SQLITE_MAX_INT
+        raw = conn.execute("SELECT typeof(? + ?)", (big, big)).fetchone()[0]
+        assert raw == "real"          # what bare SQL arithmetic would do
         value, kind = conn.execute(
-            f"SELECT MIN(? + ?, {cap}), typeof(MIN(? + ?, {cap}))",
-            (cap, cap, cap, cap)).fetchone()
-        assert kind == "integer" and value == cap
+            "SELECT money_add(?, ?), typeof(money_add(?, ?))",
+            (big, big, big, big)).fetchone()
+        assert kind == "text" and int(value) == 2 * big
+        # Small results stay integers so untyped cog_kv counters keep their type.
+        assert conn.execute("SELECT typeof(money_add(1, 2))").fetchone()[0] == "integer"
+        assert conn.execute("SELECT money_cmp(?, ?)", (10**30, 10**29)).fetchone()[0] == 1
+        assert conn.execute("SELECT money_cmp('9', '10')").fetchone()[0] == -1
+        assert conn.execute("SELECT money_sub_floor(5, 9)").fetchone()[0] == 0
 
 
 def test_guild_totals_survive_many_maxed_wallets():
@@ -428,14 +446,14 @@ def test_guild_totals_survive_many_maxed_wallets():
 def test_repair_handles_null_and_text_money():
     G, U = 9207, 1
     economy.get_wallet(G, U)
-    with sqlite3.connect(economy.DB_FILE) as conn:
+    with economy._connect() as conn:
         conn.execute("UPDATE wallets SET coins = NULL, total_won = 'junk' "
                      "WHERE guild_id = ? AND user_id = ?", (G, U))
         conn.commit()
         economy._repair_overflowed_money(conn)
         conn.commit()
-    assert _raw_money("wallets", "coins", guild_id=G, user_id=U) == (0, "integer")
-    assert _raw_money("wallets", "total_won", guild_id=G, user_id=U) == (0, "integer")
+    assert _raw_money("wallets", "coins", guild_id=G, user_id=U) == ("0", "text")
+    assert _raw_money("wallets", "total_won", guild_id=G, user_id=U) == ("0", "text")
 
 
 # --- Ceiling strikes --------------------------------------------------------
@@ -525,3 +543,252 @@ def test_wealth_leaderboard_survives_maxed_wallets():
     uid, wealth, coins, banked, _, _ = rows[0]
     assert wealth == coins + banked
     assert wealth > economy.MAX_COINS   # a real total above any single cap
+
+
+# --- Past int64: money keeps growing ---------------------------------------
+# Money columns are TEXT and every operation runs through Python ints, so a
+# balance is not bounded by SQLite's 64-bit integer. These pin that.
+
+BIG = 10**30  # comfortably past int64 (9.2e18)
+
+
+def test_balances_grow_past_int64():
+    G, U = 9401, 1
+    for _ in range(3):
+        economy.add_coins(G, U, economy._SQLITE_MAX_INT)
+    want = 3 * economy._SQLITE_MAX_INT + economy.STARTING_COINS
+    assert economy.get_coins(G, U) == want
+    value, kind = _raw_money("wallets", "coins", guild_id=G, user_id=U)
+    assert kind == "text" and value == str(want)
+    assert economy.get_wallet(G, U)["total_won"] == 3 * economy._SQLITE_MAX_INT
+
+
+def test_house_flow_conserves_money_past_int64():
+    G, U = 9402, 1
+    economy.add_coins(G, U, 3 * BIG)
+    economy.get_house_state(G)
+    start_total = economy.get_total_economy(G)
+    assert economy.transfer_to_house(G, U, 2 * BIG)["ok"]
+    assert economy.get_house_state(G)["on_hand"] >= 2 * BIG
+    assert economy.casino_payout(G, U, 2 * BIG) == 2 * BIG
+    assert economy.get_coins(G, U) == 3 * BIG + economy.STARTING_COINS
+    assert economy.get_total_economy(G) == start_total
+    # net_won is signed and also text-backed: stake down, payout back up.
+    assert economy.get_all_net_winnings(G) == [(U, 0)] or \
+        dict(economy.get_all_net_winnings(G))[U] == 0
+
+
+def test_transfer_and_deduct_guards_compare_numerically():
+    G, A, B = 9403, 1, 2
+    economy.add_coins(G, A, BIG)
+    have = economy.get_coins(G, A)
+    # "10000...0" vs "9": a text comparison would call the bigger one smaller.
+    assert not economy.try_deduct(G, A, have + 1)
+    assert economy.try_deduct(G, A, have)
+    assert economy.get_coins(G, A) == 0
+    economy.add_coins(G, A, BIG)
+    res = economy.transfer_coins(G, A, B, BIG - 1)
+    assert res["ok"] and res["amount"] == BIG - 1
+    assert economy.get_coins(G, B) == BIG - 1 + economy.STARTING_COINS
+    assert economy.transfer_coins(G, A, B, BIG)["error"] == "broke"
+
+
+def test_bank_and_interest_past_int64():
+    # Time is frozen: at 10% APR a 1e30 account earns ~3e21 coins a SECOND,
+    # so anything but a pinned clock makes exact equality meaningless.
+    G, U = 9404, 1
+    T = time.time()
+    with mock.patch("time.time", lambda: T):
+        economy.add_coins(G, U, BIG)
+        assert economy.bank_deposit(G, U, BIG)["ok"]
+        assert economy.bank_balance(G, U) == BIG
+        with sqlite3.connect(economy.DB_FILE) as conn:
+            conn.execute(
+                "UPDATE cog_kv SET value=? WHERE guild_id=? AND namespace='bank' AND key='interest_ts'",
+                (T - economy._SECONDS_PER_YEAR, G))
+            conn.commit()
+        # Decimal interest math: 10% of 1e30 is exact, not float-rounded.
+        assert economy.bank_balance(G, U) == BIG * 11 // 10
+        res = economy.bank_withdraw(G, U, BIG * 11 // 10)
+        assert res["ok"] and res["amount"] == BIG * 11 // 10
+        assert economy.get_coins(G, U) == BIG * 11 // 10 + economy.STARTING_COINS
+
+
+def test_interest_reads_do_not_mint_on_huge_balances():
+    # The old float growth factor carried 16 digits; on a 30-digit balance
+    # its rounding error alone minted ~1e14 coins per read. Two reads a few
+    # microseconds apart must now differ by real interest only.
+    G, U = 9411, 1
+    economy.add_coins(G, U, 10**40)
+    assert economy.bank_deposit(G, U, 10**40)["ok"]
+    a = economy.bank_balance(G, U)
+    b = economy.bank_balance(G, U)
+    # Real interest on 1e40 at 10% APR over ~1ms is ~3e28; a float-precision
+    # error would be ~1e24 *on top* of that on every read, so bound it tightly.
+    assert 0 <= b - a < 10**40 * 0.1 / economy._SECONDS_PER_YEAR * 1.0
+
+
+def test_grow_never_converts_the_balance_to_a_float():
+    huge = 10**80
+    assert economy._grow(huge, 0.15, 1.0) == huge * 115 // 100
+    near_max = 10**290
+    assert economy._grow(near_max, 0.10, 1.0) == near_max * 11 // 10
+    assert economy._grow(economy.MAX_COINS, 0.15, 10**9) == economy.MAX_COINS
+
+
+def test_leaderboards_rank_big_values_numerically():
+    G = 9405
+    economy.add_coins(G, 1, 10**20)
+    economy.add_coins(G, 2, 9 * 10**19)
+    economy.add_coins(G, 3, 5)
+    rows = economy.get_leaderboard(G, limit=10)
+    assert [r[0] for r in rows] == [1, 2, 3]
+    assert all(isinstance(v, int) for r in rows for v in r)
+    economy.bank_deposit(G, 3, 5)
+    economy.add_coins(G, 3, 10**21)
+    wealth = economy.get_wealth_leaderboard(G, limit=10)
+    assert [r[0] for r in wealth] == [3, 1, 2]
+    assert economy.get_total_economy(G) >= 10**21 + 10**20 + 9 * 10**19
+
+
+def test_kv_counters_pass_int64():
+    G, U = 9406, 1
+    economy.kv_incr(G, U, "t", "n", economy._SQLITE_MAX_INT)
+    total = economy.kv_incr(G, U, "t", "n", economy._SQLITE_MAX_INT)
+    assert economy._to_int(total) == 2 * economy._SQLITE_MAX_INT
+    economy.kv_incr(G, 2, "t", "n", 7)
+    economy.kv_incr(G, 3, "t", "n", 10**25)
+    assert [uid for uid, _ in economy.kv_top(G, "t", "n")] == [3, U, 2]
+    # Small counters stay SQLite integers — cogs that do arithmetic on
+    # kv_get() results keep working.
+    assert _raw_money("cog_kv", "value", guild_id=G, user_id=2, namespace="t", key="n") == (7, "integer")
+
+
+def test_burn_purchase_and_splurge_counters_past_int64():
+    G, U = 9407, 1
+    economy.add_coins(G, U, BIG)
+    res = economy.burn_purchase(G, U, BIG, "splurge", [("total_burned", BIG), ("owned:x", 1)])
+    assert res["ok"] and res["counters"]["total_burned"] == BIG
+    assert res["counters"]["owned:x"] == 1
+    assert economy.get_coins(G, U) == economy.STARTING_COINS
+
+
+def test_jail_bail_past_int64():
+    G, J, P = 9408, 1, 2
+    economy.jail_user(G, J, 3600, "test", bail_amount=BIG)
+    assert economy.get_jail_info(G, J)["bail_amount"] == BIG
+    assert economy.get_active_jails(G)[0]["bail_amount"] == BIG
+    economy.add_coins(G, P, BIG - 1 - economy.STARTING_COINS)
+    assert economy.pay_bail(G, J, P)["error"] == "broke"
+    economy.add_coins(G, P, 1)
+    res = economy.pay_bail(G, J, P)
+    assert res["ok"] and res["amount"] == BIG
+    assert economy.get_coins(G, P) == 0
+    assert economy.get_house_state(G)["on_hand"] >= BIG
+
+
+def test_bounty_and_fines_past_int64():
+    G, A, B = 9409, 1, 2
+    economy.add_coins(G, A, 2 * BIG)
+    res = economy.place_jail_bounty(G, A, B, BIG, success=True, jail_seconds=60,
+                                    channel_id=0)
+    assert res["ok"] and res["success"]
+    assert economy.get_coins(G, A) == BIG + economy.STARTING_COINS
+    economy.fine_user(G, A, 3 * BIG)   # floors at zero, never negative
+    assert economy.get_coins(G, A) == 0
+    T = time.time()
+    with mock.patch("time.time", lambda: T):   # no interest between steps
+        economy.add_coins(G, A, BIG)
+        economy.bank_deposit(G, A, BIG // 2)
+        assert economy.fine_user_wealth(G, A, BIG) == BIG
+        assert economy.get_wealth(G, A) == 0
+
+
+def test_disburse_and_ransom_past_int64():
+    G = 9410
+    economy.add_coins(G, 1, 3 * BIG)
+    res = economy.disburse(G, 1, [(2, BIG), (3, BIG)])
+    assert res["ok"] and res["total"] == 2 * BIG
+    assert economy.get_coins(G, 2) == BIG + economy.STARTING_COINS
+    T = time.time()
+    with mock.patch("time.time", lambda: T):   # no interest between steps
+        economy.bank_deposit(G, 2, BIG)
+        res = economy.ransom_collect(G, 2, 3, BIG + 50)
+    assert res["ok"] and res["from_bank"] == BIG and res["from_wallet"] == 50
+
+
+def _old_schema_db(path):
+    """A pre-migration economy.db: INTEGER money columns, one overflowed
+    wallet, an index on bounty_log, a duplicate-key insert that the PK must
+    still reject after the rebuild."""
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE wallets (guild_id INTEGER, user_id INTEGER,
+            coins INTEGER DEFAULT 100, total_won INTEGER DEFAULT 0,
+            total_lost INTEGER DEFAULT 0, net_won INTEGER DEFAULT 0,
+            spins INTEGER DEFAULT 0, jackpots INTEGER DEFAULT 0,
+            last_daily TEXT DEFAULT '', PRIMARY KEY (guild_id, user_id));
+        CREATE TABLE house_reserve (guild_id INTEGER PRIMARY KEY,
+            coins INTEGER NOT NULL DEFAULT 0, last_interest_ts REAL NOT NULL DEFAULT 0);
+        CREATE TABLE jail (guild_id INTEGER, user_id INTEGER, until_ts REAL NOT NULL,
+            reason TEXT DEFAULT '', bail_amount INTEGER DEFAULT 0,
+            channel_id INTEGER DEFAULT 0, jailed_at REAL DEFAULT 0,
+            extended_seconds INTEGER DEFAULT 0, no_release INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, user_id));
+        CREATE TABLE bounty_log (guild_id INTEGER NOT NULL, placer_user_id INTEGER NOT NULL,
+            target_user_id INTEGER NOT NULL, bet INTEGER NOT NULL, ts REAL NOT NULL);
+        CREATE INDEX idx_bounty_log_guild_ts ON bounty_log (guild_id, ts);
+        CREATE TABLE cog_kv (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            namespace TEXT NOT NULL, key TEXT NOT NULL, value,
+            PRIMARY KEY (guild_id, user_id, namespace, key));
+        INSERT INTO wallets (guild_id, user_id, coins, total_won, net_won, spins)
+            VALUES (1, 1, 12345, 500, -20, 3);
+        INSERT INTO wallets (guild_id, user_id, coins) VALUES (1, 2, 9.223372036854776e18);
+        INSERT INTO house_reserve VALUES (1, 100000000, 12.5);
+        INSERT INTO jail VALUES (1, 1, 9e12, 'why', 777, 42, 0, 0, 0);
+        INSERT INTO bounty_log VALUES (1, 1, 2, 55, 1.0);
+        INSERT INTO cog_kv VALUES (1, 1, 'bank', 'balance', 9.223372036854776e18);
+        INSERT INTO cog_kv VALUES (1, 1, 'bank', 'interest_ts', 1.5);
+    """)
+    conn.commit()
+    conn.close()
+
+
+def test_migration_rebuilds_integer_schema_as_text(tmp_path):
+    path = str(tmp_path / "old.db")
+    _old_schema_db(path)
+    with mock.patch.object(economy, "DB_FILE", path):
+        with economy._connect() as conn:
+            economy._convert_money_columns_to_text(conn)
+            economy._repair_overflowed_money(conn)
+            conn.commit()
+            # Idempotent: a second pass finds nothing to rebuild.
+            economy._convert_money_columns_to_text(conn)
+            conn.commit()
+        with sqlite3.connect(path) as conn:
+            for table, column, _neg in economy._MONEY_COLUMNS:
+                info = {r[1]: r[2] for r in conn.execute(f"PRAGMA table_info({table})")}
+                assert info[column].upper() == "TEXT", (table, column)
+            # Non-money columns keep their types; defaults and PKs survive.
+            info = {r[1]: r for r in conn.execute("PRAGMA table_info(wallets)")}
+            assert info["spins"][2] == "INTEGER" and info["last_daily"][4] == "''"
+            assert conn.execute("SELECT coins, total_won, net_won, spins FROM wallets "
+                                "WHERE user_id = 1").fetchone() == ("12345", "500", "-20", 3)
+            assert conn.execute("SELECT coins, typeof(coins) FROM wallets "
+                                "WHERE user_id = 2").fetchone() == (str(2**63), "text")
+            assert conn.execute("SELECT coins, last_interest_ts FROM house_reserve"
+                                ).fetchone() == ("100000000", 12.5)
+            assert conn.execute("SELECT bail_amount, channel_id FROM jail").fetchone() == ("777", 42)
+            assert conn.execute("SELECT bet FROM bounty_log").fetchone() == ("55",)
+            assert conn.execute("SELECT name FROM sqlite_master WHERE type='index' "
+                                "AND name='idx_bounty_log_guild_ts'").fetchone()
+            assert conn.execute("SELECT value, typeof(value) FROM cog_kv WHERE key='balance'"
+                                ).fetchone() == (str(2**63), "text")
+            assert conn.execute("SELECT value FROM cog_kv WHERE key='interest_ts'"
+                                ).fetchone() == (1.5,)
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute("INSERT INTO wallets (guild_id, user_id) VALUES (1, 1)")
+        # And the module's own helpers read the migrated rows correctly.
+        assert economy.get_wallet(1, 1)["coins"] == 12345
+        assert economy.get_coins(1, 2) == 2**63
+        assert economy.get_jail_info(1, 1)["bail_amount"] == 777

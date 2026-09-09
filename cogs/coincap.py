@@ -9,7 +9,7 @@ mint_house_bailout participates for free.
 
 This cog drains that queue on a 30s poll and announces the loss in #game-spam,
 blaming the player entirely — because it IS their fault. They chose to sit on
-a quadrillion coins. Taunt lines are hand-written in
+1e300 coins. Taunt lines are hand-written in
 data_files/coincap_taunts.txt (see taunts.py).
 
 State: cog_kv namespace "coincap", guild key `pending` — written by economy.py,
@@ -87,7 +87,7 @@ class CoinCap(commands.Cog):
             f"**{paid:,}**.",
             f"**{lost:,}** coins bounced off the ceiling and stayed with the house.",
             "",
-            f"Wallets cap at **{economy.MAX_COINS:,}** coins. Spend something.",
+            f"Wallets cap at **{economy.MAX_COINS_LABEL}** coins. Spend something.",
         ]
         embed = discord.Embed(
             title="🧱 TOO RICH FOR THE ENGINE",

@@ -3,7 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 import economy
-from amount import parse_amount, amount_error
+from amount import amount_error
+from game_common import parse_wallet_amount
 from taunts import ceiling_taunt
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class Gift(commands.Cog):
                     title="🧱 TOO RICH FOR THE ENGINE",
                     description=(
                         f"{recipient.mention} is already sitting on the maximum "
-                        f"**{economy.MAX_COINS:,}** coins.\n\n{ceiling_taunt()}"
+                        f"**{economy.MAX_COINS_LABEL}** coins.\n\n{ceiling_taunt()}"
                     ),
                     color=discord.Color.dark_gold(),
                 )
@@ -64,20 +65,20 @@ class Gift(commands.Cog):
         if recipient is None or amount is None:
             await ctx.send("Usage: `!gift @user amount`")
             return
-        amt = parse_amount(amount)
+        amt = parse_wallet_amount(amount, ctx.guild.id, ctx.author.id)
         if amt is None:
-            await ctx.send(amount_error(amount))
+            await ctx.send(amount_error(amount, contextual=True))
             return
         amount = amt
         embed = await self._do_gift(ctx.guild.id, ctx.author, recipient, amount)
         await ctx.send(embed=embed)
 
     @app_commands.command(name="gift", description="Gift coins to another user")
-    @app_commands.describe(recipient="Who to send coins to", amount="How many coins to give")
+    @app_commands.describe(recipient="Who to send coins to", amount="How many coins to give — supports 1k, 5m, all, half, 50%")
     async def gift_slash(self, interaction: discord.Interaction, recipient: discord.Member, amount: str):
-        amt = parse_amount(amount)
+        amt = parse_wallet_amount(amount, interaction.guild_id, interaction.user.id)
         if amt is None:
-            await interaction.response.send_message(amount_error(amount), ephemeral=True)
+            await interaction.response.send_message(amount_error(amount, contextual=True), ephemeral=True)
             return
         amount = amt
         embed = await self._do_gift(interaction.guild_id, interaction.user, recipient, amount)

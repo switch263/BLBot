@@ -12,7 +12,10 @@ instead of long strings of zeros:
     1b             -> 1000000000
     1t             -> 1000000000000
     1q / 1qa       -> 1000000000000000      (quadrillion)
-    1qi            -> 1000000000000000000   (quintillion — the cap)
+    1qi            -> 1000000000000000000   (quintillion)
+    1sx / 1sp      -> sextillion (1e21) / septillion (1e24)
+    1oc / 1no / 1dc-> octillion (1e27) / nonillion (1e30) / decillion (1e33)
+    2.5e40         -> scientific notation, for when the suffixes run out
 
 When the caller passes `available=` (a balance the amount is drawn against),
 contextual amounts work too:
@@ -29,48 +32,58 @@ It's a pure module — no Discord, no DB.
 """
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation
 
 _SUFFIXES = {
-    "k": 1_000,
-    "m": 1_000_000,
-    "b": 1_000_000_000,
-    "t": 1_000_000_000_000,
-    # Balances run to a quintillion (economy.MAX_COINS), so `t` alone would
-    # leave players typing thirteen zeros for a routine amount.
-    "q": 1_000_000_000_000_000,      # quadrillion
-    "qa": 1_000_000_000_000_000,     # ...spelled out, same thing
-    "qi": 1_000_000_000_000_000_000,  # quintillion — the ceiling itself
+    "k": 10**3,
+    "m": 10**6,
+    "b": 10**9,
+    "t": 10**12,
+    # Balances have no practical ceiling any more (economy.MAX_COINS is a
+    # 1e300 guard), so the short names keep going past a trillion —
+    # nobody should have to type thirty zeros for a routine bet. Past
+    # decillion, scientific notation (`1e40`) takes over.
+    "q": 10**15,      # quadrillion
+    "qa": 10**15,     # ...spelled out, same thing
+    "qi": 10**18,     # quintillion
+    "sx": 10**21,     # sextillion
+    "sp": 10**24,     # septillion
+    "oc": 10**27,     # octillion
+    "no": 10**30,     # nonillion
+    "dc": 10**33,     # decillion
 }
 
-# The coin ceiling, mirrored from economy.MAX_COINS (a test pins them equal).
+# The coin guard, mirrored from economy.MAX_COINS (a test pins them equal).
 # Duplicated rather than imported so this module stays pure — no DB, no config.
 # Anything a player types above it is rejected outright rather than clamped:
-# "9999qi" is a typo or a probe, not a bet, and silently reinterpreting it as a
-# quintillion-coin stake is worse than saying no.
-MAX_AMOUNT = 2**63 - 1  # 9,223,372,036,854,775,807 — see economy.MAX_COINS
+# "1e500" is a typo or a probe, not a bet.
+MAX_AMOUNT = 10**300 - 1  # see economy.MAX_COINS
 
 # Amounts are parsed with Decimal, never float. A float carries only 53 bits of
-# mantissa (~9e15), so at this ceiling `float("9223372036854775807")` rounds UP
-# past the cap and the exact maximum would be rejected, and typing
+# mantissa (~9e15), so `float("9223372036854775807")` rounds UP and typing
 # "1000000000000000001" would silently land on ...000. Decimal is exact for
-# both the integer and the `1.5k` decimal forms.
+# both the integer and the `1.5k` decimal forms — but only up to the context
+# precision, so every calculation runs under _CTX (enough digits to hold the
+# guard with room to spare; the default 28 would round a 30-digit stake).
+_CTX = Context(prec=700)
 
-# digits with optional , _ or space grouping, optional decimal, optional suffix
-_AMOUNT_RE = re.compile(r"^([0-9][0-9,_ ]*(?:\.[0-9]+)?)\s*(qa|qi|k|m|b|t|q)?$",
-                         re.IGNORECASE)
+# digits with optional , _ or space grouping, optional decimal, optional
+# exponent (`2.5e40`) OR magnitude suffix — never both.
+_AMOUNT_RE = re.compile(
+    r"^([0-9][0-9,_ ]*(?:\.[0-9]+)?)\s*(?:e\+?([0-9]{1,3})|(qa|qi|sx|sp|oc|no|dc|k|m|b|t|q))?$",
+    re.IGNORECASE)
 _PERCENT_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*%$")
 
 # Shown to the user when their amount couldn't be read.
-AMOUNT_HELP = "Try a number like `500`, `100,000`, `2k`, `1.5m`, `1b`, or `2.5q`."
+AMOUNT_HELP = "Try a number like `500`, `100,000`, `2k`, `1.5m`, `1b`, `2.5q`, or `1e30`."
 CONTEXT_HELP = AMOUNT_HELP[:-1] + " — or `all`, `half`, or `50%`."
 
 
 def parse_amount(text, available: int | None = None) -> int | None:
     """Parse a human-typed coin amount into a non-negative int, or None if it
-    isn't a valid amount. Accepts thousands separators (`,` `_` space) and the
-    suffixes k/m/b/t/q(a)/qi (case-insensitive), with or without a
-    decimal (`1.5k`).
+    isn't a valid amount. Accepts thousands separators (`,` `_` space), the
+    suffixes k/m/b/t/q(a)/qi/sx/sp/oc/no/dc (case-insensitive) and scientific
+    notation (`2.5e40`), with or without a decimal (`1.5k`).
 
     With `available=` (the balance the amount draws on), also accepts the
     contextual forms `all`/`max`, `half`, and percentages like `50%`. Those
@@ -108,23 +121,25 @@ def parse_amount(text, available: int | None = None) -> int | None:
                 return None
             if not 0 <= pct <= 100:
                 return None
-            # Decimal, not float: 50% of a 9-quintillion balance must be exact.
-            return int(Decimal(available) * pct / 100)
+            # Decimal, not float: 50% of a 40-digit balance must be exact.
+            return int(_CTX.divide(_CTX.multiply(Decimal(available), pct), Decimal(100)))
 
     m = _AMOUNT_RE.match(s)
     if not m:
         return None
 
     num_part = m.group(1).replace(",", "").replace("_", "").replace(" ", "")
-    suffix = m.group(2)
+    exponent, suffix = m.group(2), m.group(3)
     if num_part in ("", "."):
         return None
     try:
         value = Decimal(num_part)
     except (InvalidOperation, ValueError):
         return None
-    if suffix:
-        value *= _SUFFIXES[suffix]
+    if exponent:
+        value = _CTX.multiply(value, _CTX.power(Decimal(10), Decimal(exponent)))
+    elif suffix:
+        value = _CTX.multiply(value, Decimal(_SUFFIXES[suffix.lower()]))
     if not value.is_finite() or value < 0 or value > MAX_AMOUNT:
         return None
     return int(value)

@@ -82,7 +82,7 @@ class Bank(commands.Cog):
             if result.get("error") == "capped":
                 return (
                     f"🧱 Your account is full — it already holds the maximum "
-                    f"**{economy.MAX_COINS:,}** coins.\n{ceiling_taunt()}"
+                    f"**{economy.MAX_COINS_LABEL}** coins.\n{ceiling_taunt()}"
                 )
             return "⚠️ The teller's drawer jammed (database error). Try again."
         # A deposit trims itself to the account's remaining room under the coin
@@ -113,7 +113,7 @@ class Bank(commands.Cog):
             if result.get("error") == "capped":
                 return (
                     f"🧱 Your wallet is full — it already holds the maximum "
-                    f"**{economy.MAX_COINS:,}** coins. Spend some first.\n"
+                    f"**{economy.MAX_COINS_LABEL}** coins. Spend some first.\n"
                     f"{ceiling_taunt()}"
                 )
             return "⚠️ The vault door stuck (database error). Try again."

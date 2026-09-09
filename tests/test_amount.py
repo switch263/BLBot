@@ -56,15 +56,38 @@ def test_ceiling_matches_economy():
 
 
 @pytest.mark.parametrize("raw", [
-    "9999qi",                     # suffix form past the ceiling
-    "99999999999999999999999",    # raw digits past the ceiling
-    MAX_AMOUNT + 1,               # already-int input past the ceiling
+    "9999e297",                   # exponent form past the guard
+    "1" + "0" * 300,              # raw digits past the guard
+    MAX_AMOUNT + 1,               # already-int input past the guard
     float(MAX_AMOUNT) * 10,
 ])
 def test_rejects_above_ceiling(raw):
     # Absurd stakes are refused outright, not silently clamped — a typed
     # amount that big is a typo or a probe, never a real bet.
     assert parse_amount(raw) is None
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("1sx", 10**21), ("2.5sp", 25 * 10**23), ("1oc", 10**27), ("1no", 10**30),
+    ("1DC", 10**33), ("1e30", 10**30), ("2.5E40", 25 * 10**39), ("1e+21", 10**21),
+    ("1,000e3", 10**6),
+])
+def test_big_suffixes_and_scientific_notation(text, expected):
+    assert parse_amount(text) == expected
+
+
+@pytest.mark.parametrize("text", ["1e3k", "1e", "e30", "1e-5", "1e1000", "1e300"])
+def test_malformed_or_oversized_exponents_are_rejected(text):
+    assert parse_amount(text) is None
+
+
+def test_thirty_digit_amounts_keep_every_digit():
+    # Decimal's default 28-digit context would round these; the parser runs
+    # under its own wider context so a huge stake is exact to the last coin.
+    digits = "1234567890123456789012345678901234567890"
+    assert parse_amount(digits) == int(digits)
+    assert parse_amount("1.234567890123456789012345678901234567890e39") == int(digits)
+    assert parse_amount("50%", available=int(digits)) == int(digits) // 2
 
 
 def test_accepts_exactly_the_ceiling():

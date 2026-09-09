@@ -13,11 +13,13 @@ Two escalators keep it interesting as a player gets richer:
     option to buy a share of the house itself. You can only buy from tiers
     you've unlocked, so the catalog grows with the fortune.
 
-    The ladder is sized against economy.MAX_COINS, NOT against round numbers:
-    the top tier must unlock somewhere near the ceiling, or the richest
-    players unlock everything early and the catalog dies. When the ceiling
-    moves, these thresholds and the top tiers' prices move with it — a test
-    pins the top tier to a sane fraction of the cap so this can't drift back.
+    The ladder is written up to LADDER_TOP, the wealth the catalog is sized
+    for: the top tier must unlock somewhere near it, or the richest players
+    unlock everything early and the catalog dies. Balances themselves are
+    unbounded now (economy.MAX_COINS is a 1e300 guard, not a wall), so
+    past LADDER_TOP the only sink left is repeat-purchase escalation; extend
+    the tiers when players actually live up there. Tests pin the top tier to a
+    sane fraction of LADDER_TOP so the shape can't drift silently.
   * REPEAT PURCHASES cost more every time — `price_for()` multiplies the base
     price by ESCALATION per copy already owned. Buying the same thing forever
     gets exponentially more expensive, which is the point.
@@ -37,10 +39,16 @@ module only names the key and describes the deal.
 Pure data module — no Discord, no DB (same contract as items.py).
 """
 
-# The coin ceiling, mirrored from economy.MAX_COINS (a test pins them equal).
+# The coin guard, mirrored from economy.MAX_COINS (a test pins them equal).
 # Duplicated rather than imported so this module stays pure. Escalated prices
 # clamp here: nothing may cost more than a wallet can physically hold.
-MAX_PRICE = 2**63 - 1  # mirrors economy.MAX_COINS; a test pins them equal
+MAX_PRICE = 10**300 - 1  # mirrors economy.MAX_COINS; a test pins them equal
+
+# The wealth the tier ladder is sized against — the top tier unlocks at a
+# real fraction of this, and the priciest base entry is a real fraction of
+# it too (tests pin both). This used to be the coin ceiling itself; the
+# ceiling moved out of reach, the catalog didn't, so it gets its own anchor.
+LADDER_TOP = 10**19
 
 # Each repeat purchase of the same splurge costs this much more than the last.
 ESCALATION = 1.6
@@ -563,7 +571,10 @@ def price_for(key: str, owned: int = 0) -> int:
     Repeat purchases escalate geometrically (ESCALATION per copy) and clamp at
     MAX_PRICE — nothing may cost more than a wallet can physically hold."""
     entry = SPLURGES[key]
-    price = int(entry["price"] * (ESCALATION ** max(0, owned)))
+    try:
+        price = int(entry["price"] * (ESCALATION ** max(0, owned)))
+    except OverflowError:  # 1.6 ** ~1,500 copies is past float range
+        price = MAX_PRICE
     return min(max(price, entry["price"]), MAX_PRICE)
 
 

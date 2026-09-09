@@ -2,6 +2,7 @@
 
 import sqlite3
 from contextlib import contextmanager
+from decimal import Context, Decimal, InvalidOperation
 import json
 import os
 import logging
@@ -13,66 +14,101 @@ logger = logging.getLogger(__name__)
 DB_FILE = os.path.join(DATA_DIR, "economy.db")
 STARTING_COINS = 100
 
-# --- The coin ceiling -------------------------------------------------------
+# --- Money storage: arbitrary precision, TEXT-backed ---------------------
 # SQLite's INTEGER is a signed 64-bit value, and when an integer expression
 # overflows that range SQLite does NOT raise — it silently promotes the result
-# to REAL. `coins = coins + 1` on a big enough wallet quietly turns the column
-# into 9.223372036854776e+18, every read after that hands cogs a float,
-# f"{coins:,}" prints scientific-notation garbage, and anything doing exact
-# integer money math downstream breaks. So no stored coin figure is ever
-# allowed anywhere near the 64-bit edge.
+# to REAL. That once turned wallets into 9.223372036854776e+18 floats, and for
+# a while the fix was a hard ceiling sitting exactly on the int64 edge. The
+# economy outgrew it: balances are meant to keep growing, so money is now
+# stored as arbitrary-precision integers and int64 is no longer a limit.
 #
-# MAX_COINS is the hard ceiling on every stored money figure: wallets, both
-# house buckets, bank accounts, and the lifetime total_won/total_lost/net_won
-# counters.
+# HOW IT WORKS:
+#   * Every money column (wallets.coins/total_won/total_lost/net_won,
+#     house_reserve.coins, jail.bail_amount, bounty_log.bet — see
+#     _MONEY_COLUMNS) has TEXT affinity, so a value past int64 is stored as
+#     its decimal digits instead of being promoted to a float. cog_kv.value is
+#     untyped and keeps whatever it's handed. Migration 3 rebuilt the tables.
+#   * SQL never does money arithmetic. Every credit, debit and comparison
+#     goes through the money_* SQL functions that _connect() registers on
+#     each connection (money_add, money_sub, money_sub_floor, money_cmp,
+#     money_norm). They run in Python, where ints are arbitrary precision.
+#     The _ADD_* / _SUB_* fragments below are the only spellings to use.
+#   * Values above int64 cross the Python<->SQLite boundary as digit strings.
+#     Outbound: a process-wide sqlite3 adapter (_adapt_int) turns any int
+#     parameter that doesn't fit int64 into str — no call site has to know.
+#     Inbound: coins_int() / _signed_int() parse whatever storage type comes
+#     back (int, digit string, legacy float, NULL) into a plain int. Use them
+#     on EVERY money read; never hand a cog a raw row value.
+#   * Aggregates (_sum_money) and ordering (leaderboards, kv_top) happen in
+#     Python. SQL SUM() / ORDER BY on a money column are wrong now: SUM
+#     overflows at int64 and a TEXT column sorts lexicographically.
 #
-# WHY THIS EXACT NUMBER. It is the literal maximum a SQLite INTEGER can hold —
-# the ceiling is now the storage limit itself, with NO margin left. Getting
-# here required proving nothing binds below it:
+# THE RULE: no money expression is ever evaluated by SQL. Not `coins + ?`,
+# not `coins >= ?`, not `SUM(coins)`, not `ORDER BY coins`. Arithmetic on a
+# TEXT money column coerces to REAL and silently corrupts the row; a bare
+# comparison sorts as text. money_* functions or Python, always.
 #
-#   * The saturating credits `MIN(coins + ?, MAX_COINS)` are safe at any cap.
-#     If the inner add overflows, SQLite promotes it to a REAL that is by
-#     definition further from zero than the cap, so MIN()/MAX() returns the
-#     integer cap and the overflow is absorbed. Verified, not assumed.
-#   * Guild-wide totals are summed in Python (_sum_money), where ints are
-#     arbitrary precision, so a server of N maxed wallets is not a constraint.
-#     Keeping SUM() in SQL would have forced a far lower ceiling.
-#   * The wealth leaderboard's `w.coins + COALESCE(b.value, 0)` was the one
-#     money expression with no clamp to absorb a promotion; it sums in Python.
-#
-# THE RULE THAT KEEPS THIS SAFE, now that the buffer is gone: every money
-# expression SQL evaluates must be a single column, a SUBTRACTION, or an
-# addition wrapped in a MIN()/MAX() clamp. A bare multi-term money sum in SQL
-# (`a + b`, unclamped) promotes straight to REAL at these values and silently
-# corrupts the row — the exact bug this ceiling exists to prevent. Sum in
-# Python instead; it costs nothing at per-guild row counts.
-#
-# Past this point the only way up is abandoning INTEGER storage for zero-padded
-# TEXT with all arithmetic in Python. Ordering and the `WHERE coins >= ?`
-# balance guard survive that; SQL arithmetic does not, and net_won would need a
-# bias offset for negatives. That is a full migration of every money write.
-#
-# Credits SATURATE at the ceiling — they never wrap and never promote to REAL.
-# Two-sided moves (transfers, payouts) shrink the move to the receiver's
-# remaining headroom BEFORE debiting the sender, so saturation never destroys
-# coins mid-transfer. Practically: a maxed-out wallet simply can't be paid
-# more, and the coins stay where they were.
-MAX_COINS = 2**63 - 1  # 9,223,372,036,854,775,807 — int64 max, the hard edge
-_SQLITE_MAX_INT = 2**63 - 1
+# MAX_COINS still exists, but only as a sanity guard: 1e300. That is as high
+# as the COGS can go, not the storage — games compute payouts as
+# int(bet * mult) and drain cuts as random.uniform() * pot, which convert the
+# amount to a float and raise past ~1.8e308. A guard at 1e300 leaves room for
+# a 10x multiplier on a maxed bet. Raising it past that means sweeping every
+# cog's money math onto an integer helper and every display onto a compact
+# formatter (a 300-digit number is already 400 characters with separators).
+# Credits saturate at the guard and two-sided moves clamp to the receiver's
+# headroom() first, exactly as before, so nothing is destroyed mid-transfer.
+MAX_COINS = 10**300 - 1   # the float-math limit of the cogs, not of storage
+MAX_COINS_LABEL = "10^300"  # for messages; the digits are unreadable
+_SQLITE_MAX_INT = 2**63 - 1  # int64 max: past this, values travel as text
+_SQLITE_MIN_INT = -2**63
+
+
+def _to_int(value) -> int:
+    """Parse any storage representation of a money figure into a plain int:
+    int, digit string (signed or not), legacy REAL, a REAL rendered as text
+    ('9.22e+18'), bytes, or NULL. Junk becomes 0. Never raises."""
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return 0
+        return int(value)
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("ascii")
+        except UnicodeDecodeError:
+            return 0
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return 0
+        try:
+            return int(s)
+        except ValueError:
+            pass
+        try:
+            d = Decimal(s)
+        except InvalidOperation:
+            return 0
+        if not d.is_finite():
+            return 0
+        return int(d)
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 def coins_int(value) -> int:
-    """Coerce a money figure read out of the DB to a plain, sane int.
-
-    Anything that came back as a REAL (a pre-ceiling row that already
-    overflowed) is truncated, junk becomes 0, and the result is clamped to
-    [0, MAX_COINS]. Use on every coin figure economy.py hands to a cog, so a
-    legacy corrupted row can never leak a float into game math or a format
-    string."""
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError, OverflowError):
-        return 0
+    """Coerce a money figure read out of the DB to a plain, sane int, clamped
+    to [0, MAX_COINS]. Use on every coin figure economy.py hands to a cog, so
+    a digit string, a legacy float or a NULL can never leak into game math
+    or a format string."""
+    n = _to_int(value)
     if n <= 0:
         return 0
     return n if n <= MAX_COINS else MAX_COINS
@@ -86,31 +122,95 @@ def clamp_amount(value) -> int:
 
 def _signed_int(value) -> int:
     """coins_int for counters that are legitimately negative (net_won)."""
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError, OverflowError):
-        return 0
-    return max(-MAX_COINS, min(MAX_COINS, n))
+    return max(-MAX_COINS, min(MAX_COINS, _to_int(value)))
 
 
 def headroom(current: int) -> int:
     """Coins that can still be credited to a balance of `current` before it
-    hits the ceiling. Two-sided moves clamp to this so nothing is destroyed."""
+    hits the guard. Two-sided moves clamp to this so nothing is destroyed."""
     return max(0, MAX_COINS - coins_int(current))
 
 
-# Saturating-credit SQL fragments. A bare `coins = coins + ?` is exactly what
-# walks a column into 64-bit overflow; these pin the result at the ceiling
-# instead. Use them for EVERY money credit in this file — MAX_COINS is an int
-# literal interpolated at import, never user input. A column that is already a
-# corrupted REAL heals on its first write through one of these, because
-# MIN(9.2e18, 1e15) returns the integer ceiling.
-_ADD_COINS = f"coins = MIN(coins + ?, {MAX_COINS})"
-_ADD_TOTAL_WON = f"total_won = MIN(total_won + ?, {MAX_COINS})"
-_ADD_TOTAL_LOST = f"total_lost = MIN(total_lost + ?, {MAX_COINS})"
-_ADD_NET_WON = f"net_won = MAX(-{MAX_COINS}, MIN(net_won + ?, {MAX_COINS}))"
-_SUB_NET_WON = f"net_won = MAX(-{MAX_COINS}, MIN(net_won - ?, {MAX_COINS}))"
-_ADD_KV_VALUE = f"value = MIN(value + ?, {MAX_COINS})"
+# --- Python <-> SQLite money plumbing ---------------------------------------
+
+def _fits_int64(n: int) -> bool:
+    return _SQLITE_MIN_INT <= n <= _SQLITE_MAX_INT
+
+
+def _adapt_int(n: int):
+    """sqlite3 parameter adapter for int: anything that fits int64 binds as an
+    integer, anything bigger binds as its decimal digits. Registered
+    process-wide so no call site has to remember which amounts are huge."""
+    return n if _fits_int64(n) else str(n)
+
+
+sqlite3.register_adapter(int, _adapt_int)
+
+
+def _sql_money(n: int):
+    """Return value for the money_* SQL functions: int when it fits int64 (so
+    untyped cog_kv counters stay integers), digit string otherwise. A
+    TEXT-affinity money column stores either form as text."""
+    return n if _fits_int64(n) else str(n)
+
+
+def _clamp_signed(n: int) -> int:
+    return max(-MAX_COINS, min(MAX_COINS, n))
+
+
+def _udf_money_add(a, b):
+    return _sql_money(_clamp_signed(_to_int(a) + _to_int(b)))
+
+
+def _udf_money_sub(a, b):
+    return _sql_money(_clamp_signed(_to_int(a) - _to_int(b)))
+
+
+def _udf_money_sub_floor(a, b):
+    return _sql_money(max(0, min(MAX_COINS, _to_int(a) - _to_int(b))))
+
+
+def _udf_money_cmp(a, b):
+    x, y = _to_int(a), _to_int(b)
+    return (x > y) - (x < y)
+
+
+def _udf_money_norm(value, allow_negative):
+    floor = -MAX_COINS if allow_negative else 0
+    return _sql_money(max(floor, min(MAX_COINS, _to_int(value))))
+
+
+_MONEY_FUNCTIONS = (
+    ("money_add", 2, _udf_money_add),
+    ("money_sub", 2, _udf_money_sub),
+    ("money_sub_floor", 2, _udf_money_sub_floor),
+    ("money_cmp", 2, _udf_money_cmp),
+    ("money_norm", 2, _udf_money_norm),
+)
+
+
+def _connect() -> sqlite3.Connection:
+    """Open the economy DB with the money_* SQL functions registered. Every
+    connection in this module comes from here — a bare sqlite3.connect()
+    would make the _ADD_* fragments fail with 'no such function'."""
+    conn = sqlite3.connect(DB_FILE)
+    for name, nargs, fn in _MONEY_FUNCTIONS:
+        conn.create_function(name, nargs, fn, deterministic=True)
+    return conn
+
+
+# Money-movement SQL fragments. A bare SQL `coins + ?` is exactly what
+# overflows int64 (or, on a TEXT column, coerces to REAL); these route the
+# arithmetic through the Python-side money_* functions instead. Use them for
+# EVERY money credit/debit in this file. Credits saturate at MAX_COINS.
+_ADD_COINS = "coins = money_add(coins, ?)"
+_SUB_COINS = "coins = money_sub(coins, ?)"
+_ADD_TOTAL_WON = "total_won = money_add(total_won, ?)"
+_ADD_TOTAL_LOST = "total_lost = money_add(total_lost, ?)"
+_ADD_NET_WON = "net_won = money_add(net_won, ?)"
+_SUB_NET_WON = "net_won = money_sub(net_won, ?)"
+_ADD_KV_VALUE = "value = money_add(value, ?)"
+_SUB_KV_VALUE = "value = money_sub(value, ?)"
 
 # --- Weekly winnings tax --------------------------------------------------
 # The economy's main coin sink (cogs/taxes.py). It's an income tax on GROSS
@@ -157,9 +257,9 @@ WEALTH_TAX_DAY = 15                      # day of the month it fires
 
 def check_bet(bet: int) -> str | None:
     """Validate a player's stake before collecting it. Returns a user-facing
-    error string if the bet is non-positive or past the MAX_COINS ceiling,
-    else None. There is no bet cap below the ceiling — and the ceiling is a
-    storage limit, not a game-balance one (see the MAX_COINS note). Call at the
+    error string if the bet is non-positive or past the MAX_COINS guard,
+    else None. There is no bet cap below the guard — and the guard is a
+    sanity limit, not a game-balance one (see the MAX_COINS note). Call at the
     top of every game's bet flow, before transfer_to_house / deduct, e.g.:
 
         err = check_bet(bet)
@@ -170,7 +270,7 @@ def check_bet(bet: int) -> str | None:
     if bet <= 0:
         return "Bet must be greater than 0."
     if bet > MAX_COINS:
-        return f"Bet is too large — the ceiling is {MAX_COINS:,} coins."
+        return f"Bet is too large — the ceiling is {MAX_COINS_LABEL} coins."
     return None
 
 
@@ -225,9 +325,9 @@ def set_house_id(new_id: int):
         return
     old_id = _house_id
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
-                "SELECT guild_id, coins FROM wallets WHERE user_id = ? AND coins != 0",
+                "SELECT guild_id, coins FROM wallets WHERE user_id = ? AND money_cmp(coins, 0) != 0",
                 (old_id,),
             ).fetchall()
             for guild_id, coins in rows:
@@ -237,7 +337,7 @@ def set_house_id(new_id: int):
                 )
                 conn.execute(
                     f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
-                    (coins, guild_id, new_id),
+                    (coins_int(coins), guild_id, new_id),
                 )
             conn.execute(
                 "DELETE FROM wallets WHERE user_id = ?",
@@ -302,40 +402,93 @@ def _backfill_game_stats(conn: sqlite3.Connection):
         logger.info(f"Backfilled {inserted} game_stats rows from legacy wallet columns.")
 
 
-# Every stored money figure, as (table, column, allow_negative). The repair
-# migration and the read paths both work off this list — add a new money column
-# here and it's covered.
+# Every stored money figure, as (table, column, allow_negative). The
+# TEXT-conversion migration, the repair pass and the read paths all work off
+# this list — add a new money column here and it's covered.
 _MONEY_COLUMNS = [
     ("wallets", "coins", False),
     ("wallets", "total_won", False),
     ("wallets", "total_lost", False),
     ("wallets", "net_won", True),
     ("house_reserve", "coins", False),
+    ("jail", "bail_amount", False),
+    ("bounty_log", "bet", False),
 ]
 
 
-def _repair_overflowed_money(conn: sqlite3.Connection):
-    """One-shot migration: heal money that ran past 64-bit and got silently
-    promoted to REAL, plus anything sitting above the new ceiling.
+def _convert_money_columns_to_text(conn: sqlite3.Connection):
+    """One-shot migration: rebuild every table that holds a money column so
+    those columns carry TEXT affinity. SQLite can't ALTER a column's type, so
+    each table is recreated from its own PRAGMA table_info (same columns,
+    defaults, NOT NULLs and primary key), the rows copied across, and any
+    indexes re-created. Skips tables whose money columns are already TEXT,
+    so it's safe to run on a fresh DB or a second time."""
+    by_table: dict[str, set[str]] = {}
+    for table, column, _neg in _MONEY_COLUMNS:
+        by_table.setdefault(table, set()).add(column)
+    for table, money_cols in by_table.items():
+        info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if not info:
+            continue  # table not on this DB
+        present = {row[1] for row in info}
+        if all(str(row[2]).upper() == "TEXT" for row in info
+               if row[1] in money_cols) and money_cols <= present:
+            continue
+        defs, pk = [], []
+        for _cid, name, ctype, notnull, dflt, pkpos in info:
+            ctype = "TEXT" if name in money_cols else (ctype or "")
+            d = f"{name} {ctype}".rstrip()
+            if notnull:
+                d += " NOT NULL"
+            if dflt is not None:
+                d += f" DEFAULT {dflt}"
+            defs.append(d)
+            if pkpos:
+                pk.append((pkpos, name))
+        if pk:
+            defs.append("PRIMARY KEY (" + ", ".join(n for _, n in sorted(pk)) + ")")
+        indexes = [r[0] for r in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? "
+            "AND sql IS NOT NULL", (table,)).fetchall()]
+        names = [row[1] for row in info]
+        cols = ", ".join(names)
+        tmp = f"{table}__money_migration"
+        conn.execute(f"DROP TABLE IF EXISTS {tmp}")
+        conn.execute(f"CREATE TABLE {tmp} ({', '.join(defs)})")
+        # Rows are copied through Python, not INSERT ... SELECT: SQLite
+        # renders a REAL as 15-17 significant digits when it lands in a TEXT
+        # column, so an overflowed 9.223372036854776e18 would come across as
+        # '9.22337203685478e+18'. _to_int on the float itself keeps every digit.
+        money_idx = [i for i, n in enumerate(names) if n in money_cols]
+        placeholders = ", ".join("?" for _ in names)
+        rows = conn.execute(f"SELECT {cols} FROM {table}").fetchall()
+        conn.executemany(
+            f"INSERT INTO {tmp} ({cols}) VALUES ({placeholders})",
+            [tuple(_to_int(v) if i in money_idx else v for i, v in enumerate(row))
+             for row in rows],
+        )
+        conn.execute(f"DROP TABLE {table}")
+        conn.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
+        for sql in indexes:
+            conn.execute(sql)
+        logger.info(f"Rebuilt {table} with TEXT money columns: {sorted(money_cols)}.")
 
-    A column SQLite turned into 9.223372036854776e+18 reads back as a float
-    forever after — that's the scientific notation showing up in wallets and
-    payouts. This pins every money figure back into [0, MAX_COINS] (or
-    [-MAX_COINS, MAX_COINS] for net_won) as a real INTEGER. It's a haircut on
-    balances that were nonsense anyway; the saturating credits added alongside
-    it mean nothing can climb back out of range."""
+
+def _repair_overflowed_money(conn: sqlite3.Connection):
+    """Normalise every stored money figure into canonical form: a value that
+    overflowed 64-bit and got promoted to REAL (9.223372036854776e+18), a
+    REAL that then got copied into a TEXT column as '9.22e+18', a NULL, or
+    junk all become plain integer digits in [0, MAX_COINS] (or
+    [-MAX_COINS, MAX_COINS] for net_won). Runs on the connection's money_norm
+    function, so it needs a _connect() connection."""
     repaired = 0
     for table, column, allow_negative in _MONEY_COLUMNS:
-        floor = -MAX_COINS if allow_negative else 0
         try:
-            # COALESCE + inner CAST before the clamp: MIN(NULL, x) is NULL, and
-            # SQLite sorts TEXT above every number, so a null or junk cell would
-            # otherwise "repair" to NULL or to the ceiling. Both become 0.
             cur = conn.execute(
-                f"UPDATE {table} SET {column} = "
-                f"CAST(MAX(?, MIN(CAST(COALESCE({column}, 0) AS INTEGER), ?)) AS INTEGER) "
-                f"WHERE typeof({column}) != 'integer' OR {column} > ? OR {column} < ?",
-                (floor, MAX_COINS, MAX_COINS, floor),
+                f"UPDATE {table} SET {column} = money_norm({column}, ?) "
+                f"WHERE typeof({column}) != 'text' "
+                f"OR CAST(money_norm({column}, ?) AS TEXT) != {column}",
+                (1 if allow_negative else 0, 1 if allow_negative else 0),
             )
         except sqlite3.OperationalError:
             continue  # table/column not on this DB yet
@@ -344,11 +497,11 @@ def _repair_overflowed_money(conn: sqlite3.Connection):
     # only the balance rows are money (interest_ts is a REAL on purpose).
     try:
         cur = conn.execute(
-            "UPDATE cog_kv SET value = "
-            "CAST(MAX(0, MIN(CAST(COALESCE(value, 0) AS INTEGER), ?)) AS INTEGER) "
+            "UPDATE cog_kv SET value = money_norm(value, 0) "
             "WHERE namespace = ? AND key = ? "
-            "AND (typeof(value) != 'integer' OR value > ? OR value < 0)",
-            (MAX_COINS, _BANK_NS, _BANK_KEY, MAX_COINS),
+            "AND (typeof(value) NOT IN ('integer', 'text') "
+            "OR CAST(money_norm(value, 0) AS TEXT) != CAST(value AS TEXT))",
+            (_BANK_NS, _BANK_KEY),
         )
         repaired += cur.rowcount or 0
     except sqlite3.OperationalError:
@@ -356,22 +509,22 @@ def _repair_overflowed_money(conn: sqlite3.Connection):
     if repaired:
         logger.warning(
             f"Repaired {repaired} money value(s) that had overflowed 64-bit "
-            f"into floats or exceeded the {MAX_COINS:,} coin ceiling."
+            f"into floats or were stored in a non-canonical form."
         )
 
 
 def _init_db():
     """Create tables if they don't exist."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS wallets (
                     guild_id INTEGER,
                     user_id INTEGER,
-                    coins INTEGER DEFAULT 100,
-                    total_won INTEGER DEFAULT 0,
-                    total_lost INTEGER DEFAULT 0,
-                    net_won INTEGER DEFAULT 0,
+                    coins TEXT DEFAULT '100',
+                    total_won TEXT DEFAULT '0',
+                    total_lost TEXT DEFAULT '0',
+                    net_won TEXT DEFAULT '0',
                     spins INTEGER DEFAULT 0,
                     jackpots INTEGER DEFAULT 0,
                     last_daily TEXT DEFAULT '',
@@ -402,7 +555,7 @@ def _init_db():
                     user_id INTEGER,
                     until_ts REAL NOT NULL,
                     reason TEXT DEFAULT '',
-                    bail_amount INTEGER DEFAULT 0,
+                    bail_amount TEXT DEFAULT '0',
                     channel_id INTEGER DEFAULT 0,
                     jailed_at REAL DEFAULT 0,
                     extended_seconds INTEGER DEFAULT 0,
@@ -417,7 +570,7 @@ def _init_db():
                     guild_id INTEGER NOT NULL,
                     placer_user_id INTEGER NOT NULL,
                     target_user_id INTEGER NOT NULL,
-                    bet INTEGER NOT NULL,
+                    bet TEXT NOT NULL,
                     ts REAL NOT NULL
                 )
             ''')
@@ -444,7 +597,7 @@ def _init_db():
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS house_reserve (
                     guild_id INTEGER PRIMARY KEY,
-                    coins INTEGER NOT NULL DEFAULT 0,
+                    coins TEXT NOT NULL DEFAULT '0',
                     last_interest_ts REAL NOT NULL DEFAULT 0
                 )
             ''')
@@ -472,7 +625,7 @@ def _init_db():
                 # the basis for the weekly winnings tax. Distinct from total_won,
                 # which counts GROSS payouts (incl. the returned stake) and stays
                 # the lifetime "Total Won" brag stat. See cogs/taxes.py.
-                ("net_won", "INTEGER DEFAULT 0"),
+                ("net_won", "TEXT DEFAULT '0'"),
                 ("roulette_plays", "INTEGER DEFAULT 0"),
                 ("roulette_wins", "INTEGER DEFAULT 0"),
                 ("rr_plays", "INTEGER DEFAULT 0"),
@@ -500,7 +653,7 @@ def _init_db():
                     pass
             # jail: add bail/release-tracking columns for existing rows.
             for col, decl in [
-                ("bail_amount", "INTEGER DEFAULT 0"),
+                ("bail_amount", "TEXT DEFAULT '0'"),
                 ("channel_id", "INTEGER DEFAULT 0"),
                 ("jailed_at", "REAL DEFAULT 0"),
                 ("extended_seconds", "INTEGER DEFAULT 0"),
@@ -529,13 +682,17 @@ def _init_db():
             # Schema version. Bump when introducing a one-shot migration.
             #   1 = backfill `game_stats` from per-game wallet columns.
             #   2 = repair money columns that overflowed 64-bit into REAL.
+            #   3 = money columns become TEXT (arbitrary precision); the
+            #       repair pass re-runs on top so the copied values are
+            #       canonical digits. Supersedes 2.
             current_version = conn.execute("PRAGMA user_version").fetchone()[0]
             if current_version < 1:
                 _backfill_game_stats(conn)
                 conn.execute("PRAGMA user_version = 1")
-            if current_version < 2:
+            if current_version < 3:
+                _convert_money_columns_to_text(conn)
                 _repair_overflowed_money(conn)
-                conn.execute("PRAGMA user_version = 2")
+                conn.execute("PRAGMA user_version = 3")
             conn.commit()
     except sqlite3.Error as e:
         logger.error(f"Database error initializing economy: {e}")
@@ -550,7 +707,7 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
     """Get or create a wallet. Returns dict with balance and global stats only.
     Per-game stats live in `game_stats` — use `get_game_stats()` for those."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS)
@@ -577,7 +734,7 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
 def record_game(guild_id: int, user_id: int, game: str, won: bool):
     """Upsert a play (and optional win) into game_stats. Replaces the per-game record_* shims."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
                 "INSERT INTO game_stats (guild_id, user_id, game, plays, wins) "
                 "VALUES (?, ?, ?, 1, ?) "
@@ -594,7 +751,7 @@ def get_game_stats(guild_id: int, user_id: int) -> dict[str, dict[str, int]]:
     """Return {game: {'plays': X, 'wins': Y}} for every game this user has played.
     Games the user has never played are absent — callers should default to (0, 0)."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT game, plays, wins FROM game_stats "
                 "WHERE guild_id = ? AND user_id = ?",
@@ -619,7 +776,7 @@ def update_wallet(guild_id: int, user_id: int, delta: int, is_jackpot: bool = Fa
     """Update wallet after a game. Positive delta = winnings, negative = loss. Increments spins."""
     try:
         delta = max(-MAX_COINS, min(MAX_COINS, int(delta)))
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             if delta > 0:
                 # `delta` is already the NET result for these games (slots,
                 # coinflip), so it feeds net_won directly (the tax basis).
@@ -630,7 +787,7 @@ def update_wallet(guild_id: int, user_id: int, delta: int, is_jackpot: bool = Fa
                 )
             else:
                 conn.execute(
-                    f"UPDATE wallets SET coins = coins + ?, {_ADD_TOTAL_LOST}, "
+                    f"UPDATE wallets SET coins = money_add(coins, ?), {_ADD_TOTAL_LOST}, "
                     f"{_ADD_NET_WON}, spins = spins + 1 WHERE guild_id = ? AND user_id = ?",
                     (delta, abs(delta), delta, guild_id, user_id)
                 )
@@ -644,7 +801,7 @@ def add_coins(guild_id: int, user_id: int, amount: int):
     get_wallet(guild_id, user_id)  # ensure exists
     amount = clamp_amount(amount)
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
                 f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id)
@@ -658,9 +815,9 @@ def deduct_coins(guild_id: int, user_id: int, amount: int):
     """Deduct coins without incrementing spins."""
     amount = clamp_amount(amount)
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
-                f"UPDATE wallets SET coins = coins - ?, {_ADD_TOTAL_LOST} WHERE guild_id = ? AND user_id = ?",
+                f"UPDATE wallets SET coins = money_sub(coins, ?), {_ADD_TOTAL_LOST} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id)
             )
             conn.commit()
@@ -672,9 +829,9 @@ def fine_user(guild_id: int, user_id: int, amount: int):
     """Fine a user (coins can't go below 0)."""
     amount = clamp_amount(amount)
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
-                "UPDATE wallets SET coins = MAX(0, coins - ?) WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub_floor(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, user_id)
             )
             conn.commit()
@@ -701,7 +858,7 @@ def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> dict
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
@@ -729,7 +886,7 @@ def transfer_coins(guild_id: int, from_id: int, to_id: int, amount: int) -> dict
                 conn.rollback()
                 return {"ok": False, "error": "capped", "have": receiver_coins}
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, from_id),
             )
             conn.execute(
@@ -780,7 +937,7 @@ def _tx(op: str):
     """One immediate-mode write transaction: BEGIN IMMEDIATE on entry, commit
     on clean exit, rollback on _Abort or sqlite3.Error (the latter logged
     under `op` and re-raised)."""
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
         yield conn
@@ -815,8 +972,8 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
                 (guild_id, user_id, STARTING_COINS),
             )
             cursor = conn.execute(
-                f"UPDATE wallets SET coins = coins - ?, {_ADD_TOTAL_LOST} "
-                "WHERE guild_id = ? AND user_id = ? AND coins >= ?",
+                f"UPDATE wallets SET coins = money_sub(coins, ?), {_ADD_TOTAL_LOST} "
+                "WHERE guild_id = ? AND user_id = ? AND money_cmp(coins, ?) >= 0",
                 (amount, amount, guild_id, user_id, amount),
             )
             if cursor.rowcount == 0:
@@ -849,19 +1006,27 @@ _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 _MAX_INTEREST_YEARS = 50.0
 
 
-def _grow(balance: int, apr: float, years: float) -> int:
-    """Compound `balance` at `apr` for `years`, clamped to the coin ceiling.
+# Interest is computed in Decimal at a precision wider than the guard. A
+# float growth factor carries ~16 significant digits, so on a 30-digit balance
+# its rounding error alone is worth ~1e14 coins per read — the "only advance
+# the clock once a whole coin accrued" rule can't absorb that, and every read
+# would mint a fortune. With 350 digits the interest is exact to the coin at
+# any balance the guard allows, and the balance itself never touches a float.
+_GROW_CTX = Context(prec=350)
 
-    Both interest accruals (house reserve, player bank) go through this so
-    neither can compound a balance into 64-bit overflow — which is what turned
-    wallets into floats in the first place."""
+
+def _grow(balance: int, apr: float, years: float) -> int:
+    """Compound `balance` at `apr` for `years`, clamped to MAX_COINS.
+
+    Both interest accruals (house reserve, player bank) go through this."""
     balance = coins_int(balance)
     if balance <= 0 or years <= 0:
         return balance
     years = min(years, _MAX_INTEREST_YEARS)
     try:
-        grown = int(balance * ((1.0 + apr) ** years))
-    except (OverflowError, ValueError):
+        factor = _GROW_CTX.power(Decimal(1) + Decimal(repr(apr)), Decimal(years))
+        grown = int(_GROW_CTX.multiply(Decimal(balance), factor))
+    except (InvalidOperation, OverflowError, ValueError):
         return MAX_COINS
     return coins_int(grown)
 
@@ -937,8 +1102,8 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
     # Compound interest on any existing reserve. APR-based: elapsed seconds
     # are converted to fractional years and the growth factor is (1+APR)^years.
     # This stays invariant to read frequency — same end balance whether read once
-    # per year or 1000 times per day. Compounding is the main engine that walks
-    # a balance toward the 64-bit edge, so the result is ceiling-clamped.
+    # per year or 1000 times per day. _grow does the math in Decimal so a huge
+    # reserve compounds exactly, and clamps the result at the MAX_COINS guard.
     if reserve_coins > 0 and last_ts > 0 and now > last_ts:
         elapsed_years = (now - last_ts) / _SECONDS_PER_YEAR
         reserve_coins = _grow(reserve_coins, HOUSE_INTEREST_APR, elapsed_years)
@@ -957,10 +1122,10 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
             "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
             (guild_id, get_house_id()),
         ).fetchone()
-        heal = min(deficit, on_hand_row[0] if on_hand_row else 0)
+        heal = min(deficit, coins_int(on_hand_row[0] if on_hand_row else 0))
         if heal > 0:
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (heal, guild_id, get_house_id()),
             )
             reserve_coins += heal
@@ -1001,7 +1166,7 @@ def _memorial_house_tithe(conn: sqlite3.Connection, guild_id: int, amount: int) 
     if pay <= 0:
         return 0
     conn.execute(
-        "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+        "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
         (pay, guild_id, house_id),
     )
     conn.execute(
@@ -1023,7 +1188,7 @@ def memorial_tithe(guild_id: int, amount: int) -> int:
     if tithe <= 0:
         return 0
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             _ensure_house_wallet(conn, guild_id)
             pay = _memorial_house_tithe(conn, guild_id, amount)
@@ -1050,8 +1215,8 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
     Unlike transfer_coins this does NOT refuse when the house on-hand is at
     MAX_COINS — refusing would make every game unplayable. The credit saturates
     instead, so a stake collected into a maxed-out house is simply burned. That
-    only bites at a quadrillion coins on hand, and burning is the safe
-    direction to fail.
+    only bites at 1e300 coins on hand, and burning is the safe direction
+    to fail.
 
     A BET from a house shareholder is refused outright (`shareholder`) — they
     hold a piece of the house, so they don't play against it. Non-bet payments
@@ -1066,7 +1231,7 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
         return {"ok": False, "error": "shareholder"}
     house_id = get_house_id()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
@@ -1085,12 +1250,12 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
             # matching win restores it via casino_payout. Non-bet sinks skip this.
             if is_bet:
                 conn.execute(
-                    f"UPDATE wallets SET coins = coins - ?, {_SUB_NET_WON} WHERE guild_id = ? AND user_id = ?",
+                    f"UPDATE wallets SET coins = money_sub(coins, ?), {_SUB_NET_WON} WHERE guild_id = ? AND user_id = ?",
                     (amount, amount, guild_id, user_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                     (amount, guild_id, user_id),
                 )
             conn.execute(
@@ -1137,7 +1302,7 @@ def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
@@ -1158,7 +1323,7 @@ def transfer_to_reserve(guild_id: int, user_id: int, amount: int) -> dict:
                 return {"ok": False, "error": "broke",
                         "have": sender_coins, "need": amount}
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, user_id),
             )
             conn.execute(
@@ -1192,7 +1357,7 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
         return 0
     house_id = get_house_id()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             _ensure_house_wallet(conn, guild_id)
             conn.execute(
@@ -1215,7 +1380,7 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 topup = min(shortfall, reserve_coins)
                 if topup > 0:
                     conn.execute(
-                        "UPDATE house_reserve SET coins = coins - ? WHERE guild_id = ?",
+                        "UPDATE house_reserve SET coins = money_sub(coins, ?) WHERE guild_id = ?",
                         (topup, guild_id),
                     )
                     conn.execute(
@@ -1245,7 +1410,7 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
                 conn.commit()  # keep the interest normalization + the event
                 return 0
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (pay, guild_id, house_id),
             )
             conn.execute(
@@ -1276,7 +1441,7 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
         return 0
     house_id = get_house_id()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             _ensure_house_wallet(conn, guild_id)
             conn.execute(
@@ -1299,7 +1464,7 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
                 topup = min(shortfall, reserve_coins)
                 if topup > 0:
                     conn.execute(
-                        "UPDATE house_reserve SET coins = coins - ? WHERE guild_id = ?",
+                        "UPDATE house_reserve SET coins = money_sub(coins, ?) WHERE guild_id = ?",
                         (topup, guild_id),
                     )
                     conn.execute(
@@ -1320,7 +1485,7 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
                 conn.commit()
                 return 0
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (pay, guild_id, house_id),
             )
             conn.execute(
@@ -1356,7 +1521,7 @@ def get_house_state(guild_id: int) -> dict:
     separately from `reserve`.
     Returns {'on_hand', 'reserve', 'apr', 'banked', 'bank_apr'}."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             _normalize_house(conn, guild_id)
             house_row = conn.execute(
@@ -1396,7 +1561,7 @@ def replenish_house_if_low(guild_id: int) -> dict:
     Intended to be called on a schedule (see the house_upkeep cog)."""
     low_water = int(HOUSE_STARTING_COINS * HOUSE_LOW_WATER_PCT)
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             _ensure_house_wallet(conn, guild_id)
             _normalize_house(conn, guild_id)
@@ -1567,7 +1732,7 @@ def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict
             )
             rows = conn.execute(
                 "SELECT user_id FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                "WHERE guild_id=? AND namespace=? AND key=? AND money_cmp(value, 0) > 0",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchall()
             balances = []
@@ -1587,7 +1752,7 @@ def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict
                 if take <= 0:
                     continue
                 conn.execute(
-                    "UPDATE cog_kv SET value = value - ? "
+                    "UPDATE cog_kv SET value = money_sub(value, ?) "
                     "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                     (take, guild_id, uid, _BANK_NS, _BANK_KEY),
                 )
@@ -1615,7 +1780,7 @@ def cover_house_shortfall(guild_id: int, winner_id: int, shortfall: int) -> dict
                       headroom(winner_row[0] if winner_row else 0))
             if pay > 0:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                     (pay, guild_id, house_id),
                 )
                 conn.execute(
@@ -1679,7 +1844,7 @@ def mint_house_bailout(guild_id: int, winner_id: int, amount: int) -> int:
 def kv_get(guild_id: int, user_id: int, namespace: str, key: str, default=None):
     """Read one value, or `default` if the key is unset."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (guild_id, user_id, namespace, key),
@@ -1693,7 +1858,7 @@ def kv_get(guild_id: int, user_id: int, namespace: str, key: str, default=None):
 def kv_set(guild_id: int, user_id: int, namespace: str, key: str, value):
     """Write one value (int, float or str), overwriting any previous value."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
@@ -1713,7 +1878,7 @@ def kv_claim(guild_id: int, user_id: int, namespace: str, key: str, value) -> bo
     even when two events race to award the same thing — only the first wins, so
     the caller pays the reward exactly once."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "INSERT OR IGNORE INTO cog_kv (guild_id, user_id, namespace, key, value) "
@@ -1733,7 +1898,7 @@ def kv_all_in_namespace(guild_id: int, namespace: str) -> dict:
     {user_id: {key: value}}. Used for guild-wide rollups (e.g. an achievement
     leaderboard) where per-user kv_get_all would mean one query per member."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT user_id, key, value FROM cog_kv WHERE guild_id=? AND namespace=?",
                 (guild_id, namespace),
@@ -1751,16 +1916,16 @@ def kv_incr(guild_id: int, user_id: int, namespace: str, key: str, by: int = 1):
     """Atomically add `by` to a numeric value (an unset key counts as 0) and
     return the new total. `by` may be negative.
 
-    Saturates at ±MAX_COINS: cog counters have no business anywhere near the
-    64-bit edge, where SQLite would silently turn the value into a float."""
+    Arithmetic happens in Python (money_add), so the counter can pass int64
+    without SQLite turning it into a float; it saturates at ±MAX_COINS."""
     by = _signed_int(by)
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
                 "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET "
-                f"value = MAX(-{MAX_COINS}, MIN(value + ?, {MAX_COINS}))",
+                "value = money_add(value, ?)",
                 (guild_id, user_id, namespace, key, by, by),
             )
             row = conn.execute(
@@ -1777,7 +1942,7 @@ def kv_incr(guild_id: int, user_id: int, namespace: str, key: str, by: int = 1):
 def kv_delete(guild_id: int, user_id: int, namespace: str, key: str):
     """Delete one key."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "DELETE FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
@@ -1791,7 +1956,7 @@ def kv_delete(guild_id: int, user_id: int, namespace: str, key: str):
 def kv_get_all(guild_id: int, user_id: int, namespace: str) -> dict:
     """Every {key: value} a player holds in `namespace`."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT key, value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=?",
                 (guild_id, user_id, namespace),
@@ -1807,14 +1972,18 @@ def kv_top(guild_id: int, namespace: str, key: str, limit: int = 10) -> list[tup
     descending. Guild-scoped rows (user_id=0) are excluded; they're aggregates,
     not people. The cross-user leaderboard query cogs can't do themselves."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
-                "SELECT user_id, CAST(value AS INTEGER) AS v FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND user_id != 0 "
-                "ORDER BY v DESC LIMIT ?",
-                (guild_id, namespace, key, limit),
+                "SELECT user_id, value FROM cog_kv "
+                "WHERE guild_id=? AND namespace=? AND key=? AND user_id != 0",
+                (guild_id, namespace, key),
             ).fetchall()
-            return [(r[0], int(r[1])) for r in rows]
+            # Ranked in Python: a value past int64 is stored as text, and
+            # CAST(... AS INTEGER) would saturate it while ORDER BY on the raw
+            # column would sort digit strings lexicographically.
+            ranked = sorted(((r[0], _to_int(r[1])) for r in rows),
+                            key=lambda uv: uv[1], reverse=True)
+            return ranked[:limit]
     except sqlite3.Error as e:
         logger.error(f"Database error in kv_top: {e}")
         return []
@@ -1824,7 +1993,7 @@ def kv_clear_namespace(guild_id: int, namespace: str):
     """Delete every row in a namespace for a guild — cleanup for when a cog is
     retired. economy.py itself is untouched."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "DELETE FROM cog_kv WHERE guild_id=? AND namespace=?",
@@ -1860,7 +2029,7 @@ def consume_item(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
                 "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (guild_id, user_id, _INV_NS, item),
             ).fetchone()
-            have = row[0] if row else 0
+            have = _to_int(row[0] if row else 0)
             if have < qty:
                 raise _Abort(False)
             remaining = have - qty
@@ -1888,7 +2057,8 @@ def item_qty(guild_id: int, user_id: int, item: str) -> int:
 
 def get_inventory(guild_id: int, user_id: int) -> dict:
     """Returns {item: qty} for every item the player holds (qty > 0)."""
-    return {k: v for k, v in kv_get_all(guild_id, user_id, _INV_NS).items() if v > 0}
+    return {k: _to_int(v) for k, v in kv_get_all(guild_id, user_id, _INV_NS).items()
+            if _to_int(v) > 0}
 
 
 # --- Player bank ------------------------------------------------------------
@@ -2014,7 +2184,7 @@ def bank_deposit(guild_id: int, user_id: int, amount: int) -> dict:
             if amount <= 0:
                 raise _Abort({"ok": False, "error": "capped", "have": banked})
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (amount, guild_id, user_id),
             )
             conn.execute(
@@ -2061,7 +2231,7 @@ def bank_withdraw(guild_id: int, user_id: int, amount: int) -> dict:
             if amount <= 0:
                 raise _Abort({"ok": False, "error": "capped", "have": banked})
             conn.execute(
-                "UPDATE cog_kv SET value = value - ? "
+                "UPDATE cog_kv SET value = money_sub(value, ?) "
                 "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (amount, guild_id, user_id, _BANK_NS, _BANK_KEY),
             )
@@ -2088,7 +2258,7 @@ def get_all_bank_balances(guild_id: int) -> list[tuple[int, int]]:
         with _tx("get_all_bank_balances") as conn:
             rows = conn.execute(
                 "SELECT user_id FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                "WHERE guild_id=? AND namespace=? AND key=? AND money_cmp(value, 0) > 0",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchall()
             balances = [(uid, _accrue_bank_interest(conn, guild_id, uid)) for (uid,) in rows]
@@ -2112,11 +2282,11 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
     if pct <= 0:
         return {"total": 0, "accounts": 0}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 "SELECT user_id, value FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                "WHERE guild_id=? AND namespace=? AND key=? AND money_cmp(value, 0) > 0",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchall()
             total = 0
@@ -2131,7 +2301,7 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
                 if take <= 0:
                     continue
                 conn.execute(
-                    "UPDATE cog_kv SET value = value - ? "
+                    "UPDATE cog_kv SET value = money_sub(value, ?) "
                     "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                     (take, guild_id, uid, _BANK_NS, _BANK_KEY),
                 )
@@ -2168,7 +2338,7 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
             if take <= 0:
                 raise _Abort(0)
             conn.execute(
-                "UPDATE cog_kv SET value = value - ? "
+                "UPDATE cog_kv SET value = money_sub(value, ?) "
                 "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (take, guild_id, user_id, _BANK_NS, _BANK_KEY),
             )
@@ -2238,7 +2408,7 @@ def ransom_collect(guild_id: int, victim_id: int, thief_id: int, amount: int) ->
             from_bank = min(amount, banked)
             if from_bank > 0:
                 conn.execute(
-                    "UPDATE cog_kv SET value = value - ? "
+                    "UPDATE cog_kv SET value = money_sub(value, ?) "
                     "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                     (from_bank, guild_id, victim_id, _BANK_NS, _BANK_KEY),
                 )
@@ -2254,7 +2424,7 @@ def ransom_collect(guild_id: int, victim_id: int, thief_id: int, amount: int) ->
                 from_wallet = min(remaining, coins_int(victim_row[0] if victim_row else 0))
                 if from_wallet > 0:
                     conn.execute(
-                        "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                        "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                         (from_wallet, guild_id, victim_id),
                     )
 
@@ -2310,7 +2480,7 @@ def burn_purchase(guild_id: int, user_id: int, amount: int, namespace: str,
                 raise _Abort({"ok": False, "error": "broke", "have": have,
                               "need": amount})
             conn.execute(
-                f"UPDATE wallets SET coins = coins - ?, {_ADD_TOTAL_LOST} "
+                f"UPDATE wallets SET coins = money_sub(coins, ?), {_ADD_TOTAL_LOST} "
                 "WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id),
             )
@@ -2319,7 +2489,7 @@ def burn_purchase(guild_id: int, user_id: int, amount: int, namespace: str,
                 conn.execute(
                     "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) "
                     "VALUES (?,?,?,?,?) ON CONFLICT(guild_id, user_id, namespace, key) "
-                    f"DO UPDATE SET value = MAX(-{MAX_COINS}, MIN(value + ?, {MAX_COINS}))",
+                    "DO UPDATE SET value = money_add(value, ?)",
                     (guild_id, user_id, namespace, key, _signed_int(delta),
                      _signed_int(delta)),
                 )
@@ -2506,7 +2676,7 @@ def settle_house_dividends(guild_id: int) -> dict:
                 if cut <= 0:
                     continue
                 conn.execute(
-                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                     (cut, guild_id, house_id),
                 )
                 conn.execute(
@@ -2552,11 +2722,11 @@ def fine_user_wealth(guild_id: int, user_id: int, amount: int) -> int:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
             ).fetchone()
-            wallet = row[0] if row else 0
-            from_wallet = min(int(amount), max(0, wallet))
+            wallet = coins_int(row[0] if row else 0)
+            from_wallet = min(int(amount), wallet)
             if from_wallet > 0:
                 conn.execute(
-                    "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                    "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                     (from_wallet, guild_id, user_id),
                 )
             remaining = int(amount) - from_wallet
@@ -2566,7 +2736,7 @@ def fine_user_wealth(guild_id: int, user_id: int, amount: int) -> int:
                 from_bank = min(remaining, banked)
                 if from_bank > 0:
                     conn.execute(
-                        "UPDATE cog_kv SET value = value - ? "
+                        "UPDATE cog_kv SET value = money_sub(value, ?) "
                         "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                         (from_bank, guild_id, user_id, _BANK_NS, _BANK_KEY),
                     )
@@ -2587,7 +2757,7 @@ def release_from_jail(guild_id: int, user_id: int) -> dict:
     A blocked sentence is left fully intact so the caller can refund the card."""
     import time as _t
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT until_ts, no_release FROM jail WHERE guild_id = ? AND user_id = ?",
@@ -2625,7 +2795,7 @@ def adjust_jail_sentence(guild_id: int, user_id: int, delta_seconds: int) -> dic
     import time as _t
     now = _t.time()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT until_ts FROM jail WHERE guild_id = ? AND user_id = ?",
@@ -2670,7 +2840,7 @@ def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> di
         return {"ok": False, "error": "invalid_amount"}
     total = clamp_amount(sum(amt for _, amt in payments))
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
@@ -2685,7 +2855,7 @@ def disburse(guild_id: int, from_id: int, payments: list[tuple[int, int]]) -> di
                 conn.rollback()
                 return {"ok": False, "error": "broke", "have": sender_coins, "need": total}
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (total, guild_id, from_id),
             )
             for recipient_id, amt in payments:
@@ -2710,7 +2880,7 @@ def award_coins(guild_id: int, user_id: int, amount: int):
     get_wallet(guild_id, user_id)  # ensure exists
     amount = clamp_amount(amount)
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
                 f"UPDATE wallets SET {_ADD_COINS}, {_ADD_TOTAL_WON} WHERE guild_id = ? AND user_id = ?",
                 (amount, amount, guild_id, user_id)
@@ -2723,14 +2893,21 @@ def award_coins(guild_id: int, user_id: int, amount: int):
 def get_leaderboard(guild_id: int, limit: int = 10) -> list:
     """Get top players by coins. Excludes the house (bot) wallet."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.execute(
+        with _connect() as conn:
+            rows = conn.execute(
                 "SELECT user_id, coins, total_won, total_lost, spins, jackpots "
-                "FROM wallets WHERE guild_id = ? AND user_id != ? "
-                "ORDER BY coins DESC LIMIT ?",
-                (guild_id, get_house_id(), limit)
-            )
-            return cursor.fetchall()
+                "FROM wallets WHERE guild_id = ? AND user_id != ?",
+                (guild_id, get_house_id()),
+            ).fetchall()
+            # Ranked in Python — ORDER BY on a TEXT money column would sort
+            # the digit strings lexicographically ("9" above "10").
+            ranked = [
+                (r[0], coins_int(r[1]), coins_int(r[2]), coins_int(r[3]),
+                 int(r[4] or 0), int(r[5] or 0))
+                for r in rows
+            ]
+            ranked.sort(key=lambda r: r[1], reverse=True)
+            return ranked[:limit]
     except sqlite3.Error as e:
         logger.error(f"Database error getting leaderboard: {e}")
         return []
@@ -2743,18 +2920,15 @@ def get_wealth_leaderboard(guild_id: int, limit: int = 10) -> list:
     /richest ranks on this; the slots leaderboard and the rank-1 achievement
     stay on the wallet-only get_leaderboard on purpose.
 
-    `wealth` is summed and sorted in PYTHON, not SQL. It's the one money
-    expression in the schema with no saturating clamp around it — the credits
-    survive an overflow because MIN()/MAX() absorb the promoted REAL, but a
-    bare `w.coins + COALESCE(b.value, 0)` has nothing to absorb it and would
-    hand /richest a float to print in scientific notation. Doing it here also
-    means the ceiling is bounded only by single-value storage, not by
-    2 * MAX_COINS."""
+    `wealth` is summed and sorted in PYTHON, not SQL. Money columns are TEXT
+    now, so a bare `w.coins + COALESCE(b.value, 0)` would coerce both sides
+    to REAL and hand /richest a float to print in scientific notation, and
+    ORDER BY on the column would sort the digit strings lexicographically."""
     try:
         with _tx("get_wealth_leaderboard") as conn:
             holders = conn.execute(
                 "SELECT user_id FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND value > 0",
+                "WHERE guild_id=? AND namespace=? AND key=? AND money_cmp(value, 0) > 0",
                 (guild_id, _BANK_NS, _BANK_KEY),
             ).fetchall()
             for (uid,) in holders:
@@ -2785,7 +2959,7 @@ def get_all_wallets(guild_id: int) -> list:
     the weekly wealth tax to assess every player. The memorial player is left
     in — the caller filters him out (he's exempt from tax)."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT user_id, coins FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id()),
@@ -2802,7 +2976,7 @@ def get_all_winnings(guild_id: int) -> list:
     the per-period delta. The memorial player is left in — the caller filters
     him out (he's exempt from tax)."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT user_id, total_won FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id()),
@@ -2825,7 +2999,7 @@ def get_all_net_winnings(guild_id: int) -> list:
     snapshots it and taxes the positive per-period delta. The memorial player is
     left in — the caller filters him out (he's exempt from tax)."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT user_id, net_won FROM wallets WHERE guild_id = ? AND user_id != ?",
                 (guild_id, get_house_id()),
@@ -2842,14 +3016,14 @@ def get_total_economy(guild_id: int) -> int:
     banked coins are real money even though they aren't heistable, so they count
     toward total circulation."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             wallets_total = _sum_money(
                 conn, "SELECT coins FROM wallets WHERE guild_id = ?", (guild_id,))
             reserve_row = conn.execute(
                 "SELECT coins FROM house_reserve WHERE guild_id = ?",
                 (guild_id,),
             ).fetchone()
-            reserve_total = (reserve_row[0] if reserve_row else 0) or 0
+            reserve_total = coins_int(reserve_row[0] if reserve_row else 0)
             bank_total = _sum_money(
                 conn,
                 "SELECT value FROM cog_kv WHERE guild_id = ? AND namespace = ? AND key = ?",
@@ -2865,7 +3039,7 @@ def get_total_economy(guild_id: int) -> int:
 def get_server_stats(guild_id: int) -> dict:
     """Get aggregate economy stats for a server. Excludes the house (bot) wallet."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             # Money columns are summed in Python (see _sum_money) so a rich
             # server can't overflow the aggregate; spins/jackpots are small
             # counters and stay in SQL.
@@ -2915,7 +3089,7 @@ def jail_user(guild_id: int, user_id: int, duration_seconds: int, reason: str = 
     now = _t.time()
     until = now + duration_seconds
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             existing = conn.execute(
                 "SELECT until_ts FROM jail WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
@@ -2938,7 +3112,7 @@ def get_jail_info(guild_id: int, user_id: int) -> dict | None:
     """Returns the user's jail row as a dict, or None if not jailed (or row missing).
     Does NOT delete expired rows — the release-message loop is responsible for cleanup."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 "SELECT until_ts, reason, bail_amount, channel_id, jailed_at, no_release "
                 "FROM jail WHERE guild_id = ? AND user_id = ?",
@@ -2949,7 +3123,7 @@ def get_jail_info(guild_id: int, user_id: int) -> dict | None:
             return {
                 "until_ts": row[0],
                 "reason": row[1] or "",
-                "bail_amount": row[2] or 0,
+                "bail_amount": coins_int(row[2]),
                 "channel_id": row[3] or 0,
                 "jailed_at": row[4] or 0.0,
                 "no_release": bool(row[5]),
@@ -2965,7 +3139,7 @@ def get_active_jails(guild_id: int) -> list[dict]:
     import time as _t
     now = _t.time()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT user_id, until_ts, reason, bail_amount, channel_id, jailed_at, extended_seconds "
                 "FROM jail WHERE guild_id = ? AND until_ts > ? ORDER BY until_ts ASC",
@@ -2974,7 +3148,7 @@ def get_active_jails(guild_id: int) -> list[dict]:
             return [
                 {
                     "user_id": r[0], "until_ts": r[1], "reason": r[2] or "",
-                    "bail_amount": r[3] or 0, "channel_id": r[4] or 0,
+                    "bail_amount": coins_int(r[3]), "channel_id": r[4] or 0,
                     "jailed_at": r[5] or 0.0, "extended_seconds": r[6] or 0,
                 }
                 for r in rows
@@ -2989,7 +3163,7 @@ def get_expired_jails() -> list[dict]:
     import time as _t
     now = _t.time()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             rows = conn.execute(
                 "SELECT guild_id, user_id, reason, bail_amount, channel_id, jailed_at "
                 "FROM jail WHERE until_ts <= ?",
@@ -2998,7 +3172,7 @@ def get_expired_jails() -> list[dict]:
             return [
                 {
                     "guild_id": r[0], "user_id": r[1], "reason": r[2] or "",
-                    "bail_amount": r[3] or 0, "channel_id": r[4] or 0,
+                    "bail_amount": coins_int(r[3]), "channel_id": r[4] or 0,
                     "jailed_at": r[5] or 0.0,
                 }
                 for r in rows
@@ -3015,7 +3189,7 @@ def bail_cooldown_remaining(guild_id: int, user_id: int) -> int:
     """Seconds until this user can be bailed out again. 0 if no cooldown active."""
     import time as _t
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 "SELECT last_bail_received_ts FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
@@ -3039,7 +3213,7 @@ def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
     or `error` describing the failure path. Caller is responsible for messaging."""
     import time as _t
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             jail_row = conn.execute(
                 "SELECT until_ts, reason, bail_amount, channel_id FROM jail "
@@ -3050,6 +3224,7 @@ def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
                 conn.rollback()
                 return {"ok": False, "error": "not_jailed"}
             until_ts, reason, bail_amount, channel_id = jail_row
+            bail_amount = coins_int(bail_amount)
             if until_ts <= _t.time():
                 conn.rollback()
                 return {"ok": False, "error": "sentence_done"}
@@ -3069,12 +3244,12 @@ def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, payer_user_id),
             ).fetchone()
-            payer_coins = payer_row[0] if payer_row else 0
+            payer_coins = coins_int(payer_row[0] if payer_row else 0)
             if payer_coins < bail_amount:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "need": bail_amount, "have": payer_coins}
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (bail_amount, guild_id, payer_user_id),
             )
             house_id = get_house_id()
@@ -3128,7 +3303,7 @@ def extend_jail(guild_id: int, jailed_user_id: int, payer_user_id: int,
     if additional_seconds <= 0 or cost <= 0:
         return {"ok": False, "error": "invalid_amount"}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             jail_row = conn.execute(
                 "SELECT until_ts, extended_seconds, channel_id FROM jail "
@@ -3155,14 +3330,14 @@ def extend_jail(guild_id: int, jailed_user_id: int, payer_user_id: int,
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, payer_user_id),
             ).fetchone()
-            payer_coins = payer_row[0] if payer_row else 0
+            payer_coins = coins_int(payer_row[0] if payer_row else 0)
             if payer_coins < cost:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "need": cost, "have": payer_coins}
             new_until_ts = until_ts + additional_seconds
             new_extended = already_extended + additional_seconds
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (cost, guild_id, payer_user_id),
             )
             house_id = get_house_id()
@@ -3214,7 +3389,7 @@ def place_jail_bounty(guild_id: int, placer_user_id: int, target_user_id: int,
     if bet <= 0:
         return {"ok": False, "error": "invalid_bet"}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             now = _t.time()
             if user_limit > 0 and user_window_seconds > 0:
@@ -3254,12 +3429,12 @@ def place_jail_bounty(guild_id: int, placer_user_id: int, target_user_id: int,
                 "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, placer_user_id),
             ).fetchone()
-            payer_coins = payer_row[0] if payer_row else 0
+            payer_coins = coins_int(payer_row[0] if payer_row else 0)
             if payer_coins < bet:
                 conn.rollback()
                 return {"ok": False, "error": "broke", "need": bet, "have": payer_coins}
             conn.execute(
-                "UPDATE wallets SET coins = coins - ? WHERE guild_id = ? AND user_id = ?",
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
                 (bet, guild_id, placer_user_id),
             )
             house_id = get_house_id()
@@ -3306,7 +3481,7 @@ def clear_expired_jail(guild_id: int, user_id: int) -> bool:
     """Delete an expired jail row. Returns True if a row was removed. Used by the release loop."""
     import time as _t
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             cursor = conn.execute(
                 "DELETE FROM jail WHERE guild_id = ? AND user_id = ? AND until_ts <= ?",
                 (guild_id, user_id, _t.time()),
@@ -3321,7 +3496,7 @@ def clear_expired_jail(guild_id: int, user_id: int) -> bool:
 def increment_bot_heist_offenses(guild_id: int, user_id: int) -> int:
     """Bump the user's bot-heist offense count and return the new total."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
                 (guild_id, user_id, STARTING_COINS),
@@ -3345,7 +3520,7 @@ def increment_bot_heist_offenses(guild_id: int, user_id: int) -> int:
 def unjail_user(guild_id: int, user_id: int) -> bool:
     """Clear a user's jail sentence. Returns True if they were actually in jail."""
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             cursor = conn.execute(
                 "DELETE FROM jail WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
@@ -3363,7 +3538,7 @@ def jail_remaining(guild_id: int, user_id: int) -> int:
     and then cleans up, so cleanup must happen there, not here."""
     import time as _t
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 "SELECT until_ts FROM jail WHERE guild_id = ? AND user_id = ?",
                 (guild_id, user_id),
@@ -3448,7 +3623,7 @@ def delete_wallet(guild_id: int, user_id: int) -> dict:
          (guild_id, user_id, user_id)),
     ]
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             for tbl, where, params in deletions:
                 try:
@@ -3478,7 +3653,7 @@ def clear_economy(guild_id: int) -> dict:
     """
     counts: dict[str, int] = {}
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             for tbl in _CLEAR_ECONOMY_TABLES:
                 where, params = "guild_id = ?", (guild_id,)
