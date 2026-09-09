@@ -353,16 +353,19 @@ def test_repair_migration_heals_overflowed_money():
             "VALUES (?,?,?,?,?)", (G, U, "bank", "balance", overflowed))
         conn.commit()
         # A float written straight into a TEXT money column lands as SQLite's
-        # 17-digit rendering; the untyped cog_kv cell keeps the REAL itself.
+        # text rendering of it (15 or 17 significant digits depending on the
+        # SQLite build); the untyped cog_kv cell keeps the REAL itself.
         raw = _raw_money("wallets", "coins", guild_id=G, user_id=U)
         assert raw[1] == "text" and "e+" in raw[0]
+        rendered = economy._to_int(raw[0])   # what those digits actually say
         assert _raw_money("cog_kv", "value", guild_id=G, user_id=U,
                           namespace="bank", key="balance")[1] == "real"
         economy._repair_overflowed_money(conn)
         conn.commit()
     value, storage_type = _raw_money("wallets", "coins", guild_id=G, user_id=U)
     assert storage_type == "text" and value.isdigit()
-    assert abs(int(value) - healed) < 1_000       # the rendering's last digits
+    assert int(value) == rendered                 # exact for what was stored
+    assert abs(int(value) - healed) <= healed // 10**13   # within the rendering's precision
     wallet = economy.get_wallet(G, U)
     assert wallet["coins"] == int(value)
     assert wallet["total_won"] == int(value)
@@ -381,7 +384,9 @@ def test_reads_never_hand_a_cog_a_float():
     # Repair hasn't run for this row; the read path still must not leak a float.
     assert isinstance(economy.get_coins(G, U), int)
     assert isinstance(economy.get_wallet(G, U)["coins"], int)
-    assert abs(economy.get_coins(G, U) - 2**63) < 1_000
+    # SQLite builds render the float into the TEXT column at 15 or 17
+    # significant digits, so compare within that precision, not exactly.
+    assert abs(economy.get_coins(G, U) - 2**63) <= 2**63 // 10**13
 
 
 def test_check_bet_rejects_stakes_above_the_ceiling():
