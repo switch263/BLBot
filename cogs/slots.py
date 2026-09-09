@@ -201,6 +201,10 @@ class Slots(commands.Cog):
         ("lawyer",     "👔 Lawyer Rolls",           "Trials",  "Acquittals"),
         ("prisondice", "🎲 Yard Dice",              "Rolls",   "Wins"),
         ("shivfight",  "🔪 Shiv Fights",            "Fights",  "Wins"),
+        ("prisoncards", "🃏 Three-Card Monte",      "Hands",   "Wins"),
+        ("smuggle",    "📦 Contraband Runs",        "Runs",    "Clean"),
+        ("tunnel",     "⛏️ Tunnel Digs",            "Digs",    "Escapes"),
+        ("snitch",     "🗣️ Snitching",              "Visits",  "Paid off"),
         ("jurytrial",  "🏛️ Jury Trials",            "Trials",  "Acquittals"),
     ]
 

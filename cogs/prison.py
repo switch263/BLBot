@@ -17,8 +17,17 @@ themselves are minted by labor and burned by losses; they're a token, not
 coins, so they don't touch the money supply.
 
 Commands live under one group: `!prison` (alias `!yard`) / `/prison`. Bare
-`!prison` shows your file. Dice and shiv fights record to game_stats
-("prisondice" / "shivfight") and show on /wallet.
+`!prison` shows your file. The games record to game_stats and show on /wallet:
+dice ("prisondice"), shiv fights ("shivfight"), three-card monte
+("prisoncards"), contraband runs ("smuggle"), the tunnel ("tunnel") and
+snitching ("snitch").
+
+The yard, by stake:
+  cigs only ....... dice (coin-flip odds), cards (a multiplier table)
+  cigs + time ..... shiv (fight), smuggle (a contraband run)
+  time only ....... gym (grind), snitch (gamble), tunnel (persistent progress
+                    toward an outright escape — dig on a cooldown, risk a
+                    cave-in or a guard sweep, walk out at 100%)
 """
 import discord
 from discord.ext import commands
@@ -79,6 +88,59 @@ INMATE_NAMES = [
 
 SHIV_WIN_PCT = 0.45
 SHIV_BUST_PCT = 0.10
+
+# --- Three-card monte with The Accountant -----------------------------------
+# (weight, multiplier on the stake, flavor). Pays stake * mult back (0 = lost).
+CARDS_MIN_STAKE = 1
+CARDS_OUTCOMES = [
+    (46, 0.0, "You pick the left card. It's a joker with your face drawn on it. The Accountant pockets **{stake}** cigs."),
+    (16, 1.0, "You hesitate so long he gets bored and calls it a push. Your **{stake}** cigs come back."),
+    (26, 2.0, "The queen. You actually found the queen. He pays **{win}** cigs and adjusts his glasses."),
+    (8, 3.0, "You call the switch before he makes it. The whole yard goes *ooooh*. **{win}** cigs."),
+    (3, 0.0, "Mid-shuffle he sneezes, all three cards fall in a puddle, and he declares the house wins on a technicality. **{stake}** cigs gone."),
+    (1, 6.0, "You flip the card, the queen, AND the two cigs he'd hidden under it. He pays **{win}** and asks you never to come back."),
+]
+
+# --- Contraband run ----------------------------------------------------------
+# Stake cigs on smuggling a package across the yard. A clean run doubles the
+# stake, a bust loses it AND adds time, and the rare warden job pays 6x.
+# (weight, mult, jail_delta_seconds, flavor)
+SMUGGLE_COOLDOWN_SECONDS = 45 * 60
+SMUGGLE_MIN_STAKE = 5
+SMUGGLE_OUTCOMES = [
+    (28, 2.0, 0, "Clean run. The package changes hands behind the chapel and nobody blinks. **{win}** cigs."),
+    (10, 1.5, 0, "The buyer short-changes you but you don't argue with a man that size. **{win}** cigs."),
+    (14, 1.0, 5 * 60, "A guard eyeballs you the whole way and you dump it in a planter. Stake returned, **+5 minutes** for loitering."),
+    (40, 0.0, 20 * 60, "Random cell toss. They find the package and your **{stake}** cigs are gone with it. **+20 minutes.**"),
+    (6, 0.0, 35 * 60, "The buyer was a CO in a borrowed jumpsuit. Stake confiscated, **+35 minutes**, and everyone saw."),
+    (2, 6.0, 0, "The package was the warden's. He pays you personally, in cartons, and you never speak of it. **{win}** cigs."),
+]
+
+# --- The tunnel --------------------------------------------------------------
+# Persistent per-user progress (kv "tunnel", 0-100) across digs and even
+# across sentences. Each dig (on a cooldown) rolls one outcome; reaching
+# TUNNEL_GOAL springs you outright. (weight, progress_lo, progress_hi,
+# reset, jail_delta_seconds, cig_delta, flavor)
+TUNNEL_COOLDOWN_SECONDS = 15 * 60
+TUNNEL_GOAL = 100
+TUNNEL_OUTCOMES = [
+    (48, 8, 16, False, 0, 0, "You dig with a sharpened spoon until your arms give out. **+{gain}%** — the tunnel's at **{progress}%**."),
+    (20, 18, 28, False, 0, 0, "Soft dirt tonight. Real progress: **+{gain}%**, tunnel at **{progress}%**."),
+    (12, 0, 0, False, 0, 0, "You hit a pipe. You spend the whole shift deciding whether to go around it. No progress."),
+    (10, 0, 0, True, 10 * 60, 0, "🚨 Cave-in. Weeks of work fill with dirt and the noise earns you **+10 minutes**. Tunnel reset."),
+    (7, 0, 0, True, 25 * 60, -10, "🚨 Cell sweep. They find the hole behind the poster, fill it with concrete, and take your smokes. **+25 minutes**, tunnel reset, **-{cigs} cigs**."),
+    (3, 30, 45, False, 0, 0, "You break into an old maintenance shaft. Somebody dug this before you. **+{gain}%**, tunnel at **{progress}%**."),
+]
+
+# --- Snitching ---------------------------------------------------------------
+# Time-only gamble. (weight, time_lo, time_hi, cig_pct_lost, flavor)
+SNITCH_COOLDOWN_SECONDS = 60 * 60
+SNITCH_OUTCOMES = [
+    (50, -45 * 60, -20 * 60, 0.0, "The warden listens, nods, writes a name down. **{mins} minutes off** for your cooperation."),
+    (22, 0, 0, 0.0, "The warden already knew. He thanks you for wasting his afternoon. No change."),
+    (18, 15 * 60, 30 * 60, 0.5, "Word gets out before you're back at your cell. The yard takes **half your cigs** and the guards add **+{mins} minutes** to keep you *safe*."),
+    (10, -60 * 60, -60 * 60, 0.0, "You give up something big. The warden shakes your hand in front of everyone, which is its own problem. **{mins} minutes off.**"),
+]
 
 
 class Prison(commands.Cog):
@@ -145,13 +207,20 @@ class Prison(commands.Cog):
             f"🏛️ **Your file:** in for *{reason}*, **{mins} minutes** left.",
             f"🚬 Cigs: **{cigs}**",
         ]
+        progress = self._tunnel_progress(guild.id, user.id)
+        if progress > 0:
+            lines.append(f"⛏️ Tunnel: **{progress}%**")
         for label, key, cd in (("labor", "labor_ts", LABOR_COOLDOWN_SECONDS),
                                ("gym", "gym_ts", GYM_COOLDOWN_SECONDS),
-                               ("shiv", "shiv_ts", SHIV_COOLDOWN_SECONDS)):
+                               ("shiv", "shiv_ts", SHIV_COOLDOWN_SECONDS),
+                               ("smuggle", "smuggle_ts", SMUGGLE_COOLDOWN_SECONDS),
+                               ("tunnel", "tunnel_ts", TUNNEL_COOLDOWN_SECONDS),
+                               ("snitch", "snitch_ts", SNITCH_COOLDOWN_SECONDS)):
             left = self._cooldown_left(guild.id, user.id, key, cd)
             lines.append(f"• `{label}` — {'ready' if left == 0 else f'ready in {left // 60}m {left % 60}s'}")
-        lines.append("-# `!prison labor` earn · `!prison dice <cigs>` gamble · `!prison gym` "
-                     "shave time · `!prison shiv <cigs>` fight for freedom · `!prison guard <cigs>` fence for coins")
+        lines.append("-# `!prison labor` earn · `!prison dice <cigs>` / `!prison cards <cigs>` gamble · "
+                     "`!prison gym` shave time · `!prison shiv <cigs>` fight · `!prison smuggle <cigs>` run contraband · "
+                     "`!prison tunnel` dig out · `!prison snitch` talk to the warden · `!prison guard <cigs>` fence for coins")
         await reply("\n".join(lines))
 
     async def _labor(self, guild, user, reply):
@@ -282,6 +351,112 @@ class Prison(commands.Cog):
                     f"appear in your account. You've seen nothing, he's seen nothing. "
                     f"(stash: **{self._cigs(guild.id, user.id)}**)")
 
+    async def _cards(self, guild, user, raw_amount, reply):
+        if not await self._require_jailed(guild, user, reply):
+            return
+        stash = self._cigs(guild.id, user.id)
+        stake = parse_amount(raw_amount, available=stash)
+        if stake is None:
+            await reply(amount_error(raw_amount, contextual=True))
+            return
+        if stake < CARDS_MIN_STAKE:
+            await reply("🃏 The Accountant doesn't deal for free. Put smokes on the crate.")
+            return
+        if not self._spend_cigs(guild.id, user.id, stake):
+            await reply(f"🃏 You've got **{stash}** cigs and tried to stake **{stake:,}**. He counts better than you.")
+            return
+        weights = [o[0] for o in CARDS_OUTCOMES]
+        _w, mult, flavor = random.choices(CARDS_OUTCOMES, weights=weights)[0]
+        win = int(stake * mult)
+        if win > 0:
+            kv_incr(guild.id, user.id, NAMESPACE, "cigs", win)
+        record_game(guild.id, user.id, "prisoncards", win > stake)
+        await reply(f"🃏 {flavor.format(stake=stake, win=win)} (stash: **{self._cigs(guild.id, user.id)}**)")
+
+    async def _smuggle(self, guild, user, raw_amount, reply):
+        if not await self._require_jailed(guild, user, reply):
+            return
+        left = self._cooldown_left(guild.id, user.id, "smuggle_ts", SMUGGLE_COOLDOWN_SECONDS)
+        if left > 0:
+            await reply(f"📦 The yard's too hot after your last run. Wait **{left // 60}m {left % 60}s**.")
+            return
+        stash = self._cigs(guild.id, user.id)
+        stake = parse_amount(raw_amount, available=stash)
+        if stake is None:
+            await reply(amount_error(raw_amount, contextual=True))
+            return
+        if stake < SMUGGLE_MIN_STAKE:
+            await reply(f"📦 Nobody fronts a package for less than **{SMUGGLE_MIN_STAKE}** cigs.")
+            return
+        if not self._spend_cigs(guild.id, user.id, stake):
+            await reply(f"📦 You've got **{stash}** cigs. The package costs up front.")
+            return
+        self._stamp(guild.id, user.id, "smuggle_ts")
+        weights = [o[0] for o in SMUGGLE_OUTCOMES]
+        _w, mult, jail_delta, flavor = random.choices(SMUGGLE_OUTCOMES, weights=weights)[0]
+        win = int(stake * mult)
+        if win > 0:
+            kv_incr(guild.id, user.id, NAMESPACE, "cigs", win)
+        tail = self._time_result(guild.id, user.id, jail_delta) if jail_delta else ""
+        record_game(guild.id, user.id, "smuggle", win > stake)
+        await reply(f"📦 {flavor.format(stake=stake, win=win)}{tail}\n(stash: **{self._cigs(guild.id, user.id)}**)")
+
+    def _tunnel_progress(self, guild_id: int, user_id: int) -> int:
+        return max(0, min(TUNNEL_GOAL, int(kv_get(guild_id, user_id, NAMESPACE, "tunnel", 0) or 0)))
+
+    async def _tunnel(self, guild, user, reply):
+        if not await self._require_jailed(guild, user, reply):
+            return
+        left = self._cooldown_left(guild.id, user.id, "tunnel_ts", TUNNEL_COOLDOWN_SECONDS)
+        if left > 0:
+            await reply(f"⛏️ Too many guards on the tier. Dig again in **{left // 60}m {left % 60}s**.")
+            return
+        self._stamp(guild.id, user.id, "tunnel_ts")
+        progress = self._tunnel_progress(guild.id, user.id)
+        weights = [o[0] for o in TUNNEL_OUTCOMES]
+        _w, lo, hi, reset, jail_delta, cig_delta, flavor = random.choices(TUNNEL_OUTCOMES, weights=weights)[0]
+        gain = random.randint(lo, hi) if hi > 0 else 0
+        cigs_lost = 0
+        if cig_delta < 0:
+            cigs_lost = min(self._cigs(guild.id, user.id), -cig_delta)
+            if cigs_lost:
+                kv_incr(guild.id, user.id, NAMESPACE, "cigs", -cigs_lost)
+        progress = 0 if reset else min(TUNNEL_GOAL, progress + gain)
+        kv_set(guild.id, user.id, NAMESPACE, "tunnel", progress)
+        if progress >= TUNNEL_GOAL:
+            # Out. The sentence ends now, whatever was left of it.
+            kv_set(guild.id, user.id, NAMESPACE, "tunnel", 0)
+            remaining = jail_remaining(guild.id, user.id)
+            adjust_jail_sentence(guild.id, user.id, -(remaining + 1))
+            record_game(guild.id, user.id, "tunnel", True)
+            await reply(f"⛏️ {flavor.format(gain=gain, progress=TUNNEL_GOAL, cigs=cigs_lost)}\n"
+                        f"🌙 **You break through into the field behind the laundry.** Nobody's looking. "
+                        f"You walk until the sirens are a rumor. **Free.**")
+            return
+        tail = self._time_result(guild.id, user.id, jail_delta) if jail_delta else ""
+        record_game(guild.id, user.id, "tunnel", False)
+        await reply(f"⛏️ {flavor.format(gain=gain, progress=progress, cigs=cigs_lost)}{tail}")
+
+    async def _snitch(self, guild, user, reply):
+        if not await self._require_jailed(guild, user, reply):
+            return
+        left = self._cooldown_left(guild.id, user.id, "snitch_ts", SNITCH_COOLDOWN_SECONDS)
+        if left > 0:
+            await reply(f"🗣️ The warden's door is closed. Try again in **{left // 60}m {left % 60}s**.")
+            return
+        self._stamp(guild.id, user.id, "snitch_ts")
+        weights = [o[0] for o in SNITCH_OUTCOMES]
+        _w, lo, hi, cig_pct, flavor = random.choices(SNITCH_OUTCOMES, weights=weights)[0]
+        delta = random.randint(min(lo, hi), max(lo, hi)) if lo != hi else lo
+        if cig_pct > 0:
+            lost = int(self._cigs(guild.id, user.id) * cig_pct)
+            if lost:
+                kv_incr(guild.id, user.id, NAMESPACE, "cigs", -lost)
+        tail = self._time_result(guild.id, user.id, delta) if delta else ""
+        record_game(guild.id, user.id, "snitch", delta < 0)
+        await reply(f"🗣️ {flavor.format(mins=abs(delta) // 60)}{tail}"
+                    + (f"\n(stash: **{self._cigs(guild.id, user.id)}**)" if cig_pct > 0 else ""))
+
     # ---- commands: everything under !prison / /prison ---------------------------
 
     @commands.group(name="prison", aliases=["yard"], invoke_without_command=True)
@@ -310,9 +485,27 @@ class Prison(commands.Cog):
     async def guard_prefix(self, ctx, cigs: str):
         await self._guard(ctx.guild, ctx.author, cigs, ctx.send)
 
+    @prison_prefix.command(name="cards", aliases=["monte", "queen"])
+    async def cards_prefix(self, ctx, cigs: str):
+        await self._cards(ctx.guild, ctx.author, cigs, ctx.send)
+
+    @prison_prefix.command(name="smuggle", aliases=["run", "contraband"])
+    async def smuggle_prefix(self, ctx, cigs: str):
+        await self._smuggle(ctx.guild, ctx.author, cigs, ctx.send)
+
+    @prison_prefix.command(name="tunnel", aliases=["dig", "escape"])
+    async def tunnel_prefix(self, ctx):
+        await self._tunnel(ctx.guild, ctx.author, ctx.send)
+
+    @prison_prefix.command(name="snitch", aliases=["rat", "warden"])
+    async def snitch_prefix(self, ctx):
+        await self._snitch(ctx.guild, ctx.author, ctx.send)
+
     @dice_prefix.error
     @shiv_prefix.error
     @guard_prefix.error
+    @cards_prefix.error
+    @smuggle_prefix.error
     async def _amount_error(self, ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send("How many cigs? e.g. `!prison dice 10`, or `all` / `half`.")
@@ -369,6 +562,36 @@ class Prison(commands.Cog):
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
         await self._guard(interaction.guild, interaction.user, cigs, interaction.response.send_message)
+
+    @prison_group.command(name="cards", description="Three-card monte with The Accountant — find the queen, up to 6x your cigs")
+    @app_commands.describe(cigs="Cigarettes to stake — a number, or all/half")
+    async def cards_slash(self, interaction: discord.Interaction, cigs: str):
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.", ephemeral=True)
+            return
+        await self._cards(interaction.guild, interaction.user, cigs, interaction.response.send_message)
+
+    @prison_group.command(name="smuggle", description="Stake cigs on a contraband run — 2x if it lands, time added if it doesn't (45 min cooldown)")
+    @app_commands.describe(cigs=f"Cigarettes to stake — at least {SMUGGLE_MIN_STAKE}")
+    async def smuggle_slash(self, interaction: discord.Interaction, cigs: str):
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.", ephemeral=True)
+            return
+        await self._smuggle(interaction.guild, interaction.user, cigs, interaction.response.send_message)
+
+    @prison_group.command(name="tunnel", description="Dig the escape tunnel — progress persists; reach 100% and walk out (15 min cooldown)")
+    async def tunnel_slash(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.", ephemeral=True)
+            return
+        await self._tunnel(interaction.guild, interaction.user, interaction.response.send_message)
+
+    @prison_group.command(name="snitch", description="Talk to the warden — usually time off, sometimes the yard finds out (1h cooldown)")
+    async def snitch_slash(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.", ephemeral=True)
+            return
+        await self._snitch(interaction.guild, interaction.user, interaction.response.send_message)
 
 
 async def setup(bot):
