@@ -174,7 +174,7 @@ class TrollBridge(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="troll", description="Pay a troll, answer a riddle. Correct triples; wrong costs extra.")
-    @app_commands.describe(bet="Coins the troll demands as toll — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Coins the troll demands as toll — supports 1k, 5m, all, half, 50%")
     async def troll_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

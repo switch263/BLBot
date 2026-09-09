@@ -206,7 +206,7 @@ class Insurance(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="insurance", description="File a fraudulent insurance claim. Pick your scheme. Try not to get caught.")
-    @app_commands.describe(bet="Premium you're paying upfront — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Premium you're paying upfront — supports 1k, 5m, all, half, 50%")
     async def insurance_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

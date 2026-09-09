@@ -433,7 +433,7 @@ class PigDerby(commands.Cog):
         await self._start_derby(ctx, bet)
 
     @app_commands.command(name="pigderby", description="Start a multi-player pig race with fixed-odds betting")
-    @app_commands.describe(bet="Buy-in amount every bettor locks in — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Buy-in amount every bettor locks in — supports 1k, 5m, all, half, 50%")
     async def derby_slash(self, interaction: discord.Interaction, bet: str):
         await self._start_derby(interaction, bet)
 

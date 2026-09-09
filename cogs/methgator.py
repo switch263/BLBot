@@ -239,7 +239,7 @@ class MethGator(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="methgator", description="You are a meth gator. Pick a rampage. Pray.")
-    @app_commands.describe(bet="Coins to stake on your reptilian mayhem — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Coins to stake on your reptilian mayhem — supports 1k, 5m, all, half, 50%")
     async def gator_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

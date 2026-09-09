@@ -235,7 +235,7 @@ class WheelOfMisfortune(commands.Cog):
         await self._do_spin(ctx, bet)
 
     @app_commands.command(name="wheel", description="Spin the Wheel of Misfortune. Chaotic outcomes guaranteed.")
-    @app_commands.describe(bet="How many coins you're feeding the wheel")
+    @app_commands.describe(bet="How many coins you're feeding the wheel — supports 1k, 5m, all, half, 50%")
     async def wheel_slash(self, interaction: discord.Interaction, bet: str):
         await self._do_spin(interaction, bet)
 

@@ -5,7 +5,8 @@ import random
 import logging
 
 import economy
-from amount import parse_amount, amount_error
+from amount import amount_error
+from game_common import parse_wallet_amount
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,9 @@ class Burn(commands.Cog):
         if amount is None:
             await ctx.send("Usage: `!burn <amount> [house|vanish]` — defaults to **house**.")
             return
-        amt = parse_amount(amount)
+        amt = parse_wallet_amount(amount, ctx.guild.id, ctx.author.id)
         if amt is None:
-            await ctx.send(amount_error(amount))
+            await ctx.send(amount_error(amount, contextual=True))
             return
         amount = amt
         vanish = mode.lower() in ("vanish", "void", "destroy", "burn")
@@ -87,16 +88,16 @@ class Burn(commands.Cog):
 
     @app_commands.command(name="burn", description="Burn coins. Defaults to the house pot; set vanish=True to destroy them.")
     @app_commands.describe(
-        amount="Coins to burn",
+        amount="Coins to burn — supports 1k, 5m, all, half, 50%",
         vanish="Destroy coins entirely instead of donating to the house (default False).",
     )
     async def burn_slash(self, interaction: discord.Interaction, amount: str, vanish: bool = False):
         if not interaction.guild_id:
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
-        amt = parse_amount(amount)
+        amt = parse_wallet_amount(amount, interaction.guild_id, interaction.user.id)
         if amt is None:
-            await interaction.response.send_message(amount_error(amount), ephemeral=True)
+            await interaction.response.send_message(amount_error(amount, contextual=True), ephemeral=True)
             return
         amount = amt
         embed = await self._do_burn(interaction.guild_id, interaction.user, amount, vanish)

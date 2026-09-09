@@ -286,7 +286,7 @@ class VendingMachine(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="vend", description="Feed the Vending Machine From Hell. It does not like you.")
-    @app_commands.describe(bet="Coins to offer the machine — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Coins to offer the machine — supports 1k, 5m, all, half, 50%")
     async def vend_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

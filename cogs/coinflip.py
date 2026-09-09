@@ -4,7 +4,8 @@ from discord import app_commands
 import random
 import logging
 import economy
-from amount import parse_amount, amount_error
+from amount import amount_error
+from game_common import parse_wallet_amount
 
 logger = logging.getLogger(__name__)
 
@@ -98,24 +99,24 @@ class CoinFlip(commands.Cog):
         if bet is None or call is None:
             await ctx.send("Usage: `!coinflip 50 heads` or `!cf 100 tails`")
             return
-        amt = parse_amount(bet)
+        amt = parse_wallet_amount(bet, ctx.guild.id, ctx.author.id)
         if amt is None:
-            await ctx.send(amount_error(bet))
+            await ctx.send(amount_error(bet, contextual=True))
             return
         bet = amt
         embed = await self._flip(ctx.guild.id, ctx.author.id, bet, call)
         await ctx.send(embed=embed)
 
     @app_commands.command(name="coinflip", description="Flip a coin - double or nothing!")
-    @app_commands.describe(bet="Amount to bet", call="Heads or tails")
+    @app_commands.describe(bet="Amount to bet — supports 1k, 5m, all, half, 50%", call="Heads or tails")
     @app_commands.choices(call=[
         app_commands.Choice(name="Heads", value="heads"),
         app_commands.Choice(name="Tails", value="tails"),
     ])
     async def coinflip_slash(self, interaction: discord.Interaction, bet: str, call: app_commands.Choice[str]):
-        amt = parse_amount(bet)
+        amt = parse_wallet_amount(bet, interaction.guild_id, interaction.user.id)
         if amt is None:
-            await interaction.response.send_message(amount_error(bet), ephemeral=True)
+            await interaction.response.send_message(amount_error(bet, contextual=True), ephemeral=True)
             return
         bet = amt
         embed = await self._flip(interaction.guild_id, interaction.user.id, bet, call.value)

@@ -567,7 +567,7 @@ class Blackjack(commands.Cog):
         await self._start_round(ctx, bet)
 
     @app_commands.command(name="blackjack", description="Start a multi-player blackjack round with a buy-in")
-    @app_commands.describe(bet="Buy-in amount every player must match to join this round")
+    @app_commands.describe(bet="Buy-in amount every player must match to join this round — supports 1k, 5m, all, half, 50%")
     async def blackjack_slash(self, interaction: discord.Interaction, bet: str):
         await self._start_round(interaction, bet)
 

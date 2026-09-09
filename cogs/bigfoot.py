@@ -227,7 +227,7 @@ class BigfootExpedition(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="bigfoot", description="Hunt Bigfoot. Avoid bears. Photograph the myth.")
-    @app_commands.describe(bet="Coins to risk on your expedition — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Coins to risk on your expedition — supports 1k, 5m, all, half, 50%")
     async def bigfoot_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

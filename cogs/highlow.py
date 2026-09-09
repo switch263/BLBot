@@ -230,7 +230,7 @@ class HigherOrLower(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="highlow", description="Higher or Lower — predict the next card. Streak builds multiplier.")
-    @app_commands.describe(bet="Coins to risk — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Coins to risk — supports 1k, 5m, all, half, 50%")
     async def highlow_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

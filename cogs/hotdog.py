@@ -227,7 +227,7 @@ class HotDogContest(commands.Cog):
         await self._start(ctx, bet)
 
     @app_commands.command(name="dogs", description="Hot dog eating contest. Each dog = bigger multiplier, bigger risk.")
-    @app_commands.describe(bet="Buy-in coins for the contest — supports 1k, 5m, 100,000")
+    @app_commands.describe(bet="Buy-in coins for the contest — supports 1k, 5m, all, half, 50%")
     async def dogs_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

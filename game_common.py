@@ -35,6 +35,19 @@ from economy import (casino_ban_message, check_bet, get_coins, jail_message,
 from amount import parse_amount, amount_error
 
 
+def parse_wallet_amount(text, guild_id: int, user_id: int) -> int | None:
+    """parse_amount against a player's WALLET, so `all`, `half` and `50%`
+    work. The one way any command that takes coins should read its amount —
+    every coin input accepts the contextual forms, not just the prelude games.
+    Plain numbers parse without touching the DB; only the contextual forms
+    need the balance, so the wallet read is lazy. Pair it with
+    `amount_error(text, contextual=True)` so the help text advertises them."""
+    amt = parse_amount(text)
+    if amt is None:
+        amt = parse_amount(text, available=get_coins(guild_id, user_id))
+    return amt
+
+
 class GameStart:
     """What a successful prelude hands back: where, who, how much, and how
     to answer. `reply` works for both slash and prefix and returns the sent
@@ -103,11 +116,7 @@ async def casino_prelude(
     if bet is None:
         return GameStart(guild, user, None, reply, is_slash)
 
-    # Plain numbers parse without touching the DB; only the contextual forms
-    # (all/half/%) need to know the wallet, so the balance read is lazy.
-    amt = parse_amount(bet)
-    if amt is None:
-        amt = parse_amount(bet, available=get_coins(guild.id, user.id))
+    amt = parse_wallet_amount(bet, guild.id, user.id)
     if amt is None:
         await err(amount_error(bet, contextual=True))
         return None

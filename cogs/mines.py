@@ -31,8 +31,8 @@ import random
 import logging
 
 import economy
-from amount import parse_amount, amount_error
-from game_common import casino_prelude
+from amount import amount_error
+from game_common import casino_prelude, parse_wallet_amount
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -227,9 +227,9 @@ class Mines(commands.Cog):
         if bet_text is None:
             await reply("Usage: `!mines <amount> [mines]` — e.g. `!mines 250k 3`.")
             return
-        amt = parse_amount(bet_text)
+        amt = parse_wallet_amount(bet_text, guild.id, user.id)
         if amt is None:
-            await reply(amount_error(bet_text))
+            await reply(amount_error(bet_text, contextual=True))
             return
         bet = amt
 

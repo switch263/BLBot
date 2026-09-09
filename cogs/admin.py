@@ -5,6 +5,7 @@ import economy
 
 from config import ADMIN_CHANNEL_ID
 from amount import parse_amount, amount_error
+from game_common import parse_wallet_amount
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +90,10 @@ class Admin(commands.Cog):
         if not (in_admin_channel or has_admin_role):
             return  # Silently ignore — same gate behavior as unjail.
 
-        # Parse amount
-        amt = parse_amount(amount)
+        # Parse amount — `all` / `50%` are relative to the TARGET's wallet.
+        amt = parse_wallet_amount(amount, ctx.guild.id, user.id)
         if amt is None:
-            await ctx.send(amount_error(amount))
+            await ctx.send(amount_error(amount, contextual=True))
             return
         amount = amt
 

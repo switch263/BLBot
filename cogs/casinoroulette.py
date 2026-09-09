@@ -97,7 +97,7 @@ class CasinoRoulette(commands.Cog):
 
     # --- SLASH COMMAND ---
     @app_commands.command(name="bet", description="Bet your hard-earned coins on the roulette wheel")
-    @app_commands.describe(bet_type="red, black, even, odd, or a number 0-36", amount="How much you're willing to lose")
+    @app_commands.describe(bet_type="red, black, even, odd, or a number 0-36", amount="How much you're willing to lose — supports 1k, 5m, all, half, 50%")
     async def bet_slash(self, interaction: discord.Interaction, bet_type: str, amount: str):
         await self.run_bet(interaction, bet_type, amount)
 

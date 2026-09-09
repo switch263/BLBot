@@ -24,8 +24,8 @@ import random
 import logging
 
 import economy
-from amount import parse_amount, amount_error
-from game_common import casino_prelude
+from amount import amount_error
+from game_common import casino_prelude, parse_wallet_amount
 
 logger = logging.getLogger(__name__)
 
@@ -241,9 +241,9 @@ class Gauntlet(commands.Cog):
         if bet_text is None:
             await reply("Usage: `!gauntlet <amount>` — e.g. `!gauntlet 500k`.")
             return
-        amt = parse_amount(bet_text)
+        amt = parse_wallet_amount(bet_text, guild.id, user.id)
         if amt is None:
-            await reply(amount_error(bet_text))
+            await reply(amount_error(bet_text, contextual=True))
             return
         bet = amt
 
@@ -286,7 +286,7 @@ class Gauntlet(commands.Cog):
         name="gauntlet",
         description="High-roller push-your-luck ladder. Cash out or bust — no flat 100k cap.",
     )
-    @app_commands.describe(bet="Coins to risk (e.g. 250k, 2m). Limited by the house bankroll, not a flat 100k.")
+    @app_commands.describe(bet="Coins to risk (e.g. 250k, 2m, all, half, 50%). Limited by the house bankroll, not a flat 100k.")
     async def gauntlet_slash(self, interaction: discord.Interaction, bet: str):
         await self._start(interaction, bet)
 

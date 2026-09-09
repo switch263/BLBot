@@ -4,6 +4,8 @@ from discord import app_commands
 import random
 import logging
 import economy
+from amount import amount_error
+from game_common import parse_wallet_amount
 from items import BONUS_SPIN
 
 logger = logging.getLogger(__name__)
@@ -272,20 +274,28 @@ class Slots(commands.Cog):
             else:
                 await ctx.send("No one has played slots yet!")
         else:
-            # Try to parse action as a bet amount, default to DEFAULT_BET
-            try:
-                bet = int(action)
-            except ValueError:
+            # Anything else is a bet: a number, 10k, all, half, 50% — or the
+            # bare `!slots` (action defaults to "play") for DEFAULT_BET.
+            if action.lower() == "play":
                 bet = DEFAULT_BET
+            else:
+                bet = parse_wallet_amount(action, ctx.guild.id, ctx.author.id)
+                if bet is None:
+                    await ctx.send(amount_error(action, contextual=True))
+                    return
             embed = await self._play_slots(ctx.guild.id, ctx.author.id, bet)
             await ctx.send(embed=embed)
 
     # --- Slash Commands ---
 
     @app_commands.command(name="slots", description="Pull the slot machine lever!")
-    @app_commands.describe(bet=f"Amount to bet (min {MIN_BET}, default {DEFAULT_BET}) — go all in if you dare")
-    async def slots_slash(self, interaction: discord.Interaction, bet: int = DEFAULT_BET):
-        embed = await self._play_slots(interaction.guild_id, interaction.user.id, bet)
+    @app_commands.describe(bet=f"Amount to bet (min {MIN_BET}, default {DEFAULT_BET}) — supports 1k, 5m, all, half, 50%")
+    async def slots_slash(self, interaction: discord.Interaction, bet: str = str(DEFAULT_BET)):
+        amt = parse_wallet_amount(bet, interaction.guild_id, interaction.user.id)
+        if amt is None:
+            await interaction.response.send_message(amount_error(bet, contextual=True), ephemeral=True)
+            return
+        embed = await self._play_slots(interaction.guild_id, interaction.user.id, amt)
         await interaction.response.send_message(embed=embed)
 
     @commands.command(aliases=['slots_balance'])

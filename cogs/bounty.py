@@ -12,7 +12,8 @@ from discord import app_commands
 from discord.ext import commands
 
 import economy
-from amount import parse_amount, amount_error
+from amount import amount_error
+from game_common import parse_wallet_amount
 
 logger = logging.getLogger(__name__)
 
@@ -307,9 +308,9 @@ class Bounty(commands.Cog):
         channel_id = ctx.channel.id if ctx.channel else 0
         parsed_bet = None
         if bet:
-            parsed_bet = parse_amount(bet)
+            parsed_bet = parse_wallet_amount(bet, ctx.guild.id, ctx.author.id)
             if parsed_bet is None:
-                await ctx.send(amount_error(bet))
+                await ctx.send(amount_error(bet, contextual=True))
                 return
         msg = await self._run_bounty(ctx.guild, channel_id, ctx.author, target, parsed_bet)
         await ctx.send(msg)
@@ -317,13 +318,13 @@ class Bounty(commands.Cog):
     @app_commands.command(name="bounty", description=f"Pay ≥ {MIN_BOUNTY:,} coins for a chance to jail someone. Fails put YOU in jail.")
     @app_commands.describe(
         target="The user you want jailed",
-        bet="How many coins to put up (min 100,000,000)",
+        bet="How many coins to put up (min 100,000,000) — supports 1k, 5m, all, half, 50%",
     )
     async def bounty_slash(self, interaction: discord.Interaction, target: discord.Member, bet: str):
         channel_id = interaction.channel_id or 0
-        parsed_bet = parse_amount(bet)
+        parsed_bet = parse_wallet_amount(bet, interaction.guild.id, interaction.user.id)
         if parsed_bet is None:
-            await interaction.response.send_message(amount_error(bet), ephemeral=True)
+            await interaction.response.send_message(amount_error(bet, contextual=True), ephemeral=True)
             return
         msg = await self._run_bounty(interaction.guild, channel_id, interaction.user, target, parsed_bet)
         await interaction.response.send_message(msg)

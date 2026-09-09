@@ -218,7 +218,7 @@ class CockroachFightClub(commands.Cog):
         await self._start(ctx, opponent, bet)
 
     @app_commands.command(name="roach", description="Challenge another user to a cockroach fight. Winner takes the pot.")
-    @app_commands.describe(opponent="Who you're calling out", bet="Coins each side antes up — supports 1k, 5m, 100,000")
+    @app_commands.describe(opponent="Who you're calling out", bet="Coins each side antes up — supports 1k, 5m, all, half, 50%")
     async def roach_slash(self, interaction: discord.Interaction, opponent: discord.Member, bet: str):
         await self._start(interaction, opponent, bet)
 
