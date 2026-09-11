@@ -22,6 +22,9 @@ Usage in a cog:
 Pass `collect=False` for games that don't take the stake up front (lobby
 games, PvP escrow) — the bet is parsed and validated but not moved. Pass
 `bet=None` for commands with no stake at all (you get guild/jail/reply only).
+Pass `gate=fn` for a per-game refusal that must run BEFORE any coins move —
+a cooldown, a one-game-at-a-time lock: `fn(guild_id, user_id)` returns the
+refusal text, or None to let the player through.
 
 Because the bet parses with `available=` (the wallet), players can stake
 `all`, `half`, or `40%` in every converted game for free.
@@ -70,11 +73,13 @@ async def casino_prelude(
     collect: bool = True,
     zero_msg: str = "Bet > 0.",
     no_guild_msg: str = "Server only.",
+    gate=None,
 ) -> GameStart | None:
     """Run the standard casino-command preamble. Returns a GameStart, or None
     after having already sent the appropriate error reply.
 
-    Steps: guild guard -> jail gate -> parse bet (numbers, 10k/1.5m, and
+    Steps: guild guard -> jail gate -> shareholder gate -> the game's own
+    `gate(guild_id, user_id)` if given -> parse bet (numbers, 10k/1.5m, and
     all/half/% against the wallet) -> positive check ->
     (optionally) collect the stake into the house with broke handling.
     """
@@ -112,6 +117,14 @@ async def casino_prelude(
     if ban:
         await reply(ban)
         return None
+
+    # The game's own refusal (a cooldown, say) — after the public gates, before
+    # a single coin moves, so a refused player is never charged.
+    if gate is not None:
+        gate_msg = gate(guild.id, user.id)
+        if gate_msg:
+            await err(gate_msg)
+            return None
 
     if bet is None:
         return GameStart(guild, user, None, reply, is_slash)

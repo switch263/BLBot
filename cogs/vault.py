@@ -18,14 +18,44 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import logging
+import time
 from collections import Counter
 
-from economy import get_coins, record_game, casino_payout
+from economy import get_coins, record_game, casino_payout, kv_get, kv_set
 from game_common import casino_prelude
 
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
+
+# Time lock: one crack per player per VAULT_COOLDOWN, shared across all three
+# difficulties (one vault, three locks). Stamped the moment a game starts —
+# the bet is already in the house by then, so abandoning a game doesn't
+# dodge it. Persisted in cog_kv so a container rebuild doesn't reset it.
+VAULT_COOLDOWN = 10 * 60
+_KV_NS = "vault"
+_KV_COOLDOWN_KEY = "cooldown_until"
+
+
+def cooldown_remaining(guild_id: int, user_id: int, now: float | None = None) -> int:
+    """Seconds until this player may crack again; 0 if the lock is open."""
+    until = float(kv_get(guild_id, user_id, _KV_NS, _KV_COOLDOWN_KEY, 0) or 0)
+    return max(0, int(until - (time.time() if now is None else now)))
+
+
+def stamp_cooldown(guild_id: int, user_id: int, now: float | None = None) -> None:
+    kv_set(guild_id, user_id, _KV_NS, _KV_COOLDOWN_KEY,
+           int((time.time() if now is None else now) + VAULT_COOLDOWN))
+
+
+def _cooldown_gate(guild_id: int, user_id: int) -> str | None:
+    cd = cooldown_remaining(guild_id, user_id)
+    if not cd:
+        return None
+    m, s = divmod(cd, 60)
+    left = f"{m}m {s}s" if m else f"{s}s"
+    return (f"🔒 **Time lock engaged.** The vault won't take another crack from you for "
+            f"**{left}** (one attempt every {VAULT_COOLDOWN // 60} minutes, any difficulty).")
 
 DIFFICULTIES: dict[str, dict] = {
     "normal": {
@@ -314,9 +344,11 @@ class TheVault(commands.Cog):
         start = await casino_prelude(
             ctx_or_interaction, bet,
             zero_msg=f"Bet > 0 to crack the {cfg['thing']}.",
+            gate=_cooldown_gate,
         )
         if start is None:
             return
+        stamp_cooldown(start.guild.id, start.user.id)
         game = VaultGame(start.guild.id, start.user.id, start.user.display_name,
                          start.bet, cfg)
         view = VaultView(self, game)
@@ -327,7 +359,7 @@ class TheVault(commands.Cog):
     @commands.command(name="vault", aliases=["crack", "safecrack"])
     @commands.guild_only()
     async def vault_prefix(self, ctx, bet: str, difficulty: str = "normal"):
-        """Crack the vault: !vault <bet> [normal|hard|extra]"""
+        """Crack the vault: !vault <bet> [normal|hard|extra] — one crack every 10 minutes"""
         diff = PREFIX_DIFFICULTY_ALIASES.get(difficulty.lower())
         if diff is None:
             await ctx.send("Difficulty is `normal`, `hard`, or `extra`.")
@@ -351,7 +383,7 @@ class TheVault(commands.Cog):
 
     @app_commands.command(
         name="vault",
-        description="Crack a code Mastermind-style. Pick your difficulty — harder locks, fatter multipliers.",
+        description=f"Crack a code Mastermind-style. Harder locks, fatter multipliers. One crack every {VAULT_COOLDOWN // 60} min.",
     )
     @app_commands.describe(
         bet="Coins to risk — supports 1k, 5m, 100,000",
