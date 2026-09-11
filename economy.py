@@ -2267,6 +2267,36 @@ def get_all_bank_balances(guild_id: int) -> list[tuple[int, int]]:
         return []
 
 
+def _skim_boxes(conn: sqlite3.Connection, guild_id: int, pct: float,
+                exclude: set[int]) -> tuple[int, int]:
+    """Inside an open transaction: take `pct` of every player bank account
+    except `exclude` and the memorial player's. Interest accrues up to the
+    moment the boxes crack — the raid skims the fully-grown balance. Returns
+    (total_taken, accounts_hit); crediting the take is the caller's job."""
+    rows = conn.execute(
+        "SELECT user_id FROM cog_kv "
+        "WHERE guild_id=? AND namespace=? AND key=? AND money_cmp(value, 0) > 0",
+        (guild_id, _BANK_NS, _BANK_KEY),
+    ).fetchall()
+    total = 0
+    accounts = 0
+    for (uid,) in rows:
+        if uid in exclude or is_memorial(uid):
+            continue
+        balance = _accrue_bank_interest(conn, guild_id, uid)
+        take = clamp_amount(balance * pct)
+        if take <= 0:
+            continue
+        conn.execute(
+            "UPDATE cog_kv SET value = money_sub(value, ?) "
+            "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+            (take, guild_id, uid, _BANK_NS, _BANK_KEY),
+        )
+        total += take
+        accounts += 1
+    return total, accounts
+
+
 def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
     """The house just got robbed — the safe-deposit boxes get cracked too.
     Atomically skim `pct` of EVERY player bank account (the thief's own and the
@@ -2284,29 +2314,7 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
     try:
         with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                "SELECT user_id, value FROM cog_kv "
-                "WHERE guild_id=? AND namespace=? AND key=? AND money_cmp(value, 0) > 0",
-                (guild_id, _BANK_NS, _BANK_KEY),
-            ).fetchall()
-            total = 0
-            accounts = 0
-            for uid, balance in rows:
-                if uid == thief_id or is_memorial(uid):
-                    continue
-                # Interest accrues up to the moment the boxes crack — the raid
-                # skims the fully-grown balance.
-                balance = _accrue_bank_interest(conn, guild_id, uid)
-                take = clamp_amount(balance * pct)
-                if take <= 0:
-                    continue
-                conn.execute(
-                    "UPDATE cog_kv SET value = money_sub(value, ?) "
-                    "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
-                    (take, guild_id, uid, _BANK_NS, _BANK_KEY),
-                )
-                total += take
-                accounts += 1
+            total, accounts = _skim_boxes(conn, guild_id, pct, {thief_id})
             if total > 0:
                 conn.execute(
                     "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
@@ -2321,6 +2329,46 @@ def bank_raid(guild_id: int, thief_id: int, pct: float) -> dict:
     except sqlite3.Error as e:
         logger.error(f"Database error in bank_raid: {e}")
         return {"total": 0, "accounts": 0}
+
+
+def bank_raid_split(guild_id: int, crew_ids: list[int], pct: float) -> dict:
+    """bank_raid for a crew (cogs/crewheist.py's full sweep): skim `pct` of
+    every player bank account except the crew's own and the memorial player's,
+    then split the take evenly across the crew's wallets — the remainder goes
+    to the first id (the ringleader). Same clamp, same atomicity, same
+    theft-not-winnings semantics as bank_raid.
+
+    Returns {"total": T, "accounts": N, "paid": [(user_id, amount), ...]}.
+    """
+    pct = max(0.0, min(pct, BANK_RAID_MAX_PCT))
+    crew_ids = list(dict.fromkeys(crew_ids))
+    if pct <= 0 or not crew_ids:
+        return {"total": 0, "accounts": 0, "paid": []}
+    try:
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            total, accounts = _skim_boxes(conn, guild_id, pct, set(crew_ids))
+            paid = []
+            if total > 0:
+                share, rem = divmod(total, len(crew_ids))
+                for i, uid in enumerate(crew_ids):
+                    amt = share + (rem if i == 0 else 0)
+                    if amt <= 0:
+                        continue
+                    conn.execute(
+                        "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                        (guild_id, uid, STARTING_COINS),
+                    )
+                    conn.execute(
+                        f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                        (amt, guild_id, uid),
+                    )
+                    paid.append((uid, amt))
+            conn.commit()
+            return {"total": total, "accounts": accounts, "paid": paid}
+    except sqlite3.Error as e:
+        logger.error(f"Database error in bank_raid_split: {e}")
+        return {"total": 0, "accounts": 0, "paid": []}
 
 
 def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
@@ -2356,12 +2404,21 @@ def bank_seize_to_house(guild_id: int, user_id: int, amount: int) -> int:
 
 # --- The ransom job (cogs/heist.py) ---------------------------------------
 # A PvP heist has a RANSOM_ODDS chance of escalating into a hostage situation
-# that reaches the victim's BANK — the one player-vs-player path that does.
+# that reaches the victim's BANK — one of exactly two player-vs-player paths
+# that do (the other is the crew safe-deposit-box job below).
 # The band is deliberately the same as a normal wallet steal (STEAL_MIN/MAX_PCT
 # in cogs/heist.py): the bank should stay the safer place to keep coins even
 # once it stops being untouchable.
 RANSOM_MIN_PCT = 0.05
 RANSOM_MAX_PCT = 0.15
+
+# --- The crew box job (cogs/crewheist.py) ----------------------------------
+# A crew that goes after the casino can name ONE safe-deposit box — a single
+# player's bank account — instead of the house vault. Each approach in the cog
+# rolls its own take band, but every band tops out at this ceiling, and the
+# cog's tests pin each approach's expected take BELOW the equivalent wallet
+# job's, so the bank stays the safer place to keep coins.
+CREW_BOX_MAX_PCT = 0.35
 
 
 def ransom_collect(guild_id: int, victim_id: int, thief_id: int, amount: int) -> dict:
@@ -2436,6 +2493,68 @@ def ransom_collect(guild_id: int, victim_id: int, thief_id: int, amount: int) ->
                 (moved, guild_id, thief_id),
             )
         return {"ok": True, "amount": moved, "from_bank": from_bank, "from_wallet": from_wallet}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return {"ok": False, "error": "db"}
+
+
+def bank_box_disburse(guild_id: int, victim_id: int, payments: list[tuple[int, int]]) -> dict:
+    """The crew cracked one safe-deposit box: atomically debit the victim's BANK
+    (interest accrued first — the box pays its fully-grown balance) and credit
+    each recipient's wallet. `payments` is [(user_id, amount), ...].
+
+    Bank ONLY — no wallet fallthrough. The crew cased a box inside the casino;
+    coins a victim withdrew before the drill bit landed simply aren't in it.
+    (The ransom job is the reverse: it hunts the person, so it follows the
+    money.) Pure player->player: nothing minted, no total_won/net_won bumps —
+    theft, not winnings. Each share is trimmed to its recipient's headroom
+    under MAX_COINS before anything is debited, so the ceiling can't destroy
+    coins mid-transfer; the victim only loses what was actually delivered.
+    The memorial player is neither a valid victim nor a valid recipient.
+
+    Returns:
+      {"ok": True, "total": moved, "paid": [(user_id, amount), ...]}
+      {"ok": False, "error": "invalid_amount" | "memorial" | "capped" | "db"}
+      {"ok": False, "error": "short", "have": banked}   # box can't cover the split
+    """
+    payments = [(uid, clamp_amount(amt)) for uid, amt in payments]
+    if not payments or any(amt <= 0 for _, amt in payments):
+        return {"ok": False, "error": "invalid_amount"}
+    if is_memorial(victim_id) or any(is_memorial(uid) for uid, _ in payments):
+        return {"ok": False, "error": "memorial"}
+    try:
+        with _tx("bank_box_disburse") as conn:
+            banked = _accrue_bank_interest(conn, guild_id, victim_id)
+            if banked < sum(amt for _, amt in payments):
+                raise _Abort({"ok": False, "error": "short", "have": banked})
+            paid = []
+            for uid, amt in payments:
+                conn.execute(
+                    "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                    (guild_id, uid, STARTING_COINS),
+                )
+                row = conn.execute(
+                    "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                    (guild_id, uid),
+                ).fetchone()
+                amt = min(amt, headroom(coins_int(row[0] if row else 0)))
+                if amt > 0:
+                    paid.append((uid, amt))
+            total = sum(amt for _, amt in paid)
+            if total <= 0:
+                raise _Abort({"ok": False, "error": "capped"})
+            conn.execute(
+                "UPDATE cog_kv SET value = money_sub(value, ?) "
+                "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (total, guild_id, victim_id, _BANK_NS, _BANK_KEY),
+            )
+            for uid, amt in paid:
+                conn.execute(
+                    f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                    (amt, guild_id, uid),
+                )
+        return {"ok": True, "total": total, "paid": paid}
     except _Abort as a:
         return a.result
     except sqlite3.Error:
