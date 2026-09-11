@@ -5,6 +5,7 @@ import random
 import logging
 
 from economy import is_memorial
+from game_common import charge_fee, fee_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,11 @@ MEMORIAL_RESPONSES = [
     "Not that one. Some legends are beyond the roast. o7",
 ]
 
+# A roast isn't free: a flat fee paid into the house pot (house revenue).
+# Only a delivered roast is charged — the memorial refusal costs nothing, and
+# a broke roaster gets roasted for being poor instead (taunts.broke_taunt).
+ROAST_FEE = 100_000
+
 
 class Roast(commands.Cog):
     def __init__(self, bot):
@@ -115,23 +121,33 @@ class Roast(commands.Cog):
     async def on_ready(self):
         logger.info("Roast module has been loaded")
 
-    def _generate_roast(self, target_id: int, target_mention: str) -> str:
+    def _generate_roast(self, guild_id: int, roaster_id: int,
+                        target_id: int, target_mention: str) -> str:
+        """The message to send: the memorial refusal (free), the broke
+        refusal (nothing charged), or a paid roast with its receipt line."""
         if is_memorial(target_id):
             return random.choice(MEMORIAL_RESPONSES)
-        return random.choice(ROASTS).format(t=target_mention)
+        refusal = charge_fee(guild_id, roaster_id, ROAST_FEE, "A roast")
+        if refusal:
+            return refusal
+        return random.choice(ROASTS).format(t=target_mention) + fee_trailer(ROAST_FEE)
 
     @commands.command()
+    @commands.guild_only()
     async def roast(self, ctx, member: discord.Member = None):
-        """Roast someone (or yourself if you're brave)."""
+        """Roast someone (or yourself if you're brave). Costs 100k."""
         target = member or ctx.author
-        await ctx.send(self._generate_roast(target.id, target.mention))
+        await ctx.send(self._generate_roast(ctx.guild.id, ctx.author.id, target.id, target.mention))
 
-    @app_commands.command(name="roast", description="Roast someone with an actual roast")
+    @app_commands.command(name="roast", description=f"Roast someone with an actual roast ({ROAST_FEE:,} coins)")
     @app_commands.describe(member="Who to roast (leave empty to roast yourself)")
     async def roast_slash(self, interaction: discord.Interaction, member: discord.Member = None):
+        if interaction.guild is None:
+            await interaction.response.send_message("Server only.", ephemeral=True)
+            return
         target = member or interaction.user
         await interaction.response.send_message(
-            self._generate_roast(target.id, target.mention)
+            self._generate_roast(interaction.guild.id, interaction.user.id, target.id, target.mention)
         )
 
 

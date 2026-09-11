@@ -36,6 +36,29 @@ import discord
 from economy import (casino_ban_message, check_bet, get_coins, jail_message,
                      transfer_to_house)
 from amount import parse_amount, amount_error
+from taunts import broke_taunt
+
+
+def charge_fee(guild_id: int, user_id: int, amount: int, label: str) -> str | None:
+    """Collect a flat fee for a non-game command (/roast, /yourmother) INTO
+    THE HOUSE POT — house revenue that fattens the on-hand bucket for heists
+    and jackpots, not a burn. `is_bet=False`, so shareholders can pay it too.
+    Atomic and balance-checked. Returns None once the fee is taken. A player
+    who can't cover it is charged nothing and gets ROASTED for being poor
+    instead — the returned text is a hand-written broke taunt (taunts.py)
+    with the cost and their balance as the receipt, meant to be sent publicly
+    in place of whatever they were trying to buy."""
+    res = transfer_to_house(guild_id, user_id, amount, is_bet=False)
+    if res.get("ok"):
+        return None
+    have = res.get("have", get_coins(guild_id, user_id))
+    return (f"💸 {broke_taunt()}\n"
+            f"-# {label} costs {amount:,} coins. You have {have:,}.")
+
+
+def fee_trailer(amount: int) -> str:
+    """The receipt line appended to a paid command's output."""
+    return f"\n-# −{amount:,} coins. Worth it."
 
 
 def parse_wallet_amount(text, guild_id: int, user_id: int) -> int | None:

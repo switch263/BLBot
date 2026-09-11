@@ -1,0 +1,29 @@
+# Taunts for players too broke to pay a command's fee (/roast, /yourmother).
+# Hand-written one-liners only — no generation. Crude about the player being
+# poor and useless; nothing about anyone's family. One per line.
+# Loaded by taunts.py; blank lines and # comments are ignored.
+You tried to buy a roast and your wallet laughed first. That's the roast. You're it.
+Imagine wanting to insult someone and not being able to afford it. Rock bottom has a basement and you're in it.
+You can't cover a roast. The joke wrote itself and you still couldn't pay for it.
+The only thing getting cooked here is your credit. Broke and mouthy is a hell of a combo.
+You showed up to a roast with an empty wallet like a busker at a bank. Sit down.
+You're so broke the bot did the math twice out of pity. Still no.
+Wanting to talk trash on a balance like that is the funniest thing you've done all week.
+You couldn't afford the roast, so here's a free one: you are the poorest person in this channel and it shows.
+The house looked at your balance and decided you were the punchline. Free of charge.
+Big mouth, tiny wallet. Go lose some more so you can at least be broke with a story.
+You can't pay for the joke, so you are the joke. Efficient, really.
+Even the slot machine feels bad for you, and it's the one that did this to you.
+You came to roast somebody and got means-tested. Brutal. Deserved.
+That balance isn't a wallet, it's a cry for help with a coin icon.
+You wanted the bot to insult someone. It's insulting you instead. Budget option.
+Trying to buy an insult with pocket lint. Bold strategy. Doesn't work.
+You're too poor to be mean. Think about that. You've been priced out of being a jerk.
+The fee is 100k. You have less than that and somehow more confidence than anyone in here.
+Go win a single hand of anything and come back. Or don't. Either way, you can't afford this.
+You couldn't pay the roast fee, so here's the discount version: you're broke and nobody's surprised.
+A roast costs coins. You have vibes. The house does not accept vibes.
+Broke people don't get to heckle. That's not a rule, it's just physics.
+Somewhere a leaderboard has your name at the bottom and this is exactly why.
+You wanted to burn somebody and couldn't cover the match. Pathetic in a very specific way.
+The bot checked your balance, checked it again, and put its clipboard away. No.
