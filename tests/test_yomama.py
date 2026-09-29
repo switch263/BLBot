@@ -73,6 +73,29 @@ def test_joke_honors_a_requested_category():
         assert punch in cat["punchlines"]
 
 
+def test_joke_with_category_reports_a_real_category():
+    # The renderer trusts this name; a category that can't be drawn from the
+    # text of its own joke would be a crossed-wire bug.
+    for _ in range(50):
+        name, text = yomama.joke_with_category()
+        cat = yomama.CATEGORIES[name]
+        setup, _, punch = text.partition(", ")
+        assert setup in cat["setups"]
+        assert punch in cat["punchlines"]
+
+
+def test_joke_with_category_honors_a_requested_category():
+    for _ in range(20):
+        name, text = yomama.joke_with_category("ugly")
+        assert name == "ugly"
+
+
+def test_joke_with_category_is_seeded_reproducible():
+    a = yomama.joke_with_category(rng=random.Random(11))
+    b = yomama.joke_with_category(rng=random.Random(11))
+    assert a == b
+
+
 def test_unknown_category_falls_back_instead_of_raising():
     # The caller is a Discord command; a bad key is not worth a stack trace.
     assert yomama.joke("nonexistent-category")
@@ -106,3 +129,14 @@ def test_render_survives_a_very_long_joke():
 
     long_joke = "Your mother is so fat, " + "she keeps going and going " * 20 + "."
     assert render_joke_image(long_joke, seed=1).read().startswith(b"\x89PNG")
+
+
+def test_render_draws_every_category():
+    # A typo in a profile key or a feature name must not take down the render —
+    # but every category in the catalog has to produce a valid, nontrivial PNG.
+    pytest.importorskip("PIL")
+    from yomama_art import render_joke_image
+
+    for name in yomama.category_names():
+        buf = render_joke_image("Your mother is so fine.", name, seed=42)
+        assert buf.read().startswith(b"\x89PNG")

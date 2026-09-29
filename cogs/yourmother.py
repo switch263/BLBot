@@ -1,9 +1,13 @@
-"""/yourmother — 1,300+ hand-written yo-mama combos, occasionally illustrated.
+"""/yourmother — 1,300+ hand-written yo-mama combos, often illustrated.
 
 The jokes live in yomama.py (repo root, pure data) and the portrait renderer in
 yomama_art.py, so this file is only the Discord plumbing. Not a game — no
 prelude, nothing recorded — but like /roast it isn't free: YOURMOTHER_FEE goes
 into the house pot for every delivered joke.
+
+When a joke arrives as art, the art plays the joke: the category is plumbed
+into the renderer, which draws the mother to match — a "fat" mama is drawn
+wide, a "tall" mama long, a "nasty" mama green and buzzing with flies.
 """
 
 import asyncio
@@ -22,7 +26,9 @@ from yomama_art import render_joke_image
 logger = logging.getLogger(__name__)
 
 # How often a joke arrives as a commissioned oil painting instead of text.
-IMAGE_CHANCE = 0.15
+# The portrait is drawn to match the category — a different disaster every
+# time — and the fee is the same whether the joke ships as pixels or words.
+IMAGE_CHANCE = 0.30
 
 # Flat fee per delivered joke, paid into the house pot. The memorial refusal
 # is free; a broke joker pays nothing and gets roasted for being poor instead.
@@ -54,25 +60,29 @@ class YourMother(commands.Cog):
     # ---- shared logic -----------------------------------------------------
 
     def _joke_for(self, guild_id: int, joker_id: int, target: discord.abc.User,
-                  category: str | None) -> tuple[str, str] | str:
-        """(chat text, caption text) for a paid joke, or the plain refusal
-        string to send instead (memorial target: free; broke joker: unpaid).
+                  category: str | None) -> tuple[str, str, str] | str:
+        """(chat text, caption text, art flavor) for a paid joke, or the plain
+        refusal string to send instead (memorial target: free; broke joker:
+        unpaid).
 
         Chat gets the mention so Discord renders it as a name; the portrait
         gets the display name, since the renderer would draw a raw `<@id>`.
+        The flavor is the joke's actual category — the renderer draws the
+        mother to match it.
         """
         if is_memorial(target.id):
             return random.choice(MEMORIAL_RESPONSES)
         refusal = charge_fee(guild_id, joker_id, YOURMOTHER_FEE, "A joke about someone's mother")
         if refusal:
             return refusal
-        body = yomama.joke(category)
-        return f"{target.mention} {body}", f"{target.display_name} {body}"
+        flavor, body = yomama.joke_with_category(category)
+        return f"{target.mention} {body}", f"{target.display_name} {body}", flavor
 
-    async def _render(self, joke_text: str) -> discord.File | None:
-        """Draw the joke off the event loop. None if rendering blew up."""
+    async def _render(self, joke_text: str, flavor: str) -> discord.File | None:
+        """Draw the joke off the event loop with the portrait matched to its flavor.
+        None if rendering blew up."""
         try:
-            buf = await asyncio.to_thread(render_joke_image, joke_text)
+            buf = await asyncio.to_thread(render_joke_image, joke_text, flavor)
             return discord.File(buf, filename="yourmother.png")
         except Exception as e:
             # A busted render must never eat the joke — fall back to text.
@@ -92,12 +102,12 @@ class YourMother(commands.Cog):
         if isinstance(result, str):
             await ctx.send(result)
             return
-        joke, caption = result
+        joke, caption, flavor = result
         receipt = fee_trailer(YOURMOTHER_FEE)
 
         if random.random() < IMAGE_CHANCE:
             async with ctx.typing():
-                card = await self._render(caption)
+                card = await self._render(caption, flavor)
             if card is not None:
                 await ctx.send(f"{joke}\n*{random.choice(ART_INTROS)}*{receipt}", file=card)
                 return
@@ -124,13 +134,13 @@ class YourMother(commands.Cog):
         if isinstance(result, str):
             await interaction.response.send_message(result)
             return
-        joke, caption = result
+        joke, caption, flavor = result
         receipt = fee_trailer(YOURMOTHER_FEE)
 
         if random.random() < IMAGE_CHANCE:
             # Rendering outruns the 3s interaction window on a slow host.
             await interaction.response.defer()
-            card = await self._render(caption)
+            card = await self._render(caption, flavor)
             if card is not None:
                 await interaction.followup.send(
                     f"{joke}\n*{random.choice(ART_INTROS)}*{receipt}", file=card)

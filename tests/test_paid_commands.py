@@ -5,6 +5,7 @@ import pytest
 
 import economy
 import taunts
+import yomama
 
 pytest.importorskip("discord")
 pytest.importorskip("PIL")  # cogs/yourmother.py pulls in the portrait renderer
@@ -85,7 +86,9 @@ def test_yourmother_charges_only_when_delivered():
     assert isinstance(out, str) and out in yourmother.MEMORIAL_RESPONSES
     assert economy.get_coins(g, USER) == 150_000
     out = cog._joke_for(g, USER, _User(USER + 1), None)
-    assert isinstance(out, tuple) and len(out) == 2
+    # (chat text, caption text, art flavor) — the flavor steers the portrait.
+    assert isinstance(out, tuple) and len(out) == 3
+    assert out[2] in yomama.CATEGORIES
     assert economy.get_coins(g, USER) == 50_000
     out = cog._joke_for(g, USER, _User(USER + 1), None)
     assert isinstance(out, str) and any(line in out for line in taunts._load("broke"))

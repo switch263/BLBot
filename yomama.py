@@ -376,6 +376,14 @@ def combo_count() -> int:
     return sum(len(c["setups"]) * len(c["punchlines"]) for c in CATEGORIES.values())
 
 
+def _pick_category(category: str | None, r) -> tuple[str, dict[str, list[str]]]:
+    """(category name, category dict). An unknown or missing key falls back to
+    a random one rather than raising — the callers are Discord commands, and
+    there's no failure worth a stack trace."""
+    name = category if category in CATEGORIES else r.choice(list(CATEGORIES))
+    return name, CATEGORIES[name]
+
+
 def joke(category: str | None = None, rng: random.Random | None = None) -> str:
     """One complete joke. Pass a category key to pin the flavor.
 
@@ -383,5 +391,16 @@ def joke(category: str | None = None, rng: random.Random | None = None) -> str:
     caller is a Discord command, and there's no failure worth a stack trace.
     """
     r = rng or random
-    cat = CATEGORIES.get(category or "") or r.choice(list(CATEGORIES.values()))
+    _, cat = _pick_category(category, r)
     return f"{r.choice(cat['setups'])}, {r.choice(cat['punchlines'])}"
+
+
+def joke_with_category(category: str | None = None,
+                       rng: random.Random | None = None) -> tuple[str, str]:
+    """(category name, complete joke) — same rules as joke(), but also reports
+    which category actually got used, so the caller can point the
+    illustration (yomama_art.py) at the matching flavor: a "fat" mama is
+    drawn wide, a "tall" mama long, a "nasty" mama green and buzzing."""
+    r = rng or random
+    name, cat = _pick_category(category, r)
+    return name, f"{r.choice(cat['setups'])}, {r.choice(cat['punchlines'])}"
