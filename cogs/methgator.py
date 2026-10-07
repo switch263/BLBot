@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -147,12 +147,10 @@ ACTIONS = {
 }
 
 
-class MethGatorView(discord.ui.View):
-    def __init__(self, cog, user_id: int, bet: int):
-        super().__init__(timeout=120)
+class MethGatorView(StakeView):
+    def __init__(self, cog, guild_id: int, user_id: int, bet: int):
+        super().__init__(guild_id, user_id, bet)
         self.cog = cog
-        self.user_id = user_id
-        self.bet = bet
         for i, (key, data) in enumerate(ACTIONS.items()):
             # Discord max 5 buttons per row; split across rows 0 and 1.
             row = 0 if i < 4 else 1
@@ -168,6 +166,9 @@ class ActionButton(discord.ui.Button):
         view: MethGatorView = self.view  # type: ignore
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("Not your gator.", ephemeral=True)
+            return
+        if not view.settle():
+            await interaction.response.defer()
             return
         for child in view.children:
             child.disabled = True
@@ -226,12 +227,12 @@ class MethGator(commands.Cog):
         if start is None:
             return
         user, bet, reply = start.user, start.bet, start.reply
-        view = MethGatorView(self, user.id, bet)
+        view = MethGatorView(self, start.guild.id, user.id, bet)
         content = (
             f"🐊 **{user.display_name}** is a meth gator. **{bet:,}** coins on the line.\n"
             f"Pick your rampage. Each option has a different personality — and a different distribution of chaos."
         )
-        await reply(content, view=view)
+        view.message = await reply(content, view=view)
 
     @commands.command(name="methgator", aliases=["gator", "rampage"])
     @commands.guild_only()

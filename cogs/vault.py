@@ -22,7 +22,7 @@ import time
 from collections import Counter
 
 from economy import get_coins, record_game, casino_payout, kv_get, kv_set
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude, refund_stake
 
 logger = logging.getLogger(__name__)
 
@@ -288,9 +288,9 @@ class SubmitButton(discord.ui.Button):
         await interaction.response.edit_message(content=view.cog._render(g, footer), view=view)
 
 
-class VaultView(discord.ui.View):
+class VaultView(StakeView):
     def __init__(self, cog, game: VaultGame):
-        super().__init__(timeout=game.cfg["timeout"])
+        super().__init__(game.guild_id, game.user_id, game.bet, timeout=game.cfg["timeout"])
         self.cog = cog
         self.game = game
         # Digit buttons fill rows 0-1 (Discord caps a row at 5 buttons);
@@ -303,6 +303,24 @@ class VaultView(discord.ui.View):
         control_row = rows
         self.add_item(UndoButton(row=control_row))
         self.add_item(SubmitButton(row=control_row))
+
+    def is_settled(self) -> bool:
+        return self.game.ended
+
+    async def on_abandon(self) -> str:
+        # Never submitted a guess: refund. Walking away mid-crack is a
+        # forfeit — otherwise bad feedback plus a coffee break is a free exit.
+        g = self.game
+        g.ended = True
+        if not g.attempts:
+            return self.cog._render(g, refund_stake(g.guild_id, g.user_id, g.bet))
+        record_game(g.guild_id, g.user_id, g.cfg["game"], won=False)
+        code_str = "".join(str(d) for d in g.code)
+        return self.cog._render(g, (
+            f"⏰ **The alarm tripped while you stood there.** The code was **{code_str}**. "
+            f"**{g.bet:,}** coins stay with the house.\n"
+            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+        ))
 
 
 class TheVault(commands.Cog):
@@ -352,7 +370,7 @@ class TheVault(commands.Cog):
         game = VaultGame(start.guild.id, start.user.id, start.user.display_name,
                          start.bet, cfg)
         view = VaultView(self, game)
-        await start.reply(self._render(game), view=view)
+        view.message = await start.reply(self._render(game), view=view)
 
     # ---- prefix: !vault <bet> [difficulty], plus legacy aliases ------------
 

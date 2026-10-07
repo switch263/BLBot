@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +81,11 @@ WIN_FLAVOR = [
 ]
 
 
-class BridgeView(discord.ui.View):
-    def __init__(self, cog, user_id: int, bet: int, options: list[str], correct_idx: int):
-        super().__init__(timeout=60)
+class BridgeView(StakeView):
+    def __init__(self, cog, guild_id: int, user_id: int, bet: int, options: list[str], correct_idx: int):
+        super().__init__(guild_id, user_id, bet)
         self.cog = cog
-        self.user_id = user_id
-        self.bet = bet
         self.correct_idx = correct_idx
-        self.answered = False
         for i, opt in enumerate(options):
             self.add_item(AnswerButton(i, opt))
 
@@ -103,10 +100,9 @@ class AnswerButton(discord.ui.Button):
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("Wait your turn, vagrant.", ephemeral=True)
             return
-        if view.answered:
+        if not view.settle():
             await interaction.response.defer()
             return
-        view.answered = True
         for child in view.children:
             child.disabled = True
             if isinstance(child, AnswerButton):
@@ -159,14 +155,14 @@ class TrollBridge(commands.Cog):
             return
         user, bet, reply = start.user, start.bet, start.reply
         question, options, correct_idx = random.choice(RIDDLES)
-        view = BridgeView(self, user.id, bet, options, correct_idx)
+        view = BridgeView(self, start.guild.id, user.id, bet, options, correct_idx)
         text = (
             f"🌉 **{user.display_name}** approaches the bridge. The troll emerges, reeking of bologna.\n"
             f"The troll demands **{bet:,}** coins and poses a riddle:\n\n"
             f"**❓ {question}**\n\n"
             f"Pick wisely. Correct = **3×** back. Wrong = lose bet + 50% fine."
         )
-        await reply(text, view=view)
+        view.message = await reply(text, view=view)
 
     @commands.command(name="troll", aliases=["bridge", "riddle"])
     @commands.guild_only()

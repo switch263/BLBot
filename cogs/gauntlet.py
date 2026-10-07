@@ -25,7 +25,7 @@ import logging
 
 import economy
 from amount import amount_error
-from game_common import casino_prelude, parse_wallet_amount
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class GauntletView(discord.ui.View):
     who wanders off never loses a survived run."""
 
     def __init__(self, cog, guild_id: int, user_id: int, bet: int):
-        super().__init__(timeout=120)
+        super().__init__(timeout=STAKE_TIMEOUT)
         self.cog = cog
         self.guild_id = guild_id
         self.user_id = user_id
@@ -213,9 +213,17 @@ class GauntletView(discord.ui.View):
         if self.resolved or self.message is None:
             return
         self.resolved = True
-        paid, minted = self._payout_now(self.current_mult > 1.0)
-        embed = self._cash_embed(paid, minted)
-        embed.set_footer(text="Auto-cashed out — you went quiet.")
+        if self.survived == 0:
+            self._disable()
+            embed = discord.Embed(
+                title="🕰️ Gauntlet Abandoned",
+                description=refund_stake(self.guild_id, self.user_id, self.bet),
+                color=discord.Color.greyple(),
+            )
+        else:
+            paid, minted = self._payout_now(self.current_mult > 1.0)
+            embed = self._cash_embed(paid, minted)
+            embed.set_footer(text="Auto-cashed out — you went quiet.")
         try:
             await self.message.edit(embed=embed, view=self)
         except discord.HTTPException:

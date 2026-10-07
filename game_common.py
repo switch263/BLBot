@@ -34,7 +34,7 @@ Pure glue — talks to economy.py, never to SQLite.
 import discord
 
 from economy import (casino_ban_message, check_bet, get_coins, jail_message,
-                     transfer_to_house)
+                     refund_from_house, transfer_to_house)
 from amount import parse_amount, amount_error
 from taunts import broke_taunt
 
@@ -180,3 +180,73 @@ async def casino_prelude(
             return None
 
     return GameStart(guild, user, bet, reply, is_slash)
+
+
+# ---- abandoned stakes --------------------------------------------------------
+
+# How long a game holding a collected stake waits on a silent player before it
+# hands the stake back. discord.py resets a view's timeout on every click, so
+# this is idle time, not total game time.
+STAKE_TIMEOUT = 5 * 60
+
+
+def refund_stake(guild_id: int, user_id: int, bet: int) -> str:
+    """Hand an abandoned game's stake back out of the house and return the
+    line announcing it. A refund, not a win: refund_from_house bumps no
+    winnings stats, and callers record no game for it."""
+    refunded = refund_from_house(guild_id, user_id, bet)
+    mins = STAKE_TIMEOUT // 60
+    if refunded >= bet:
+        return f"⏰ **Timed out** — no move in {mins} minutes. Your **{bet:,}** stake was refunded."
+    return (f"⏰ **Timed out** — no move in {mins} minutes. Refunded **{refunded:,}** "
+            f"of your **{bet:,}** stake — the house is tapped out.")
+
+
+class StakeView(discord.ui.View):
+    """A view sitting on a stake that's already in the house. If the player
+    goes quiet for STAKE_TIMEOUT it settles the game instead of letting the
+    view die with the coins in it — by default a full refund.
+
+    Subclasses claim the game with `settle()` before paying anything (it
+    returns False if a double-click or the timeout got there first), set
+    `self.message` to the sent message so the timeout can edit it, and
+    override `on_abandon()` when an idle game should cash out progress rather
+    than refund. Views that track "over" on their game object override
+    `is_settled()`."""
+
+    def __init__(self, guild_id: int, user_id: int, bet: int, *,
+                 timeout: float = STAKE_TIMEOUT):
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.bet = bet
+        self.settled = False
+        self.message: discord.Message | None = None
+
+    def is_settled(self) -> bool:
+        return self.settled
+
+    def settle(self) -> bool:
+        if self.is_settled():
+            return False
+        self.settled = True
+        return True
+
+    async def on_abandon(self) -> str:
+        """Settle an idle game; return the message's new content."""
+        note = refund_stake(self.guild_id, self.user_id, self.bet)
+        original = self.message.content if self.message else ""
+        return f"{original}\n\n{note}" if original else note
+
+    async def on_timeout(self):
+        if not self.settle():
+            return
+        content = await self.on_abandon()
+        for child in self.children:
+            child.disabled = True
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(content=content, view=self)
+        except discord.HTTPException:
+            pass

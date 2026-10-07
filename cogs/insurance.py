@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_user, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +96,10 @@ CLAIMS = {
 }
 
 
-class InsuranceView(discord.ui.View):
-    def __init__(self, cog, user_id: int, bet: int):
-        super().__init__(timeout=120)
+class InsuranceView(StakeView):
+    def __init__(self, cog, guild_id: int, user_id: int, bet: int):
+        super().__init__(guild_id, user_id, bet)
         self.cog = cog
-        self.user_id = user_id
-        self.bet = bet
         for i, (key, data) in enumerate(CLAIMS.items()):
             row = 0 if i < 3 else 1
             self.add_item(ClaimButton(key, data["label"], data["emoji"], row=row))
@@ -116,6 +114,9 @@ class ClaimButton(discord.ui.Button):
         view: InsuranceView = self.view  # type: ignore
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("Not your policy.", ephemeral=True)
+            return
+        if not view.settle():
+            await interaction.response.defer()
             return
         for child in view.children:
             child.disabled = True
@@ -192,13 +193,13 @@ class Insurance(commands.Cog):
         if start is None:
             return
         user, bet, reply = start.user, start.bet, start.reply
-        view = InsuranceView(self, user.id, bet)
+        view = InsuranceView(self, start.guild.id, user.id, bet)
         content = (
             f"📋 **{user.display_name}** walks into the Insurance Fraud Bureau. "
             f"Premium paid: **{bet:,}** coins.\n"
             f"Pick a claim. Each has a different risk profile — and a different chance of jail."
         )
-        await reply(content, view=view)
+        view.message = await reply(content, view=view)
 
     @commands.command(name="insurance", aliases=["claim", "fraud"])
     @commands.guild_only()

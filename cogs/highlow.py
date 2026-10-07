@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, record_game, casino_payout
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude, refund_stake
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +107,9 @@ class CashOutButton(discord.ui.Button):
         await interaction.response.edit_message(content=view.cog._render(g, footer), view=view)
 
 
-class HighLowView(discord.ui.View):
+class HighLowView(StakeView):
     def __init__(self, cog, game: HighLowGame):
-        super().__init__(timeout=180)
+        super().__init__(game.guild_id, game.user_id, game.bet)
         self.cog = cog
         self.game = game
         self.add_item(HigherButton())
@@ -122,6 +122,25 @@ class HighLowView(discord.ui.View):
         payout = int(g.bet * g.multiplier)
         self.cashout.label = f"Cash Out ({g.multiplier:.2f}×, +{payout - g.bet})"
         self.cashout.disabled = g.ended or g.streak == 0
+
+    def is_settled(self) -> bool:
+        return self.game.ended
+
+    async def on_abandon(self) -> str:
+        # Wandered off: no streak is a refund; otherwise cash out for them.
+        g = self.game
+        g.ended = True
+        if g.streak == 0:
+            return self.cog._render(g, refund_stake(g.guild_id, g.user_id, g.bet))
+        requested = int(g.bet * g.multiplier)
+        paid = casino_payout(g.guild_id, g.user_id, requested)
+        record_game(g.guild_id, g.user_id, "highlow", won=paid > g.bet)
+        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        return self.cog._render(g, (
+            f"⏰ **Auto-cashed out** at **{g.multiplier:.2f}×** — you went quiet. "
+            f"**{paid:,}** coins (net **{paid - g.bet:+,}**).{short} Streak: **{g.streak}**.\n"
+            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+        ))
 
 
 class HigherOrLower(commands.Cog):
@@ -222,7 +241,7 @@ class HigherOrLower(commands.Cog):
         game = HighLowGame(guild.id, user.id, user.display_name, bet)
         view = HighLowView(self, game)
         view._refresh()
-        await reply(self._render(game), view=view)
+        view.message = await reply(self._render(game), view=view)
 
     @commands.command(name="highlow", aliases=["hilo", "higher", "lower"])
     @commands.guild_only()

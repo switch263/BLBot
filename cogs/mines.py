@@ -32,7 +32,7 @@ import logging
 
 import economy
 from amount import amount_error
-from game_common import casino_prelude, parse_wallet_amount
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class MinesView(GridView):
     banked so a survived board is never lost."""
 
     def __init__(self, cog, guild_id: int, user_id: int, bet: int, num_mines: int):
-        super().__init__(user_id, rows=MINES_ROWS, cols=MINES_COLS, timeout=180,
+        super().__init__(user_id, rows=MINES_ROWS, cols=MINES_COLS, timeout=STAKE_TIMEOUT,
                          not_yours="Not your board — start your own with `/mines`.")
         self.cog = cog
         self.guild_id = guild_id
@@ -192,11 +192,9 @@ class MinesView(GridView):
             return
         if not self.revealed:
             # Nothing banked — refund the ante so an ignored board isn't a loss.
-            economy.casino_payout(self.guild_id, self.user_id, self.bet)
-            economy.record_game(self.guild_id, self.user_id, "mines", False)
             embed = discord.Embed(
                 title="🕰️ Board Abandoned",
-                description=f"You never picked a tile. Your **{self.bet:,}** was refunded.",
+                description=refund_stake(self.guild_id, self.user_id, self.bet),
                 color=discord.Color.greyple(),
             )
         else:

@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ class ExpeditionView(GridView):
     HIDDEN_LABEL = "🌲"
 
     def __init__(self, cog, guild_id: int, user_id: int, user_name: str, bet: int):
-        super().__init__(user_id, rows=GRID_ROWS, cols=GRID_COLS, timeout=300,
+        super().__init__(user_id, rows=GRID_ROWS, cols=GRID_COLS, timeout=STAKE_TIMEOUT,
                          not_yours="Find your own forest.")
         self.cog = cog
         self.guild_id = guild_id
@@ -169,13 +169,24 @@ class ExpeditionView(GridView):
         await interaction.response.edit_message(content=content, view=self)
 
     async def on_abandon(self):
-        # Walked away mid-expedition: bank whatever prints they found.
+        # Walked away mid-expedition: bank whatever prints they found, or
+        # refund the stake if they never found one.
         if self.footprints_found > 0:
             mult = current_multiplier(self.footprints_found)
-            casino_payout(self.guild_id, self.user_id, int(self.bet * mult))
+            requested = int(self.bet * mult)
+            paid = casino_payout(self.guild_id, self.user_id, requested)
             record_game(self.guild_id, self.user_id, "bigfoot", won=True)
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            footer = f"⏰ **Auto-headed back** at **{mult:.2f}×** — you went quiet. Net **{paid - self.bet:+,}** coins.{short}"
         else:
-            record_game(self.guild_id, self.user_id, "bigfoot", won=False)
+            footer = refund_stake(self.guild_id, self.user_id, self.bet)
+        self.finish()
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(content=self.cog._render(self, footer), view=self)
+        except discord.HTTPException:
+            pass
 
     def _refresh_cashout(self):
         mult = current_multiplier(self.footprints_found)

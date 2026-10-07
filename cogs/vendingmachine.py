@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude
 
 logger = logging.getLogger(__name__)
 
@@ -99,12 +99,10 @@ FLAVOR_PULL = [
 ]
 
 
-class VendingView(discord.ui.View):
-    def __init__(self, cog, user_id: int, bet: int):
-        super().__init__(timeout=60)
+class VendingView(StakeView):
+    def __init__(self, cog, guild_id: int, user_id: int, bet: int):
+        super().__init__(guild_id, user_id, bet)
         self.cog = cog
-        self.user_id = user_id
-        self.bet = bet
         for slot_id, soda_name in SODAS:
             self.add_item(SlotButton(slot_id, soda_name))
 
@@ -119,6 +117,9 @@ class SlotButton(discord.ui.Button):
         view: VendingView = self.view  # type: ignore
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("Not your machine.", ephemeral=True)
+            return
+        if not view.settle():
+            await interaction.response.defer()
             return
         for child in view.children:
             child.disabled = True
@@ -273,12 +274,12 @@ class VendingMachine(commands.Cog):
         if start is None:
             return
         user, bet, reply = start.user, start.bet, start.reply
-        view = VendingView(self, user.id, bet)
+        view = VendingView(self, start.guild.id, user.id, bet)
         content = (
             f"🤖 **THE VENDING MACHINE FROM HELL** accepts **{user.display_name}**'s offering of **{bet:,}** coins.\n"
             f"Pick a slot. You probably shouldn't."
         )
-        await reply(content, view=view)
+        view.message = await reply(content, view=view)
 
     @commands.command(name="vend", aliases=["vendingmachine", "hellvend"])
     @commands.guild_only()

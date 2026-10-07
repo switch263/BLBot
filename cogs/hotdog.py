@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import StakeView, casino_prelude, refund_stake
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +101,29 @@ class HotDogGame:
         self.ended = False
 
 
-class HotDogView(discord.ui.View):
+class HotDogView(StakeView):
     def __init__(self, cog, game: HotDogGame):
-        super().__init__(timeout=180)
+        super().__init__(game.guild_id, game.user_id, game.bet)
         self.cog = cog
         self.game = game
+
+    def is_settled(self) -> bool:
+        return self.game.ended
+
+    async def on_abandon(self) -> str:
+        # Wandered off: no dogs eaten is a refund; otherwise tap out for them.
+        g = self.game
+        g.ended = True
+        if g.eaten == 0:
+            g.log.append(refund_stake(g.guild_id, g.user_id, g.bet))
+        else:
+            record_game(g.guild_id, g.user_id, "hotdog", won=True)
+            requested = int(g.bet * g.multiplier)
+            paid = casino_payout(g.guild_id, g.user_id, requested)
+            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            g.log.append(f"⏰ **Auto-tapped out at ×{g.multiplier:.2f}** — you went quiet.{short}")
+        self._refresh()
+        return self.cog._render(g, final=True)
 
     def _refresh(self):
         payout = int(self.game.bet * self.game.multiplier)
@@ -219,7 +237,7 @@ class HotDogContest(commands.Cog):
         game = HotDogGame(start.guild.id, start.user.id, start.user.display_name, start.bet)
         view = HotDogView(self, game)
         view._refresh()
-        await start.reply(self._render(game), view=view)
+        view.message = await start.reply(self._render(game), view=view)
 
     @commands.command(name="dogs", aliases=["hotdog", "hotdogs"])
     @commands.guild_only()
