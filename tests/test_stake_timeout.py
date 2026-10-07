@@ -23,6 +23,7 @@ def _staked(guild):
     """Fresh wallet with BET already collected into the house."""
     economy.delete_wallet(guild, USER)
     economy.get_wallet(guild, USER)
+    economy.add_coins(guild, USER, 10 * BET)  # STARTING_COINS can't cover BET
     before = economy.get_coins(guild, USER)
     assert economy.transfer_to_house(guild, USER, BET)["ok"]
     return before
