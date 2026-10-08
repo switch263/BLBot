@@ -1,13 +1,25 @@
 import discord
 from discord.ext import commands
 import logging
+import time
 import economy
 
-from config import ADMIN_CHANNEL_ID
+from config import ADMIN_CHANNEL_ID, BOOT_TIME
 from amount import parse_amount, amount_error
 from game_common import parse_wallet_amount
 
 logger = logging.getLogger(__name__)
+
+
+def format_uptime(seconds: float) -> str:
+    """3725 -> '1 hour, 2 minutes, 5 seconds'. Zero units are skipped."""
+    seconds = int(seconds)
+    parts = []
+    for name, size in (("day", 86400), ("hour", 3600), ("minute", 60), ("second", 1)):
+        n, seconds = divmod(seconds, size)
+        if n:
+            parts.append(f"{n} {name}{'' if n == 1 else 's'}")
+    return ", ".join(parts) or "0 seconds"
 
 
 class Admin(commands.Cog):
@@ -52,6 +64,14 @@ class Admin(commands.Cog):
         await ctx.send(embed=embed)
 
         logger.info(f"Admin {ctx.author} granted {amount} coins to {user} in guild {guild_id}")
+
+    @commands.command(name="uptime")
+    async def uptime(self, ctx):
+        """How long the bot process has been running. Admin channel only."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return  # Silently ignore if not in admin channel
+        await ctx.send(f"⏱️ Up for **{format_uptime(time.time() - BOOT_TIME)}** "
+                       f"(since <t:{int(BOOT_TIME)}:F>).")
 
     @commands.command(name="unjail", aliases=["pardon"])
     async def unjail(self, ctx, user: discord.Member):

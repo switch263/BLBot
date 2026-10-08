@@ -16,6 +16,10 @@ dbfile = os.path.join(DATA_DIR, 'quotes.db')
 if hasattr(time, "tzset"):
     time.tzset()
 
+# When this process started, for !uptime. Lives here rather than in a cog
+# because config is imported once per process — a cog reload would reset it.
+BOOT_TIME = time.time()
+
 # Discord channel where admin commands are accepted, and where kev2tall's
 # smite scatters the coins seized from anyone who bounties the memorial.
 ADMIN_CHANNEL_ID = 401391297211924480
