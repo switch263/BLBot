@@ -5,7 +5,8 @@ import random
 import logging
 
 from economy import get_coins, record_game, casino_payout, transfer_to_house
-from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake
+from amount import format_compact
+from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -228,7 +229,7 @@ class DenView(GridView):
     def _refresh_cashout(self):
         mult = self.get_multiplier()
         net = int(self.bet * mult) - self.bet
-        self.action_btn.label = f"Climb Out ({mult:.2f}×, +{net:,})"
+        self.action_btn.label = button_label(f"Climb Out ({mult:.2f}×, +{format_compact(net)})")
 
     def _apply_bonus_effect(self):
         bt = self.bonus_type

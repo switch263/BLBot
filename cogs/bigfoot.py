@@ -5,7 +5,8 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake
+from amount import format_compact
+from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -191,7 +192,7 @@ class ExpeditionView(GridView):
     def _refresh_cashout(self):
         mult = current_multiplier(self.footprints_found)
         net = int(self.bet * mult) - self.bet
-        self.action_btn.label = f"Head Back ({mult:.2f}×, +{net})"
+        self.action_btn.label = button_label(f"Head Back ({mult:.2f}×, +{format_compact(net)})")
 
 
 class BigfootExpedition(commands.Cog):

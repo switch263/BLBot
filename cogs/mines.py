@@ -31,8 +31,8 @@ import random
 import logging
 
 import economy
-from amount import amount_error
-from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake
+from amount import amount_error, format_compact
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ class MinesView(GridView):
 
     # ---- rendering ------------------------------------------------------
     def _sync(self):
-        self.action_btn.label = f"💰 Cash Out ({self.banked:,})"
+        self.action_btn.label = button_label(f"💰 Cash Out ({format_compact(self.banked)})")
 
     def tile_face(self, idx: int):
         if idx in self.mines:

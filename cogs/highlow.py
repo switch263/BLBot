@@ -5,7 +5,8 @@ import random
 import logging
 
 from economy import get_coins, record_game, casino_payout
-from game_common import StakeView, casino_prelude, refund_stake
+from amount import format_compact
+from game_common import StakeView, casino_prelude, refund_stake, button_label
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class HighLowView(StakeView):
     def _refresh(self):
         g = self.game
         payout = int(g.bet * g.multiplier)
-        self.cashout.label = f"Cash Out ({g.multiplier:.2f}×, +{payout - g.bet})"
+        self.cashout.label = button_label(f"Cash Out ({g.multiplier:.2f}×, +{format_compact(payout - g.bet)})")
         self.cashout.disabled = g.ended or g.streak == 0
 
     def is_settled(self) -> bool:

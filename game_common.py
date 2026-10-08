@@ -61,6 +61,19 @@ def fee_trailer(amount: int) -> str:
     return f"\n-# −{amount:,} coins. Worth it."
 
 
+# Discord rejects the whole message edit (400, "Must be 80 or fewer in
+# length") when any button label runs long — and a label with a full
+# `f"{coins:,}"` in it does once balances get big.
+BUTTON_LABEL_MAX = 80
+
+
+def button_label(text: str) -> str:
+    """Clamp a button label to Discord's limit. A backstop: money in a label
+    should already be `format_compact`, this just keeps a long display name
+    from taking the game down with it."""
+    return text if len(text) <= BUTTON_LABEL_MAX else text[:BUTTON_LABEL_MAX - 1] + "…"
+
+
 def parse_wallet_amount(text, guild_id: int, user_id: int) -> int | None:
     """parse_amount against a player's WALLET, so `all`, `half` and `50%`
     work. The one way any command that takes coins should read its amount —

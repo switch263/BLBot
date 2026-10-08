@@ -151,3 +151,39 @@ def amount_error(raw, contextual: bool = False) -> str:
     parsed with `available=`) so the help text advertises those forms."""
     help_text = CONTEXT_HELP if contextual else AMOUNT_HELP
     return f"❓ Couldn't read **{raw}** as an amount. {help_text}"
+
+
+# Display side of the suffix table: the short form a player could type back.
+# Largest first; only the canonical spelling of each magnitude.
+_DISPLAY_SUFFIXES = [
+    (10**33, "dc"), (10**30, "no"), (10**27, "oc"), (10**24, "sp"),
+    (10**21, "sx"), (10**18, "qi"), (10**15, "q"), (10**12, "t"),
+    (10**9, "b"), (10**6, "m"), (10**3, "k"),
+]
+
+
+def format_compact(n) -> str:
+    """A short, typeable rendering of a coin amount: `999`, `1.5k`, `12.3b`,
+    `450qi`, and `2.5e40` once the suffixes run out. Pure integer math (no
+    float rounding on a 300-digit balance) and it truncates rather than
+    rounds, so the shown figure never overstates what's there. Always a few
+    characters — use it anywhere a full `f"{n:,}"` won't fit, like a button
+    label (Discord caps those at 80)."""
+    n = int(n)
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    if n < 1000:
+        return f"{sign}{n}"
+    if n >= 10**36:
+        digits = str(n)
+        frac = digits[1:3].rstrip("0")
+        return f"{sign}{digits[0]}{'.' + frac if frac else ''}e{len(digits) - 1}"
+    for scale, suffix in _DISPLAY_SUFFIXES:
+        if n >= scale:
+            whole, rem = divmod(n, scale)
+            if whole >= 100:
+                return f"{sign}{whole}{suffix}"
+            places = 2 if whole < 10 else 1
+            frac = f"{rem * 10**places // scale:0{places}d}".rstrip("0")
+            return f"{sign}{whole}{'.' + frac if frac else ''}{suffix}"
+    return f"{sign}{n}"  # unreachable

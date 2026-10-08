@@ -6,6 +6,8 @@ import logging
 import time
 import asyncio
 import economy
+from amount import format_compact
+from game_common import button_label
 
 logger = logging.getLogger(__name__)
 
@@ -401,7 +403,7 @@ class _BailButton(discord.ui.Button):
 
     def __init__(self, cog, target_id: int, target_name: str, bail_amount: int, row: int):
         super().__init__(
-            label=f"Bail {target_name} ({bail_amount:,})",
+            label=button_label(f"Bail {target_name} ({format_compact(bail_amount)})"),
             style=discord.ButtonStyle.success,
             emoji="💼",
             row=row,
@@ -438,7 +440,7 @@ class _ExtendOpenButton(discord.ui.Button):
 
     def __init__(self, cog, target_id: int, target_name: str, row: int):
         super().__init__(
-            label=f"Extend {target_name}",
+            label=button_label(f"Extend {target_name}"),
             style=discord.ButtonStyle.danger,
             emoji="⛓️",
             row=row,
@@ -495,7 +497,7 @@ class JailActionView(discord.ui.View):
 class _ExtendTierButton(discord.ui.Button):
     def __init__(self, cog, guild_id: int, payer_id: int, target: discord.Member, hours: int, cost: int):
         super().__init__(
-            label=f"+{hours}h — {cost:,} coins",
+            label=button_label(f"+{hours}h — {format_compact(cost)} coins"),
             style=discord.ButtonStyle.primary,
         )
         self.cog = cog

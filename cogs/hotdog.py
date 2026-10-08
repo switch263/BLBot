@@ -5,7 +5,8 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import StakeView, casino_prelude, refund_stake
+from amount import format_compact
+from game_common import StakeView, casino_prelude, refund_stake, button_label
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class HotDogView(StakeView):
     def _refresh(self):
         payout = int(self.game.bet * self.game.multiplier)
         net = payout - self.game.bet
-        self.bank_button.label = f"Tap Out ({self.game.multiplier:.2f}×, +{net})"
+        self.bank_button.label = button_label(f"Tap Out ({self.game.multiplier:.2f}×, +{format_compact(net)})")
         self.eat_button.disabled = self.game.ended or self.game.eaten >= MAX_DOGS
         self.bank_button.disabled = self.game.ended or self.game.eaten == 0
 

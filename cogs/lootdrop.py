@@ -7,6 +7,8 @@ import sqlite3
 from datetime import date, datetime, timedelta
 import logging
 import economy
+from amount import format_compact
+from game_common import button_label
 from cogs.lootdrop_card import render_card, pick_species, _OBJECT_DISPLAY_NAMES
 from items import ITEMS, ALL_ITEMS
 
@@ -157,7 +159,7 @@ class ItemDropView(discord.ui.View):
             self.sell_value = 0
             return
         self.sell_value = sell_value
-        self.sell_button.label = f"Sell · {sell_value:,}"
+        self.sell_button.label = button_label(f"Sell · {format_compact(sell_value)}")
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
         """Reject clicks from anyone but the drop's owner."""

@@ -24,8 +24,8 @@ import random
 import logging
 
 import economy
-from amount import amount_error
-from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake
+from amount import amount_error, format_compact
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class GauntletView(discord.ui.View):
         return None
 
     def _sync(self):
-        self.cash_btn.label = f"💰 Cash Out ({self.banked:,})"
+        self.cash_btn.label = button_label(f"💰 Cash Out ({format_compact(self.banked)})")
 
     def _disable(self):
         for child in self.children:
