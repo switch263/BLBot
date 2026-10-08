@@ -78,6 +78,7 @@ def _build_pages() -> list[discord.Embed]:
     ), inline=False)
     e4.add_field(name="Info & Reference", value=(
         "`/chucknorris` - Random Chuck Norris fact\n"
+        "`!date` - Today's date, written out (`!date pacific`, `!date @user`; save yours with `/pref set timezone`)\n"
         "`!tarkov_time` - Escape from Tarkov times (prefix only)\n"
         "`/quote` - Get a quote from the database\n"
         "`/quote_add` - Add a quote\n"
