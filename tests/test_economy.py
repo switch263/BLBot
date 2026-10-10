@@ -18,7 +18,7 @@ def test_transfer_and_payout_conserve_money():
     res = economy.transfer_to_house(G, U, 5_000)
     assert res["ok"]
     paid = economy.casino_payout(G, U, 2_500)
-    assert paid == 2_500
+    assert paid == 2_475  # 2,500 minus the 1% pot skim
     assert economy.get_total_economy(G) == start_total
 
 
@@ -157,13 +157,13 @@ def test_bankrupting_payout_logs_event_and_drains_both_buckets():
     assert economy.transfer_to_house(G, U, 1_000)["ok"]
     state = economy.get_house_state(G)
     total_house = state["on_hand"] + state["reserve"]
-    owed = total_house + 500_000
+    owed = 2 * total_house  # overshoot: the 1% pot skim still can't be covered
     paid = economy.casino_payout(G, U, owed)
     assert 0 < paid < owed  # everything the house had, but not what was owed
     events = economy.pop_bankruptcy_events(G)
     assert len(events) == 1
     assert events[0]["user_id"] == U
-    assert events[0]["owed"] == owed
+    assert events[0]["owed"] == owed - owed // 100  # the skimmed amount is what was owed
     assert events[0]["paid"] == paid
     assert economy.pop_bankruptcy_events(G) == []  # pop clears the list
     state = economy.get_house_state(G)
@@ -175,7 +175,7 @@ def test_fully_covered_payout_logs_no_event():
     economy.get_house_state(G)
     economy.add_coins(G, U, 1_000)
     assert economy.transfer_to_house(G, U, 500)["ok"]
-    assert economy.casino_payout(G, U, 500) == 500
+    assert economy.casino_payout(G, U, 500) == 495  # minus the 1% pot skim
     assert economy.pop_bankruptcy_events(G) == []
 
 
@@ -476,7 +476,7 @@ def test_capped_payout_logs_a_ceiling_strike():
     assert len(events) == 1
     ev = events[0]
     assert ev["user_id"] == U
-    assert ev["owed"] == 400_000 and ev["paid"] == 0 and ev["lost"] == 400_000
+    assert ev["owed"] == 396_000 and ev["paid"] == 0 and ev["lost"] == 396_000  # post-skim
     assert ev["source"] == "payout"
     assert economy.pop_ceiling_events(G) == []       # pop clears the queue
     # A ceiling strike is NOT a bankruptcy — the house was flush.
@@ -491,7 +491,7 @@ def test_partially_capped_payout_reports_only_the_lost_part():
     assert economy.transfer_to_house(G, 2, 900_000)["ok"]
     assert economy.casino_payout(G, U, 5_000) == 1_000  # only what fit
     ev = economy.pop_ceiling_events(G)[0]
-    assert (ev["owed"], ev["paid"], ev["lost"]) == (5_000, 1_000, 4_000)
+    assert (ev["owed"], ev["paid"], ev["lost"]) == (4_950, 1_000, 3_950)  # post-skim
 
 
 def test_uncapped_payout_logs_no_strike():
@@ -499,7 +499,7 @@ def test_uncapped_payout_logs_no_strike():
     economy.get_house_state(G)
     economy.add_coins(G, U, 10_000)
     assert economy.transfer_to_house(G, U, 5_000)["ok"]
-    assert economy.casino_payout(G, U, 5_000) == 5_000
+    assert economy.casino_payout(G, U, 5_000) == 4_950  # minus the 1% pot skim
     assert economy.pop_ceiling_events(G) == []
 
 
@@ -575,12 +575,13 @@ def test_house_flow_conserves_money_past_int64():
     start_total = economy.get_total_economy(G)
     assert economy.transfer_to_house(G, U, 2 * BIG)["ok"]
     assert economy.get_house_state(G)["on_hand"] >= 2 * BIG
-    assert economy.casino_payout(G, U, 2 * BIG) == 2 * BIG
-    assert economy.get_coins(G, U) == 3 * BIG + economy.STARTING_COINS
+    assert economy.casino_payout(G, U, 2 * BIG) == 2 * BIG - (2 * BIG) // 100
+    assert economy.get_coins(G, U) == 3 * BIG + economy.STARTING_COINS - (2 * BIG) // 100
     assert economy.get_total_economy(G) == start_total
     # net_won is signed and also text-backed: stake down, payout back up.
-    assert economy.get_all_net_winnings(G) == [(U, 0)] or \
-        dict(economy.get_all_net_winnings(G))[U] == 0
+    _skim = (2 * BIG) // 100  # the skim leaves net_won slightly negative
+    assert economy.get_all_net_winnings(G) == [(U, -_skim)] or \
+        dict(economy.get_all_net_winnings(G))[U] == -_skim
 
 
 def test_transfer_and_deduct_guards_compare_numerically():

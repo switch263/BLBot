@@ -998,6 +998,13 @@ def try_deduct(guild_id: int, user_id: int, amount: int) -> bool:
 # Stays scale-invariant: doesn't matter if you read every second or once a month,
 # the effective growth equals the APR exactly.
 HOUSE_INTEREST_APR = 0.15
+
+# The pot (house on-hand) is fed by: 100% of every lost bet (already, via
+# transfer_to_house), POT_WIN_SKIM_PCT% of every win (skimmed in
+# casino_payout), and passive growth of 1 coin every POT_ACCRUAL_SECONDS
+# regardless of play (minted in _normalize_house).
+POT_WIN_SKIM_PCT = 1
+POT_ACCRUAL_SECONDS = 180
 _SECONDS_PER_YEAR = 365.25 * 24 * 3600
 
 # Elapsed time is clamped before compounding: a corrupt or zeroed timestamp
@@ -1088,6 +1095,29 @@ def _normalize_house(conn: sqlite3.Connection, guild_id: int):
     BEGIN IMMEDIATE so the read-modify-write is atomic."""
     import time as _t
     now = _t.time()
+    # Passive pot growth: mint 1 coin per POT_ACCRUAL_SECONDS into the on-hand
+    # pot, regardless of play. The clock carries the sub-interval remainder so
+    # growth is exactly 1 coin / POT_ACCRUAL_SECONDS over time.
+    prow = conn.execute(
+        "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=0 AND namespace='pot' AND key='accrual_ts'",
+        (guild_id,)).fetchone()
+    if prow is None:
+        conn.execute(
+            "INSERT OR IGNORE INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,0,'pot','accrual_ts',?)",
+            (guild_id, int(now)))
+    else:
+        last_pot = int(prow[0] or 0) or int(now)
+        minted = int((now - last_pot) // POT_ACCRUAL_SECONDS)
+        if minted > 0:
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, 0)",
+                (guild_id, get_house_id()))
+            conn.execute(
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                (minted, guild_id, get_house_id()))
+            conn.execute(
+                "UPDATE cog_kv SET value=? WHERE guild_id=? AND user_id=0 AND namespace='pot' AND key='accrual_ts'",
+                (last_pot + minted * POT_ACCRUAL_SECONDS, guild_id))
     conn.execute(
         "INSERT OR IGNORE INTO house_reserve (guild_id, coins, last_interest_ts) "
         "VALUES (?, ?, ?)",
@@ -1362,6 +1392,9 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
     # anything downstream (ceiling clamp, bankruptcy, total_won/net_won) sees
     # it, so cogs never have to know the multiplier exists.
     amount = clamp_amount(amount * prestige_win_mult(guild_id, user_id))
+    # Pot skim: the house keeps POT_WIN_SKIM_PCT% of every win; the player is
+    # paid the remainder and the withheld coins stay in the on-hand pot.
+    amount -= amount * POT_WIN_SKIM_PCT // 100
     if amount <= 0:
         return 0
     house_id = get_house_id()
@@ -2603,6 +2636,14 @@ _PRESTIGE_LEVEL_KEY = "level"
 _PRESTIGE_LIFETIME_NS = "prestige_lifetime"
 _PRESTIGE_LIFETIME_KEY = "levels"
 
+# Prestige wipe: a random PRESTIGE_POT_MIN_PCT..MAX_PCT of the wiped fortune
+# is swept into the house on-hand pot (winnable back via the green /bet
+# jackpot); the remainder is destroyed. The player restarts with
+# PRESTIGE_RESTART_COINS.
+PRESTIGE_POT_MIN_PCT = 25
+PRESTIGE_POT_MAX_PCT = 100
+PRESTIGE_RESTART_COINS = 5_000
+
 
 def prestige_level(guild_id: int, user_id: int) -> int:
     """Current prestige level (0 if never prestiged)."""
@@ -2644,14 +2685,17 @@ def prestige_threshold(level: int) -> int | None:
 
 
 def prestige_buy(guild_id: int, user_id: int, *, threshold: int,
-                 new_level: int, lifetime_gain: int) -> dict:
+                 new_level: int, lifetime_gain: int, pot_pct: int) -> dict:
     """Spend an entire fortune to prestige. In ONE transaction: verify the
-    player's wealth (wallet + bank) clears `threshold`, zero both their wallet
-    and their bank account (resetting the bank interest clock), set the new
-    prestige level, and bump the wipe-proof lifetime-levels ledger.
+    player's wealth (wallet + bank) clears `threshold`, sweep `pot_pct`% of
+    that wiped fortune into the house on-hand pot (the rest is destroyed),
+    reset the wallet to PRESTIGE_RESTART_COINS and the bank to zero (resetting
+    its interest clock), set the new prestige level, and bump the wipe-proof
+    lifetime-levels ledger.
 
     Returns:
-      {"ok": True, "old_level": X, "new_level": new_level}
+      {"ok": True, "old_level": X, "new_level": new_level,
+       "wiped": W, "to_pot": P, "destroyed": W-P, "granted": RESTART}
       {"ok": False, "error": "short", "have": wealth}
       {"ok": False, "error": "db"}
     """
@@ -2671,17 +2715,29 @@ def prestige_buy(guild_id: int, user_id: int, *, threshold: int,
             wealth = wallet + banked
             if wealth < threshold:
                 raise _Abort({"ok": False, "error": "short", "have": wealth})
+            # Sweep a random slice of the wiped fortune into the house
+            # on-hand pot (winnable back via the green /bet jackpot); the
+            # remainder is destroyed. int math only.
+            pct = max(0, min(100, int(pot_pct)))
+            to_pot = wealth * pct // 100
+            if to_pot > 0:
+                _ensure_house_wallet(conn, guild_id)
+                conn.execute(
+                    f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                    (to_pot, guild_id, get_house_id()),
+                )
+                _normalize_house(conn, guild_id)
             lrow = conn.execute(
                 "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
                 (guild_id, user_id, _PRESTIGE_NS, _PRESTIGE_LEVEL_KEY),
             ).fetchone()
             old = max(0, _to_int(lrow[0] if lrow else 0))
-            # Wipe the wallet and the bank to zero (literal assignment — no money
-            # arithmetic), and restart the bank interest clock so the now-empty
-            # account can't back-accrue.
+            # Reset the wallet to the restart grant and the bank to zero
+            # (literal assignment — no money arithmetic), and restart the bank
+            # interest clock so the now-empty account can't back-accrue.
             conn.execute(
-                "UPDATE wallets SET coins = 0 WHERE guild_id = ? AND user_id = ?",
-                (guild_id, user_id),
+                "UPDATE wallets SET coins = ? WHERE guild_id = ? AND user_id = ?",
+                (PRESTIGE_RESTART_COINS, guild_id, user_id),
             )
             conn.execute(
                 "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,0) "
@@ -2704,7 +2760,9 @@ def prestige_buy(guild_id: int, user_id: int, *, threshold: int,
                 f"ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET {_ADD_KV_VALUE}",
                 (guild_id, user_id, _PRESTIGE_LIFETIME_NS, _PRESTIGE_LIFETIME_KEY, gain, gain),
             )
-        return {"ok": True, "old_level": old, "new_level": new_level}
+        return {"ok": True, "old_level": old, "new_level": new_level,
+                "wiped": wealth, "to_pot": to_pot,
+                "destroyed": wealth - to_pot, "granted": PRESTIGE_RESTART_COINS}
     except _Abort as a:
         return a.result
     except sqlite3.Error:

@@ -342,8 +342,8 @@ def test_house_must_earn_back_a_loss_before_dividends_resume():
     res = economy.settle_house_dividends(G)
     assert res["paid"] > 0
     # Only the amount ABOVE the old mark counts as profit, not the recovery.
-    assert res["profit"] == 5_000_000
-    assert economy.get_coins(G, U) == before + int(5_000_000 * economy.HOUSE_PROFIT_SHARE_PCT)
+    assert res["profit"] == 5_300_000  # +300k the house kept from the 1% skim on the 30m payout
+    assert economy.get_coins(G, U) == before + int(5_300_000 * economy.HOUSE_PROFIT_SHARE_PCT)
 
 
 def test_settle_is_a_noop_without_shareholders():

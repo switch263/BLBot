@@ -112,12 +112,14 @@ class ConfirmPrestige(discord.ui.View):
 
         gid, uid, level = self.guild_id, self.user_id, self.level
         new_level, lifetime_gain, is_setback = roll_prestige(level, random.Random())
+        pot_pct = random.randint(economy.PRESTIGE_POT_MIN_PCT, economy.PRESTIGE_POT_MAX_PCT)
 
         res = economy.prestige_buy(
             gid, uid,
             threshold=self.threshold,
             new_level=new_level,
             lifetime_gain=lifetime_gain,
+            pot_pct=pot_pct,
         )
         if not res.get("ok"):
             have = res.get("have", 0)
@@ -163,7 +165,18 @@ class ConfirmPrestige(discord.ui.View):
                 name="Surcharge",
                 value=f"Your stakes now carry **+{int((surcharge_factor(res.get('new_level', new_level)) - 1) * 100)}%**.",
                 inline=True)
-        embed.set_footer(text="Your wallet and bank are now zero. That was the cost.")
+        to_pot = res.get("to_pot", 0)
+        granted = res.get("granted", 0)
+        embed.add_field(
+            name="Into the pot",
+            value=(f"**{to_pot:,}** of your wiped fortune ({pot_pct}%) was swept into the house pot. "
+                   f"Win it back by hitting the **green jackpot** in `/bet` roulette."),
+            inline=False)
+        embed.add_field(
+            name="Fresh start",
+            value=f"The house staked you **{granted:,}** coins for the new journey.",
+            inline=False)
+        embed.set_footer(text="Your old wallet and bank are gone. That was the cost.")
         await interaction.response.edit_message(content=None, embed=embed, view=self)
 
 

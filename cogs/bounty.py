@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # Minimum bounty bet. Big number — this is a high-roller feature.
 MIN_BOUNTY = 100_000_000
 
+# Minimum stake to place a bounty. Decoupled from MIN_BOUNTY (which stays the
+# success-curve reference): any positive bet is allowed, the odds just sit at
+# MIN_RATE until the bet climbs past MIN_BOUNTY.
+BOUNTY_MIN_STAKE = 1
+
 # Success chance scales linearly with bet, from MIN_RATE at MIN_BOUNTY up to MAX_RATE
 # at SATURATION_BOUNTY (and clamps at MAX_RATE for any bet above that).
 MIN_RATE = 0.25
@@ -159,8 +164,8 @@ class Bounty(commands.Cog):
                           placer: discord.Member, target: discord.Member, bet: int) -> str:
         if target is None:
             return (
-                f"Usage: `!bounty @user <bet>` — put a contract on someone. Minimum bet **{MIN_BOUNTY:,} coins**. "
-                f"Success chance scales with bet ({int(MIN_RATE*100)}% at the minimum, up to {int(MAX_RATE*100)}% at {SATURATION_BOUNTY:,}). "
+                f"Usage: `!bounty @user <bet>` — put a contract on someone. Minimum bet **{BOUNTY_MIN_STAKE:,} coin**. "
+                f"Success chance is {int(MIN_RATE*100)}% up to **{MIN_BOUNTY:,}**, scaling to {int(MAX_RATE*100)}% at {SATURATION_BOUNTY:,}. "
                 f"Limits: **once per 3 days per person**, **{BOUNTY_GUILD_LIMIT} per day guild-wide**. "
                 f"**If the bounty fails, you go to jail.**"
             )
@@ -172,8 +177,8 @@ class Bounty(commands.Cog):
         # no bet floor, no rate limit, no jail gate. The desecration is enough.
         if economy.is_memorial(target.id):
             return await self._smite_for_memorial_bounty(guild, placer)
-        if bet is None or bet < MIN_BOUNTY:
-            return f"💼 Minimum bounty is **{MIN_BOUNTY:,} coins**. You offered **{(bet or 0):,}**."
+        if bet is None or bet < BOUNTY_MIN_STAKE:
+            return f"💼 Minimum bounty is **{BOUNTY_MIN_STAKE:,} coin**. You offered **{(bet or 0):,}**."
 
         # Jail gate: a jailed placer can't put out a hit
         jmsg = economy.jail_message(guild.id, placer.id)
@@ -285,7 +290,7 @@ class Bounty(commands.Cog):
         if err == "memorial":
             return "🕊️ kev2tall can't be bountied. The memorial is off-limits — nothing was charged."
         if err == "invalid_bet":
-            return f"💼 Minimum bounty is **{MIN_BOUNTY:,} coins**."
+            return f"💼 Minimum bounty is **{BOUNTY_MIN_STAKE:,} coin**."
         if err == "rate_limited_user":
             wait = self._format_wait(result.get("seconds_until_slot", 0))
             return (
@@ -315,7 +320,7 @@ class Bounty(commands.Cog):
         msg = await self._run_bounty(ctx.guild, channel_id, ctx.author, target, parsed_bet)
         await ctx.send(msg)
 
-    @app_commands.command(name="bounty", description=f"Pay ≥ {MIN_BOUNTY:,} coins for a chance to jail someone. Fails put YOU in jail.")
+    @app_commands.command(name="bounty", description="Pay ≥ 1 coin for a chance to jail someone — odds scale with the bet. Fails put YOU in jail.")
     @app_commands.describe(
         target="The user you want jailed",
         bet="How many coins to put up (min 100,000,000) — supports 1k, 5m, all, half, 50%",

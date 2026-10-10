@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # (winners are always paid in full — see _payout_now), so it caps per-event
 # inflation rather than capping the player.
 GAUNTLET_MAX_HOUSE_PCT = 0.25
-GAUNTLET_MIN_BET = 1_000
+GAUNTLET_MIN_BET = 1
 
 # The ladder: (survival_prob, cumulative payout multiplier if you survive).
 # Verify the edge by hand — EV(push) = survival_prob × next_mult must be below

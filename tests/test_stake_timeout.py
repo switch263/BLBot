@@ -84,7 +84,8 @@ def test_idle_hotdog_with_progress_auto_taps_out():
         return game
     game = _run(go)
     assert game.ended
-    assert economy.get_coins(GUILD + 2, USER) == before - BET + int(BET * 1.5)
+    _p = int(BET * 1.5)
+    assert economy.get_coins(GUILD + 2, USER) == before - BET + (_p - _p // 100)  # 1% pot skim
 
 
 def test_idle_vault_refunds_only_before_the_first_guess():

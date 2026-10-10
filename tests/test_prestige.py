@@ -104,21 +104,27 @@ def test_prestiged_winner_is_paid_more():
     _set_level(g, OTHER, 3)  # win mult == 4
     plain = economy.casino_payout(g, USER, 10_000)
     boosted = economy.casino_payout(g, OTHER, 10_000)
-    assert plain == 10_000
-    assert boosted == 40_000, "a level-3 player's 10k win pays 4x"
+    assert plain == 9_900  # 10k win minus the 1% pot skim
+    assert boosted == 39_600, "level-3 x4 win (40k), minus the 1% pot skim"
 
 
 # ---- prestige_buy ------------------------------------------------------------
 
-def test_buy_zeroes_wallet_and_bank_and_records():
+def test_buy_sweeps_pot_grants_restart_and_records():
     g = GUILD + 2
     _fresh(g, USER, wallet=800, banked=400)   # wealth 1200
     before_lifetime = economy._to_int(
         economy.kv_get(g, USER, "prestige_lifetime", "levels", 0))
-    res = economy.prestige_buy(g, USER, threshold=1_000, new_level=1, lifetime_gain=1)
+    res = economy.prestige_buy(g, USER, threshold=1_000, new_level=1,
+                               lifetime_gain=1, pot_pct=50)
     assert res["ok"]
     assert res["old_level"] == 0 and res["new_level"] == 1
-    assert economy.get_coins(g, USER) == 0, "wallet wiped"
+    assert res["wiped"] == 1200
+    assert res["to_pot"] == 600, "50% of the wiped fortune goes to the pot"
+    assert res["destroyed"] == 600, "the remainder is destroyed"
+    assert res["to_pot"] + res["destroyed"] == res["wiped"]
+    assert res["granted"] == economy.PRESTIGE_RESTART_COINS
+    assert economy.get_coins(g, USER) == economy.PRESTIGE_RESTART_COINS, "wallet reset to restart grant"
     assert economy.bank_balance(g, USER) == 0, "bank wiped"
     assert economy.prestige_level(g, USER) == 1
     after_lifetime = economy._to_int(
@@ -126,10 +132,19 @@ def test_buy_zeroes_wallet_and_bank_and_records():
     assert after_lifetime == before_lifetime + 1
 
 
+def test_buy_pot_pct_100_sweeps_everything():
+    g = GUILD + 5
+    _fresh(g, USER, wallet=1_000, banked=0)   # wealth 1000
+    res = economy.prestige_buy(g, USER, threshold=1_000, new_level=1,
+                               lifetime_gain=1, pot_pct=100)
+    assert res["ok"]
+    assert res["to_pot"] == 1000 and res["destroyed"] == 0
+
+
 def test_buy_rejected_when_too_poor():
     g = GUILD + 3
     _fresh(g, USER, wallet=500, banked=100)   # wealth 600
-    res = economy.prestige_buy(g, USER, threshold=1_000, new_level=1, lifetime_gain=1)
+    res = economy.prestige_buy(g, USER, threshold=1_000, new_level=1, lifetime_gain=1, pot_pct=100)
     assert not res["ok"] and res["error"] == "short"
     assert res["have"] == 600
     # Nothing moved — the fortune is intact and the level unchanged.

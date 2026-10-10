@@ -8,6 +8,7 @@ from economy import (
     get_coins, record_game, get_house_state, casino_payout,
     GREEN_JACKPOT_MIN_PCT, GREEN_JACKPOT_MAX_PCT,
     HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT, BOT_HEIST_VAULT_ODDS,
+    POT_WIN_SKIM_PCT, POT_ACCRUAL_SECONDS,
 )
 from game_common import casino_prelude
 
@@ -119,6 +120,7 @@ class CasinoRoulette(commands.Cog):
         return (
             f"💰 **House Pot**\n"
             f"• **On hand:** **{on_hand:,}** coins — heistable, funds payouts.\n"
+            f"   • 📈 *always growing:* keeps **{POT_WIN_SKIM_PCT}%** of every win, **100%** of every lost bet, and ticks up **1 coin every {POT_ACCRUAL_SECONDS // 60} min** on its own.\n"
             f"• **Safe harbor:** **{reserve + banked:,}** coins total —\n"
             f"   • house reserve **{reserve:,}** earning **{apr_pct:.2f}% APR** — covers payouts when on-hand runs short, auto-refills from on-hand when tapped.\n"
             f"   • safe-deposit boxes **{banked:,}** of player money earning **{bank_apr_pct:.2f}% APR** (`{prefix}bank`).\n"
