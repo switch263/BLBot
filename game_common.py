@@ -34,7 +34,7 @@ Pure glue — talks to economy.py, never to SQLite.
 import discord
 
 from economy import (casino_ban_message, check_bet, get_coins, jail_message,
-                     refund_from_house, transfer_to_house)
+                     prestige_surcharge, refund_from_house, transfer_to_house)
 from amount import parse_amount, amount_error
 from taunts import broke_taunt
 
@@ -47,7 +47,14 @@ def charge_fee(guild_id: int, user_id: int, amount: int, label: str) -> str | No
     who can't cover it is charged nothing and gets ROASTED for being poor
     instead — the returned text is a hand-written broke taunt (taunts.py)
     with the cost and their balance as the receipt, meant to be sent publicly
-    in place of whatever they were trying to buy."""
+    in place of whatever they were trying to buy.
+
+    The fee is prestige-surcharged before collection (×(1 + level/4)) and the
+    surcharged amount is what the player pays and what the receipt quotes — the
+    mutated `amount` flows through to the broke-taunt receipt below, so a caller
+    reading `fee_trailer(amount)` must pass the SAME amount it handed here (at
+    level 0 the surcharge is a no-op, so nothing changes)."""
+    amount = prestige_surcharge(guild_id, user_id, amount)
     res = transfer_to_house(guild_id, user_id, amount, is_bet=False)
     if res.get("ok"):
         return None

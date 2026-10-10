@@ -59,17 +59,18 @@ class Slots(commands.Cog):
             return 2, "Two of a kind!"
         return 0, "No match"
 
-    def _build_spin_embed(self, reels: list, payout_mult: int, desc: str, bet: int, wallet: dict, net: int) -> discord.Embed:
-        """Build the slot machine result embed."""
+    def _build_spin_embed(self, reels: list, payout_mult: int, desc: str, bet: int, wallet: dict, net: int, gross: int, stake: int) -> discord.Embed:
+        """Build the slot machine result embed. `gross` is the coins actually
+        won (prestige-scaled), `stake` the coins actually risked (prestige
+        surcharge); both equal the nominal amounts at prestige level 0."""
         reel_display = f"**[ {reels[0]} | {reels[1]} | {reels[2]} ]**"
 
         if payout_mult > 0:
             color = discord.Color.gold() if payout_mult >= 50 else discord.Color.green()
-            winnings = payout_mult * bet
-            result_text = f"{desc} You won **{winnings:,}** coins!"
+            result_text = f"{desc} You won **{gross:,}** coins!"
         else:
             color = discord.Color.dark_grey()
-            result_text = f"Better luck next time! You lost **{bet:,}** coins."
+            result_text = f"Better luck next time! You lost **{stake:,}** coins."
 
         embed = discord.Embed(
             title="🎰 Slot Machine 🎰",
@@ -111,19 +112,29 @@ class Slots(commands.Cog):
         payout_mult, desc = self._calculate_payout(reels)
         is_jackpot = payout_mult >= 100
 
+        # Prestige scales the final transfer only — the game math (payout_mult)
+        # is computed on the NOMINAL bet. The gross win is multiplied by
+        # (1 + level); the stake actually removed is surcharged by (1 + level/4).
+        # Both collapse to the nominal amounts at level 0 (mult 1, surcharge ==
+        # bet), so level-0 play is byte-identical.
+        win_mult = economy.prestige_win_mult(guild_id, user_id)
+        stake = economy.prestige_surcharge(guild_id, user_id, bet)
         if payout_mult > 0:
-            net = (payout_mult * bet) - bet
+            gross = win_mult * (payout_mult * bet)
+            net = gross - stake
         else:
-            net = -bet
+            gross = 0
+            net = -stake
 
         economy.update_wallet(guild_id, user_id, net, is_jackpot)
         # Staked spins only — _freespin risks nothing, so it doesn't count as a play.
         economy.record_game(guild_id, user_id, "slots", payout_mult > 0)
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
+        # Kept on the NOMINAL bet, as today.
         economy.memorial_tithe(guild_id, bet)
 
-        return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net)
+        return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net, gross, stake)
 
     async def _freespin(self, guild_id: int, user_id: int) -> discord.Embed:
         """Play one Bonus Spin item — a free spin at FREE_SPIN_BET notional.
@@ -144,11 +155,15 @@ class Slots(commands.Cog):
         reels = self._spin()
         payout_mult, desc = self._calculate_payout(reels)
         is_jackpot = payout_mult >= 100
-        winnings = payout_mult * FREE_SPIN_BET
+        nominal_win = payout_mult * FREE_SPIN_BET
+        # Prestige scales the win (×(1 + level)); there's no stake to surcharge
+        # on a free spin. Level 0 → ×1, identical to today.
+        winnings = economy.prestige_win_mult(guild_id, user_id) * nominal_win
         if winnings > 0:
             economy.update_wallet(guild_id, user_id, winnings, is_jackpot)
-            # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op.
-            economy.memorial_tithe(guild_id, winnings)
+            # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op;
+            # kept on the nominal notional win, as today.
+            economy.memorial_tithe(guild_id, nominal_win)
 
         reel_display = f"**[ {reels[0]} | {reels[1]} | {reels[2]} ]**"
         if winnings > 0:
@@ -175,6 +190,8 @@ class Slots(commands.Cog):
         ("roulette",   "🎡 Roulette (/bet)",        "Plays",   "Wins"),
         ("rr",         "🔫 Russian Roulette",       "Games",   "Wins"),
         ("coinflip",   "🪙 Coinflip",               "Flips",   "Wins"),
+        ("bongo",      "🥁 Kitty Plays the Bongo",  "Plays",   "Wins"),
+        ("prestige",   "⭐ Prestige",               "Attempts","Ascensions"),
         ("vault",      "🏦 Vault (/vault)",         "Plays",   "Cracked"),
         ("vault_hard", "🔒 Vault Hard (/vault hard)", "Plays", "Cracked"),
         ("vault_extra_hard", "🧳 Suitcase Lock (/vault extra)", "Plays", "Cracked"),

@@ -31,12 +31,12 @@ BOUNTY_JAIL_MIN_SECONDS = 1 * 60 * 60
 BOUNTY_JAIL_MAX_SECONDS = 36 * 60 * 60
 
 # Rate limits — both apply; both must pass.
-# Guild-wide: 2 bounties per rolling 7-day window.
-BOUNTY_GUILD_LIMIT = 2
-BOUNTY_GUILD_WINDOW_SECONDS = 7 * 24 * 60 * 60
-# Per user: 1 bounty per rolling 30-day window.
+# Guild-wide: 3 bounties per rolling 1-day window.
+BOUNTY_GUILD_LIMIT = 3
+BOUNTY_GUILD_WINDOW_SECONDS = 1 * 24 * 60 * 60
+# Per user: 1 bounty per rolling 3-day window.
 BOUNTY_USER_LIMIT = 1
-BOUNTY_USER_WINDOW_SECONDS = 30 * 24 * 60 * 60
+BOUNTY_USER_WINDOW_SECONDS = 3 * 24 * 60 * 60
 
 
 SUCCESS_FLAVOR = [
@@ -161,7 +161,7 @@ class Bounty(commands.Cog):
             return (
                 f"Usage: `!bounty @user <bet>` — put a contract on someone. Minimum bet **{MIN_BOUNTY:,} coins**. "
                 f"Success chance scales with bet ({int(MIN_RATE*100)}% at the minimum, up to {int(MAX_RATE*100)}% at {SATURATION_BOUNTY:,}). "
-                f"Limits: **once per 30 days per person**, **{BOUNTY_GUILD_LIMIT} per 7 days guild-wide**. "
+                f"Limits: **once per 3 days per person**, **{BOUNTY_GUILD_LIMIT} per day guild-wide**. "
                 f"**If the bounty fails, you go to jail.**"
             )
         if target.bot:
@@ -289,14 +289,14 @@ class Bounty(commands.Cog):
         if err == "rate_limited_user":
             wait = self._format_wait(result.get("seconds_until_slot", 0))
             return (
-                f"🛑 You've already used your **monthly bounty**. "
+                f"🛑 You've already used your bounty for now. "
                 f"You can place another in **{wait}**."
             )
         if err == "rate_limited_guild":
             limit = result.get("limit", BOUNTY_GUILD_LIMIT)
             wait = self._format_wait(result.get("seconds_until_slot", 0))
             return (
-                f"🛑 This server has hit its **{limit} bounties per week** cap. "
+                f"🛑 This server has hit its **{limit} bounties per day** cap. "
                 f"Next slot opens in **{wait}**."
             )
         return "⚠️ Bounty failed (database error). Try again in a moment."

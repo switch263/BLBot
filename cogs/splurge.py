@@ -116,7 +116,10 @@ class Splurge(commands.Cog):
             outstanding = economy.total_house_shares(guild.id)
             for key, entry in splurges.by_tier(show):
                 have = owned.get(key, 0)
-                cost = splurges.price_for(key, have)
+                # Show the prestige-surcharged price the viewer would actually
+                # be charged (no-op at level 0, so level-0 prices are unchanged).
+                cost = economy.prestige_surcharge(
+                    guild.id, user.id, splurges.price_for(key, have))
                 if key == splurges.SHARES_KEY:
                     value = f"**{cost:,}** coins per share"
                     if outstanding:
@@ -188,6 +191,9 @@ class Splurge(commands.Cog):
         # Price each copy at its own escalated rate, so buying 3 at once costs
         # exactly what buying them one at a time would.
         total = sum(splurges.price_for(key, have + i) for i in range(qty))
+        # Prestige surcharge: the prestigious burn even more (no-op at level 0).
+        # Applied before the burn and reflected in the "short" quote below.
+        total = economy.prestige_surcharge(guild.id, user.id, total)
 
         # No special-casing needed for shares: economy.SHARES_KEY IS the
         # `owned:` row this already credits, so buying the item is buying in.

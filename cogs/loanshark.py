@@ -455,6 +455,10 @@ class LoanShark(commands.Cog):
         Returns (total_seized, remaining_owed, fee_note)."""
         wealth = economy.get_wealth(guild_id, user_id)
         demand = collection_demand(owed, wealth, stage)
+        # The prestigious pay more: surcharge the demand. The extra lands as late
+        # fee (house profit) via the split below — the tab is still only paid
+        # down by min(seized, owed), never twice.
+        demand = economy.prestige_surcharge(guild_id, user_id, demand)
         seized = self._seize(guild_id, user_id, demand, include_bank=include_bank)
         applied = min(seized, owed)
         extra = seized - applied

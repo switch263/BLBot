@@ -68,26 +68,33 @@ class CoinFlip(commands.Cog):
 
         result_emoji = random.choice(HEADS_EMOJIS) if result == "heads" else random.choice(TAILS_EMOJIS)
 
+        # Prestige scales the final transfer only — game math is unchanged.
+        # A win pays (1 + level) × bet; a loss debits the surcharged stake
+        # (1 + level/4) × bet. Both equal the nominal bet at level 0, so
+        # level-0 play is byte-identical.
         if won:
-            economy.update_wallet(guild_id, user_id, bet)
-            new_bal = balance + bet
+            winnings = economy.prestige_win_mult(guild_id, user_id) * bet
+            economy.update_wallet(guild_id, user_id, winnings)
+            new_bal = balance + winnings
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and won **{bet:,}** coins! {random.choice(WIN_MESSAGES)}",
+                description=f"You called **{call_full}** and won **{winnings:,}** coins! {random.choice(WIN_MESSAGES)}",
                 color=discord.Color.green()
             )
         else:
-            economy.update_wallet(guild_id, user_id, -bet)
-            new_bal = balance - bet
+            stake = economy.prestige_surcharge(guild_id, user_id, bet)
+            economy.update_wallet(guild_id, user_id, -stake)
+            new_bal = balance - stake
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and lost **{bet:,}** coins. {random.choice(LOSE_MESSAGES)}",
+                description=f"You called **{call_full}** and lost **{stake:,}** coins. {random.choice(LOSE_MESSAGES)}",
                 color=discord.Color.red()
             )
 
         economy.record_game(guild_id, user_id, "coinflip", won)
         # Memorial tithe retired (kev2tall is an NPC now, RIP) — no-op; rate is
         # pinned to 0 in economy.py. Call left in place, trivially revivable.
+        # Kept on the NOMINAL bet, as today.
         economy.memorial_tithe(guild_id, bet)
 
         embed.set_footer(text=f"Balance: {new_bal:,} coins")

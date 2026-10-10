@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import yomama
-from economy import is_memorial
+from economy import is_memorial, prestige_surcharge
 from game_common import charge_fee, fee_trailer
 from yomama_art import render_joke_image
 
@@ -60,7 +60,7 @@ class YourMother(commands.Cog):
     # ---- shared logic -----------------------------------------------------
 
     def _joke_for(self, guild_id: int, joker_id: int, target: discord.abc.User,
-                  category: str | None) -> tuple[str, str, str] | str:
+                  category: str | None) -> tuple[str, str, str, str] | str:
         """(chat text, caption text, art flavor) for a paid joke, or the plain
         refusal string to send instead (memorial target: free; broke joker:
         unpaid).
@@ -76,7 +76,8 @@ class YourMother(commands.Cog):
         if refusal:
             return refusal
         flavor, body = yomama.joke_with_category(category)
-        return f"{target.mention} {body}", f"{target.display_name} {body}", flavor
+        receipt = fee_trailer(prestige_surcharge(guild_id, joker_id, YOURMOTHER_FEE))
+        return f"{target.mention} {body}", f"{target.display_name} {body}", flavor, receipt
 
     async def _render(self, joke_text: str, flavor: str) -> discord.File | None:
         """Draw the joke off the event loop with the portrait matched to its flavor.
@@ -102,8 +103,7 @@ class YourMother(commands.Cog):
         if isinstance(result, str):
             await ctx.send(result)
             return
-        joke, caption, flavor = result
-        receipt = fee_trailer(YOURMOTHER_FEE)
+        joke, caption, flavor, receipt = result
 
         if random.random() < IMAGE_CHANCE:
             async with ctx.typing():
@@ -134,8 +134,7 @@ class YourMother(commands.Cog):
         if isinstance(result, str):
             await interaction.response.send_message(result)
             return
-        joke, caption, flavor = result
-        receipt = fee_trailer(YOURMOTHER_FEE)
+        joke, caption, flavor, receipt = result
 
         if random.random() < IMAGE_CHANCE:
             # Rendering outruns the 3s interaction window on a slow host.

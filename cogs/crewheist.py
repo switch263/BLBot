@@ -377,6 +377,7 @@ class CrewLobby:
         self.approach = approach
         self.is_box = account is not None
         self.members: list[discord.Member] = [starter]
+        self.paid: dict[int, int] = {}  # user_id -> buy-in actually paid (surcharged)
         self.message: discord.Message | None = None
         self.resolved = False  # launched, cancelled, or timed out
 
@@ -425,16 +426,21 @@ class CrewHeistView(discord.ui.View):
         if err:
             await interaction.response.send_message(err, ephemeral=True)
             return
-        res = economy.transfer_to_house(lobby.guild_id, user.id, CREW_BUYIN, is_bet=False)
+        # The prestigious pay more for everything. is_bet=False means economy
+        # won't auto-surcharge this escrow, so apply it here. The seat/min-bank
+        # checks stay on base CREW_BUYIN — only the actual charge is surcharged.
+        amount = economy.prestige_surcharge(lobby.guild_id, user.id, CREW_BUYIN)
+        res = economy.transfer_to_house(lobby.guild_id, user.id, amount, is_bet=False)
         if not res.get("ok"):
             if res.get("error") == "broke":
                 await interaction.response.send_message(
-                    f"💸 The buy-in is **{CREW_BUYIN:,}** coins and you have **{res.get('have', 0):,}**. "
+                    f"💸 The buy-in is **{amount:,}** coins and you have **{res.get('have', 0):,}**. "
                     "The crew doesn't do IOUs.", ephemeral=True)
             else:
                 await interaction.response.send_message("⚠️ Couldn't collect your buy-in. Try again.", ephemeral=True)
             return
         lobby.members.append(user)
+        lobby.paid[user.id] = amount
         await interaction.response.edit_message(embed=self.cog._lobby_embed(lobby), view=self)
 
     @discord.ui.button(label="Back out", style=discord.ButtonStyle.secondary, emoji="🚪")
@@ -452,7 +458,7 @@ class CrewHeistView(discord.ui.View):
             await interaction.response.send_message("You're not on this crew.", ephemeral=True)
             return
         lobby.members = [m for m in lobby.members if m.id != user.id]
-        economy.refund_from_house(lobby.guild_id, user.id, CREW_BUYIN)
+        economy.refund_from_house(lobby.guild_id, user.id, lobby.paid.pop(user.id, CREW_BUYIN))
         await interaction.response.edit_message(embed=self.cog._lobby_embed(lobby), view=self)
 
     @discord.ui.button(label="Launch the job", style=discord.ButtonStyle.danger, emoji="🚀")
@@ -520,7 +526,7 @@ class CrewHeist(commands.Cog):
         # Recruits get their escrowed buy-in back; the ringleader never paid one.
         for m in lobby.members:
             if m.id != lobby.starter.id:
-                economy.refund_from_house(lobby.guild_id, m.id, CREW_BUYIN)
+                economy.refund_from_house(lobby.guild_id, m.id, lobby.paid.get(m.id, CREW_BUYIN))
 
     def _cooldown_remaining(self, guild_id: int, user_id: int) -> int:
         # Stored as EXPIRY timestamps — player and house jobs cool down differently.
@@ -768,7 +774,8 @@ class CrewHeist(commands.Cog):
 
         # From here the job is ON: the escrowed buy-ins release to the
         # ringleader — their recruiting fee, win or lose — and cooldowns start.
-        fee_total = (n - 1) * CREW_BUYIN
+        fee_total = sum(lobby.paid.get(m.id, CREW_BUYIN)
+                        for m in lobby.members if m.id != lobby.starter.id)
         if fee_total > 0:
             economy.refund_from_house(guild_id, lobby.starter.id, fee_total)
         cooldown = HOUSE_COOLDOWN if lobby.is_house else CREW_COOLDOWN
@@ -949,7 +956,8 @@ class CrewHeist(commands.Cog):
             return
 
         # Job's ON: fees release to the ringleader, house-job cooldown starts.
-        fee_total = (n - 1) * CREW_BUYIN
+        fee_total = sum(lobby.paid.get(m.id, CREW_BUYIN)
+                        for m in lobby.members if m.id != lobby.starter.id)
         if fee_total > 0:
             economy.refund_from_house(guild_id, lobby.starter.id, fee_total)
         for m in crew:

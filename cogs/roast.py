@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import logging
 
-from economy import is_memorial
+from economy import is_memorial, prestige_surcharge
 from game_common import charge_fee, fee_trailer
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,8 @@ class Roast(commands.Cog):
         refusal = charge_fee(guild_id, roaster_id, ROAST_FEE, "A roast")
         if refusal:
             return refusal
-        return random.choice(ROASTS).format(t=target_mention) + fee_trailer(ROAST_FEE)
+        charged = prestige_surcharge(guild_id, roaster_id, ROAST_FEE)
+        return random.choice(ROASTS).format(t=target_mention) + fee_trailer(charged)
 
     @commands.command()
     @commands.guild_only()

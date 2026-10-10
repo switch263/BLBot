@@ -86,9 +86,10 @@ def test_yourmother_charges_only_when_delivered():
     assert isinstance(out, str) and out in yourmother.MEMORIAL_RESPONSES
     assert economy.get_coins(g, USER) == 150_000
     out = cog._joke_for(g, USER, _User(USER + 1), None)
-    # (chat text, caption text, art flavor) — the flavor steers the portrait.
-    assert isinstance(out, tuple) and len(out) == 3
+    # (chat text, caption text, art flavor, receipt) — flavor steers the portrait.
+    assert isinstance(out, tuple) and len(out) == 4
     assert out[2] in yomama.CATEGORIES
+    assert out[3] == fee_trailer(yourmother.YOURMOTHER_FEE)
     assert economy.get_coins(g, USER) == 50_000
     out = cog._joke_for(g, USER, _User(USER + 1), None)
     assert isinstance(out, str) and any(line in out for line in taunts._load("broke"))

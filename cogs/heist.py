@@ -331,6 +331,80 @@ RANSOM_BOTCH_MESSAGES = [
 
 HEIST_INPROGRESS_TITLE = "🎭 Heist in Progress…"
 BOT_HEIST_INPROGRESS_TITLE = "🏦 Robbing the House…"
+BANK_HEIST_INPROGRESS_TITLE = "🏦 Drilling the Vault…"
+
+
+# --- The bank-robbery job --------------------------------------------------
+# An EXPLICIT alternative to the default wallet pickpocket: `!heist @victim bank`
+# (or the slash `target_bank:true`) goes after the victim's /bank vault instead.
+# Unlike the ransom job (which fires at random), this is opt-in and carries a
+# non-refundable cover charge: the thief burns BANK_HEIST_COST_PCT of their OWN
+# wealth up front — gone win or lose — then rolls the long odds. The take band
+# is capped at BANK_HEIST_MAX_PCT so one job never empties a vault, and the band
+# tops out at the wallet steal's max, keeping the bank no softer a target than a
+# pocket. Money moves through economy.bank_heist (bank-only, pure player→player).
+BANK_HEIST_COST_PCT = 0.10    # of the thief's wealth, paid up front, non-refundable
+BANK_HEIST_SUCCESS = 0.20     # odds the drill actually gets through the vault
+BANK_HEIST_MAX_PCT = 0.25     # most of a vault a single job can skim
+
+# A vault under this isn't worth the drill — fall the player back to the wallet.
+BANK_HEIST_MIN_BANK = 1_000
+# Botched job: a short sentence of the thief's own, with a modest wealth-scaled
+# bail so a friend can spring them (never 0, so bail always works).
+BANK_HEIST_JAIL_MIN_SECONDS = 1 * 60 * 60   # 1 hour
+BANK_HEIST_JAIL_MAX_SECONDS = 6 * 60 * 60   # 6 hours
+BANK_HEIST_BAIL_PCT = 0.15
+
+HEIST_BUILDUP_BANK = [
+    "🏦 {thief} walks past {victim}'s wallet entirely — they're here for the **vault**…",
+    "🧰 Tarps down, drill out, lookout posted. This is a safe-deposit job…",
+    "🔩 The bit bites into the vault door. Metal shavings everywhere…",
+    "💰 The lock gives. Reaching for the safe-deposit boxes…",
+]
+
+BANK_HEIST_SUCCESS_MESSAGES = [
+    "cracked **{victim}**'s vault and walked out with **{amount:,} coins** — **{pct}%** of the balance. The bank stopped being the safe place to keep coins.",
+    "drilled clean through to **{victim}**'s safe-deposit box and lifted **{amount:,} coins** ({pct}%). Depositors are advised not to check their balance.",
+    "bypassed the wallet entirely and skimmed **{pct}%** — **{amount:,} coins** — straight out of **{victim}**'s bank account.",
+]
+
+BANK_HEIST_EMPTY_MESSAGES = [
+    "cracked **{victim}**'s vault — and found it swept clean. The drill worked; the box did not pay.",
+    "got into **{victim}**'s safe-deposit box and found nothing but a note that said 'nice try'.",
+]
+
+BANK_HEIST_FAIL_MESSAGES = [
+    "🚨 {thief} set off the vault's silent alarm mid-drill. The cover charge is gone and they're doing **{hours}h** in casino jail.",
+    "🚨 {thief} drilled into a decoy box wired to the cops. **{hours}h** inside — and the up-front money's already spent.",
+    "🚨 {thief} forgot the vault was on a timer. Security scooped them up. **{hours}h**. The cover charge isn't coming back.",
+]
+
+
+def bank_heist_cost(wealth: int) -> int:
+    """Up-front, non-refundable cost to attempt a bank heist: BANK_HEIST_COST_PCT
+    of the thief's own wealth (wallet + bank), integer floor. == wealth // 10 at
+    the default 10%. Pure — the economics live here so they can be tested without
+    a Discord client."""
+    return int(wealth * BANK_HEIST_COST_PCT)
+
+
+def bank_heist_steal_bounds() -> tuple[float, float]:
+    """(min, max) fraction of the victim's vault a successful job can skim. The
+    success roll never exceeds BANK_HEIST_MAX_PCT, so one job can't empty a vault."""
+    return 0.0, BANK_HEIST_MAX_PCT
+
+
+def bank_heist_gate(*, victim_memorial: bool, victim_shielded: bool, victim_bank: int) -> str | None:
+    """Pure refusal gate for the bank-robbery branch. Returns a machine reason
+    ('memorial' | 'shielded' | 'empty') or None to proceed. Kept Discord-free so
+    the decision can be pinned by tests without a client."""
+    if victim_memorial:
+        return "memorial"
+    if victim_shielded:
+        return "shielded"
+    if victim_bank < BANK_HEIST_MIN_BANK:
+        return "empty"
+    return None
 
 
 class BotHeistConfirmView(discord.ui.View):
@@ -802,6 +876,11 @@ class Heist(commands.Cog):
         fmt = dict(thief=thief.mention, accomplice=accomplice.mention if accomplice else "")
         return [line.format(**fmt) for line in HEIST_BUILDUP_BOT]
 
+    def _bank_heist_buildup(self, thief: discord.Member, victim: discord.Member) -> list[str]:
+        """Suspense beats for drilling a player's bank vault."""
+        fmt = dict(thief=thief.mention, victim=victim.display_name)
+        return [line.format(**fmt) for line in HEIST_BUILDUP_BANK]
+
     async def _reveal_heist(self, message: discord.Message, buildup: list[str], final_embed: discord.Embed,
                             *, view: discord.ui.View | None = None,
                             in_progress_title: str = HEIST_INPROGRESS_TITLE):
@@ -1008,7 +1087,98 @@ class Heist(commands.Cog):
         view = JailActionView(self, guild_id, thief, thief_bail, view_accomplice, accomplice_bail)
         return embed, view, buildup
 
-    async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None, channel_id: int = 0) -> tuple[discord.Embed, discord.ui.View | None, list[str] | None]:
+    async def _run_bank_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member,
+                              channel_id: int) -> tuple[discord.Embed, discord.ui.View | None, list[str] | None]:
+        """The explicit bank-robbery mode. Reached from _run_heist once the shared
+        guards (self/bot/memorial/jail/cooldown) have passed. Charges the thief a
+        non-refundable cover charge, then rolls BANK_HEIST_SUCCESS: on a hit it
+        skims the victim's /bank vault via economy.bank_heist; on a miss the
+        thief eats a short sentence and the cover charge is simply gone."""
+        victim_memorial = economy.is_memorial(victim.id)
+        victim_shielded = (
+            economy.kv_get(guild_id, victim.id, "heistshield", "active_date", "") == economy.today_str()
+        )
+        victim_bank = economy.bank_balance(guild_id, victim.id)
+        reason = bank_heist_gate(
+            victim_memorial=victim_memorial,
+            victim_shielded=victim_shielded,
+            victim_bank=victim_bank,
+        )
+        if reason == "memorial":
+            return discord.Embed(
+                description="kev2tall's vault is sealed. Leave the memorial be. 🕊️",
+                color=discord.Color.red(),
+            ), None, None
+        if reason == "shielded":
+            # Burn the cooldown so a shield can't be probed for free, but charge
+            # nothing — the attempt never got off the ground.
+            self._set_cooldown(guild_id, thief.id)
+            return discord.Embed(
+                title="🛡️ Heist Blocked!",
+                description=(
+                    f"{thief.mention} tried to drill **{victim.display_name}**'s vault and bounced "
+                    f"straight off an active **Heist Shield**. Nothing taken, nothing charged. "
+                    f"The shield holds for the rest of the day."
+                ),
+                color=discord.Color.blue(),
+            ), None, None
+        if reason == "empty":
+            return discord.Embed(
+                description=(
+                    f"**{victim.display_name}**'s bank vault holds under **{BANK_HEIST_MIN_BANK:,}** coins "
+                    f"— not worth cracking. Try their wallet instead (`!heist @{victim.display_name}`)."
+                ),
+                color=discord.Color.red(),
+            ), None, None
+
+        # Commit. Burn the cover charge off the thief's own wealth (wallet first,
+        # then bank) — gone whether the job lands or not — and lock the cooldown.
+        self._set_cooldown(guild_id, thief.id)
+        cost = bank_heist_cost(economy.get_wealth(guild_id, thief.id))
+        paid_cost = economy.fine_user_wealth(guild_id, thief.id, cost) if cost > 0 else 0
+
+        success = random.random() < BANK_HEIST_SUCCESS
+        economy.record_game(guild_id, thief.id, "heist", success)
+        buildup = self._bank_heist_buildup(thief, victim)
+
+        if success:
+            lo, hi = bank_heist_steal_bounds()
+            pct = random.uniform(lo, hi)
+            res = economy.bank_heist(guild_id, victim.id, thief.id, pct)
+            taken = res.get("amount", 0) if res.get("ok") else 0
+            if taken > 0:
+                # Stamp the loss so heist insurance covers a vault job like any
+                # other robbery (see cogs/heistinsurance.py).
+                economy.kv_set(guild_id, victim.id, "heistins", "last_loss", f"{taken}:{int(time.time())}")
+                msg = f"{thief.mention} " + random.choice(BANK_HEIST_SUCCESS_MESSAGES).format(
+                    victim=victim.display_name, amount=taken, pct=int(round(pct * 100)),
+                )
+            else:
+                msg = f"{thief.mention} " + random.choice(BANK_HEIST_EMPTY_MESSAGES).format(
+                    victim=victim.display_name,
+                )
+            msg += f"\n-# 💸 Cover charge: **{paid_cost:,}** coins ({int(BANK_HEIST_COST_PCT * 100)}% of your worth), gone either way."
+            return discord.Embed(title="🏦 VAULT CRACKED", description=msg, color=discord.Color.gold()), None, buildup
+
+        # Botched: the cover charge is already spent; the thief catches a sentence.
+        seconds = random.randint(BANK_HEIST_JAIL_MIN_SECONDS, BANK_HEIST_JAIL_MAX_SECONDS)
+        bail = max(500, int(economy.get_wealth(guild_id, thief.id) * BANK_HEIST_BAIL_PCT))
+        economy.jail_user(
+            guild_id, thief.id, seconds,
+            reason="Attempted bank vault robbery",
+            bail_amount=bail, channel_id=channel_id,
+        )
+        hours = max(1, round(seconds / 3600))
+        msg = random.choice(BANK_HEIST_FAIL_MESSAGES).format(thief=thief.mention, hours=hours)
+        msg += (
+            f"\n\n💸 Cover charge lost: **{paid_cost:,}** coins. "
+            f"Bail set at **{bail:,} coins**. Use the buttons below — or `/bail`."
+        )
+        embed = discord.Embed(title="🚔 VAULT JOB BOTCHED", description=msg, color=discord.Color.dark_red())
+        view = JailActionView(self, guild_id, thief, bail)
+        return embed, view, buildup
+
+    async def _run_heist(self, guild_id: int, thief: discord.Member, victim: discord.Member, accomplice: discord.Member = None, channel_id: int = 0, target_bank: bool = False) -> tuple[discord.Embed, discord.ui.View | None, list[str] | None]:
         """Validate and run a heist. Returns (embed, view, buildup).
 
         - view is non-None when the caller must show a confirmation prompt first.
@@ -1073,7 +1243,9 @@ class Heist(commands.Cog):
         # Check balances
         victim_coins = economy.get_coins(guild_id, victim.id)
 
-        if victim_coins < MIN_VICTIM_COINS:
+        # A plain heist needs a wallet worth robbing; a BANK heist checks the
+        # victim's vault instead (inside _run_bank_heist), so skip this gate.
+        if not target_bank and victim_coins < MIN_VICTIM_COINS:
             return discord.Embed(description=f"{victim.display_name} only has **{victim_coins:,}** coins. Not worth the risk!", color=discord.Color.red()), None, None
 
         # --- Robbing the house (the bot itself) ---
@@ -1082,6 +1254,13 @@ class Heist(commands.Cog):
             warning = self._build_bot_heist_warning(thief, victim, accomplice)
             view = BotHeistConfirmView(self, guild_id, thief, victim, accomplice)
             return warning, view, None
+
+        # --- Bank-robbery mode (opt-in) --------------------------------------
+        # `target_bank` goes after the victim's /bank vault instead of their
+        # wallet. It owns its own shield/empty-vault gate and skips the ransom
+        # and wallet paths entirely. Accomplices don't factor into a vault job.
+        if target_bank:
+            return await self._run_bank_heist(guild_id, thief, victim, channel_id)
 
         # Heist Shield: the victim must have ACTIVATED a shield (via /use) earlier
         # today. An active shield blocks every heist against them for the rest of
@@ -1210,21 +1389,41 @@ class Heist(commands.Cog):
         return embed, None, buildup
 
     @commands.command(aliases=['rob', 'steal'])
-    async def heist(self, ctx, victim: discord.Member = None, accomplice: discord.Member = None):
-        """Rob another user's coins! Optionally bring an accomplice for better odds."""
+    async def heist(self, ctx, victim: discord.Member = None, *args: str):
+        """Rob another user's coins! Bring an accomplice (`@partner`) for better
+        odds, or add `bank` to drill their vault instead of their wallet."""
         if victim is None:
-            await ctx.send("Usage: `!heist @victim` or `!heist @victim @accomplice`")
+            await ctx.send("Usage: `!heist @victim`, `!heist @victim @accomplice`, or `!heist @victim bank`")
             return
-        embed, view, buildup = await self._run_heist(ctx.guild.id, ctx.author, victim, accomplice, ctx.channel.id)
+        # Trailing tokens may be the keyword `bank` and/or an accomplice mention.
+        target_bank = False
+        accomplice = None
+        for token in args:
+            if token.lower() in ("bank", "vault", "boxes"):
+                target_bank = True
+                continue
+            try:
+                accomplice = await commands.MemberConverter().convert(ctx, token)
+            except commands.BadArgument:
+                await ctx.send(f"Couldn't read `{token}` — use an `@accomplice` and/or `bank`.")
+                return
+        embed, view, buildup = await self._run_heist(
+            ctx.guild.id, ctx.author, victim, accomplice, ctx.channel.id, target_bank=target_bank,
+        )
         await self._send_heist(ctx, embed, view, buildup)
 
     @app_commands.command(name="heist", description="Attempt to steal coins from another user")
     @app_commands.describe(
         victim="The person to rob",
-        accomplice="Optional partner in crime (gets 10-50% cut, improves odds)"
+        accomplice="Optional partner in crime (gets 10-50% cut, improves odds)",
+        target_bank="Go after their bank vault instead of their wallet — costs 10% of your worth",
     )
-    async def heist_slash(self, interaction: discord.Interaction, victim: discord.Member, accomplice: discord.Member = None):
-        embed, view, buildup = await self._run_heist(interaction.guild_id, interaction.user, victim, accomplice, interaction.channel_id or 0)
+    async def heist_slash(self, interaction: discord.Interaction, victim: discord.Member,
+                          accomplice: discord.Member = None, target_bank: bool = False):
+        embed, view, buildup = await self._run_heist(
+            interaction.guild_id, interaction.user, victim, accomplice,
+            interaction.channel_id or 0, target_bank=target_bank,
+        )
         await self._send_heist(interaction, embed, view, buildup)
 
     def _format_duration(self, seconds: int) -> str:

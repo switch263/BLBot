@@ -194,12 +194,17 @@ class ItemDropView(discord.ui.View):
                 "That card's already gone from your inventory.", ephemeral=True
             )
             return
-        economy.add_coins(self.guild_id, self.owner_id, self.sell_value)
+        # Prestige boosts the sell-back payout (1 + level); level 0 → 1, a no-op.
+        payout = int(
+            self.sell_value
+            * economy.prestige_loot_mult(self.guild_id, self.owner_id)
+        )
+        economy.add_coins(self.guild_id, self.owner_id, payout)
         self._disable_all()
         embed = interaction.message.embeds[0]
         embed.add_field(
             name="💰 Sold",
-            value=f"**{self.sell_value:,}** coins added to your wallet.",
+            value=f"**{payout:,}** coins added to your wallet.",
             inline=False,
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -289,10 +294,16 @@ class LootDrop(commands.Cog):
             return embed, None, None
 
         # Roll: this drop is either an item card or the usual coin haul.
-        if random.random() < ITEM_DROP_CHANCE:
+        # Prestige nudges the item-card chance up (bonus == base at level 0).
+        item_chance = economy.prestige_item_drop_bonus(
+            guild_id, user.id, ITEM_DROP_CHANCE
+        )
+        if random.random() < item_chance:
             return await self._open_item_drop(guild_id, user, next_reset_ts)
 
         rarity_name, item_name, coins, color, emoji, species = self._generate_loot()
+        # Prestige multiplies the coin haul (1 + level); level 0 → 1, a no-op.
+        coins = int(coins * economy.prestige_loot_mult(guild_id, user.id))
         economy.add_coins(guild_id, user.id, coins)
 
         flavor = random.choice(FLAVOR_TEXT)

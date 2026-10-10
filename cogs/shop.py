@@ -117,6 +117,10 @@ class Shop(commands.Cog):
                 return
 
         total = m["price"] * qty
+        # Prestige surcharge: the prestigious pay more (no-op at level 0, so a
+        # level-0 player sees the plain price). Applied before the deduct and
+        # reflected in the "too broke" quote below.
+        total = economy.prestige_surcharge(guild.id, user.id, total)
         if not economy.try_deduct(guild.id, user.id, total):
             have = economy.get_coins(guild.id, user.id)
             await reply(

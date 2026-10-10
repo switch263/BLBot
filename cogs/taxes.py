@@ -156,6 +156,9 @@ class Taxes(commands.Cog):
             economy.kv_set(guild.id, uid, _NS, "net_base", net)  # roll forward
             winnings = net - base
             owed = int(winnings * economy.WINNINGS_TAX_PCT) if winnings > 0 else 0
+            # The prestigious pay more for everything — surcharge the bill so the
+            # stored `owed` and every notice/seizure derived from it reflect it.
+            owed = economy.prestige_surcharge(guild.id, uid, owed)
             if owed <= 0:
                 economy.kv_delete(guild.id, uid, _NS, "owed")
                 continue
@@ -279,6 +282,9 @@ class Taxes(commands.Cog):
             if total <= economy.WEALTH_TAX_THRESHOLD:
                 continue
             bill = int(total * economy.WEALTH_TAX_PCT)
+            # Prestige surcharge: the prestigious pay more. Applied before seize
+            # so the announced `seized` reflects the surcharged figure.
+            bill = economy.prestige_surcharge(guild.id, uid, bill)
             if bill <= 0:
                 continue
             seized = self._seize(guild.id, uid, bill)

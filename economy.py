@@ -1229,6 +1229,11 @@ def transfer_to_house(guild_id: int, user_id: int, amount: int, is_bet: bool = T
         return {"ok": False, "error": "invalid_amount"}
     if is_bet and is_shareholder(guild_id, user_id):
         return {"ok": False, "error": "shareholder"}
+    # Prestige's cost of carry: a bet pulls the surcharged coins (the caller
+    # still passes the nominal stake). Non-bet sinks (tax, bail, fees) are not
+    # surcharged here.
+    if is_bet:
+        amount = prestige_surcharge(guild_id, user_id, amount)
     house_id = get_house_id()
     try:
         with _connect() as conn:
@@ -1353,6 +1358,10 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
     ceiling is never mistaken for the house being short.
     """
     amount = clamp_amount(amount)
+    # Prestige boosts every win: the payout is scaled by (1 + level) before
+    # anything downstream (ceiling clamp, bankruptcy, total_won/net_won) sees
+    # it, so cogs never have to know the multiplier exists.
+    amount = clamp_amount(amount * prestige_win_mult(guild_id, user_id))
     if amount <= 0:
         return 0
     house_id = get_house_id()
@@ -2561,6 +2570,201 @@ def bank_box_disburse(guild_id: int, victim_id: int, payments: list[tuple[int, i
         return {"ok": False, "error": "db"}
 
 
+# --- Prestige -------------------------------------------------------------
+# A voluntary, repeatable fortune reset. Hitting a wealth threshold lets a
+# player "prestige": their wallet AND bank are wiped to zero in exchange for a
+# permanent, stacking boost — every casino win and loot drop is multiplied by
+# (1 + level), item-drop odds get a flat per-level nudge, and bets/bail cost a
+# per-level surcharge (the price of carrying the boost). The current level
+# lives in cog_kv namespace "prestige"/"level" and is deliberately NOT kept
+# across an economy wipe (a reset should drop the boost too). A SEPARATE,
+# wipe-proof ledger (namespace "prestige_lifetime"/"levels") records lifetime
+# levels earned, a permanent brag stat.
+#
+# The ladder: each level's buy-in threshold has PRESTIGE_THRESH_DIGITS[level]
+# decimal digits, starting at 10 and growing ~12% per level until it reaches a
+# 290-digit fortune. The digit counts are strictly increasing, so each rung
+# costs an order of magnitude(s) more than the last.
+
+
+def _prestige_thresh_digits() -> list[int]:
+    digits = [10]
+    while digits[-1] < 290:
+        digits.append(round(digits[-1] * 1.12))
+    digits[-1] = 290
+    return digits
+
+
+PRESTIGE_THRESH_DIGITS = _prestige_thresh_digits()
+PRESTIGE_MAX_LEVEL = len(PRESTIGE_THRESH_DIGITS) - 1
+
+_PRESTIGE_NS = "prestige"
+_PRESTIGE_LEVEL_KEY = "level"
+_PRESTIGE_LIFETIME_NS = "prestige_lifetime"
+_PRESTIGE_LIFETIME_KEY = "levels"
+
+
+def prestige_level(guild_id: int, user_id: int) -> int:
+    """Current prestige level (0 if never prestiged)."""
+    return max(0, _to_int(kv_get(guild_id, user_id, _PRESTIGE_NS, _PRESTIGE_LEVEL_KEY, 0)))
+
+
+def prestige_win_mult(guild_id: int, user_id: int) -> int:
+    """Multiplier applied to casino wins — 1 + level (so level 0 is a no-op)."""
+    return 1 + prestige_level(guild_id, user_id)
+
+
+def prestige_loot_mult(guild_id: int, user_id: int) -> int:
+    """Multiplier applied to coin loot drops — 1 + level."""
+    return 1 + prestige_level(guild_id, user_id)
+
+
+def prestige_item_drop_bonus(guild_id: int, user_id: int, base: float) -> float:
+    """Boosted item-drop probability: base + 0.05 per level, capped at 0.85 so
+    it can never become a certainty."""
+    return min(0.85, base + 0.05 * prestige_level(guild_id, user_id))
+
+
+def prestige_surcharge(guild_id: int, user_id: int, amount: int) -> int:
+    """The price of carrying the boost: a bet/bail of `amount` actually costs
+    amount * (4 + level) // 4 — +25% per level. Level 0 returns `amount`
+    unchanged. Pure integer math, clamped to the money guard."""
+    level = prestige_level(guild_id, user_id)
+    amount = clamp_amount(amount)
+    return clamp_amount(amount * (4 + level) // 4)
+
+
+def prestige_threshold(level: int) -> int | None:
+    """The wealth (wallet + bank) needed to buy INTO `level` — a
+    PRESTIGE_THRESH_DIGITS[level]-digit number. Returns None at (or past) the
+    max level, since there's nothing left to buy."""
+    if 0 <= level < PRESTIGE_MAX_LEVEL:
+        return 10 ** (PRESTIGE_THRESH_DIGITS[level] - 1)
+    return None
+
+
+def prestige_buy(guild_id: int, user_id: int, *, threshold: int,
+                 new_level: int, lifetime_gain: int) -> dict:
+    """Spend an entire fortune to prestige. In ONE transaction: verify the
+    player's wealth (wallet + bank) clears `threshold`, zero both their wallet
+    and their bank account (resetting the bank interest clock), set the new
+    prestige level, and bump the wipe-proof lifetime-levels ledger.
+
+    Returns:
+      {"ok": True, "old_level": X, "new_level": new_level}
+      {"ok": False, "error": "short", "have": wealth}
+      {"ok": False, "error": "db"}
+    """
+    import time as _t
+    try:
+        with _tx("prestige_buy") as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, user_id, STARTING_COINS),
+            )
+            wrow = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+            wallet = coins_int(wrow[0] if wrow else 0)
+            banked = _accrue_bank_interest(conn, guild_id, user_id)
+            wealth = wallet + banked
+            if wealth < threshold:
+                raise _Abort({"ok": False, "error": "short", "have": wealth})
+            lrow = conn.execute(
+                "SELECT value FROM cog_kv WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (guild_id, user_id, _PRESTIGE_NS, _PRESTIGE_LEVEL_KEY),
+            ).fetchone()
+            old = max(0, _to_int(lrow[0] if lrow else 0))
+            # Wipe the wallet and the bank to zero (literal assignment — no money
+            # arithmetic), and restart the bank interest clock so the now-empty
+            # account can't back-accrue.
+            conn.execute(
+                "UPDATE wallets SET coins = 0 WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            )
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,0) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=0",
+                (guild_id, user_id, _BANK_NS, _BANK_KEY),
+            )
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=excluded.value",
+                (guild_id, user_id, _BANK_NS, _BANK_TS_KEY, int(_t.time())),
+            )
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=excluded.value",
+                (guild_id, user_id, _PRESTIGE_NS, _PRESTIGE_LEVEL_KEY, new_level),
+            )
+            gain = _signed_int(lifetime_gain)
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                f"ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET {_ADD_KV_VALUE}",
+                (guild_id, user_id, _PRESTIGE_LIFETIME_NS, _PRESTIGE_LIFETIME_KEY, gain, gain),
+            )
+        return {"ok": True, "old_level": old, "new_level": new_level}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return {"ok": False, "error": "db"}
+
+
+def bank_heist(guild_id: int, victim_id: int, thief_id: int, pct: float) -> dict:
+    """A player-vs-player, BANK-ONLY steal: skim `pct` of the victim's bank
+    account (interest accrued first, so the fully-grown balance is on the hook)
+    and credit it to the thief's WALLET, trimmed to the thief's remaining
+    headroom under MAX_COINS. One transaction; pure player->player (nothing
+    minted, no total_won/net_won bumps, no stats recorded). The memorial player
+    is neither a valid victim nor a valid thief.
+
+    Returns:
+      {"ok": True, "amount": moved, "victim_bank_after": X}
+      {"ok": False, "error": "memorial" | "invalid_pct" | "empty" | "capped" | "db"}
+    """
+    if is_memorial(victim_id) or is_memorial(thief_id):
+        return {"ok": False, "error": "memorial"}
+    try:
+        pct = float(pct)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "invalid_pct"}
+    if pct <= 0:
+        return {"ok": False, "error": "invalid_pct"}
+    pct = min(pct, 1.0)
+    try:
+        with _tx("bank_heist") as conn:
+            banked = _accrue_bank_interest(conn, guild_id, victim_id)
+            steal = clamp_amount(int(banked * pct))
+            if banked <= 0 or steal <= 0:
+                raise _Abort({"ok": False, "error": "empty"})
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, thief_id, STARTING_COINS),
+            )
+            trow = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, thief_id),
+            ).fetchone()
+            moved = min(steal, headroom(coins_int(trow[0] if trow else 0)))
+            if moved <= 0:
+                raise _Abort({"ok": False, "error": "capped"})
+            conn.execute(
+                "UPDATE cog_kv SET value = money_sub(value, ?) "
+                "WHERE guild_id=? AND user_id=? AND namespace=? AND key=?",
+                (moved, guild_id, victim_id, _BANK_NS, _BANK_KEY),
+            )
+            conn.execute(
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                (moved, guild_id, thief_id),
+            )
+        return {"ok": True, "amount": moved, "victim_bank_after": banked - moved}
+    except _Abort as a:
+        return a.result
+    except sqlite3.Error:
+        return {"ok": False, "error": "db"}
+
+
 def burn_purchase(guild_id: int, user_id: int, amount: int, namespace: str,
                   increments: list[tuple[str, int]]) -> dict:
     """Destroy `amount` coins from a wallet and bump cog_kv counters, atomically.
@@ -3350,6 +3554,9 @@ def pay_bail(guild_id: int, jailed_user_id: int, payer_user_id: int) -> dict:
             if not bail_amount or bail_amount <= 0:
                 conn.rollback()
                 return {"ok": False, "error": "no_bail"}
+            # Prestige's cost of carry falls on the PAYER: a prestiged payer
+            # pays a surcharged bail (level 0 leaves it unchanged).
+            bail_amount = prestige_surcharge(guild_id, payer_user_id, bail_amount)
             cd_row = conn.execute(
                 "SELECT last_bail_received_ts FROM wallets WHERE guild_id = ? AND user_id = ?",
                 (guild_id, jailed_user_id),
@@ -3698,14 +3905,23 @@ _CLEAR_ECONOMY_TABLES = (
     "loot_cooldowns",
 )
 
-# cog_kv namespaces that SURVIVE a wipe. These hold permanent, already-earned
-# records whose unlock conditions are computed from tables the wipe PRESERVES
-# (`game_stats`). Clearing the ledger while the stats that earned it survive
-# means every achievement instantly re-qualifies on the next command — a
-# channel flood of re-announcements and a re-payment of every reward. Anything
-# keyed off preserved state belongs here.
+# cog_kv namespaces that SURVIVE a wipe. These are permanent, already-earned
+# records that must outlive an economy reset:
+#   - "achievements": unlocks whose conditions are computed from `game_stats`,
+#     which the wipe PRESERVES. Clearing the ledger while the earning stats
+#     survive re-qualifies every achievement on the next command — a flood of
+#     re-announcements and a re-payment of every reward.
+#   - "prestige_lifetime": the lifetime count of prestige levels earned, a
+#     permanent brag stat (an independent ledger from the current level).
+#   - "lifestats": the bound character seed / lifetime figures — an independent
+#     permanent record, not re-derivable, so it must survive a reset.
+# Anything keyed off preserved state, or that is an independent permanent
+# ledger, belongs here. NOTE: the CURRENT prestige level ("prestige"/"level")
+# is deliberately NOT kept — a reset should drop the live boost with the money.
 _CLEAR_ECONOMY_KEEP_NAMESPACES = (
     "achievements",
+    "prestige_lifetime",
+    "lifestats",
 )
 
 _KEEP_NS_CLAUSE = (
