@@ -1,7 +1,11 @@
 """Kitty Plays the Bongo — a grid push-your-luck game, cousin to Bigfoot
 (cogs/bigfoot.py, built on gridgame.GridView). A cat picks tiles on a 4x4
-board: most are safe paw-taps that bump the multiplier, two are scared cats
-that drop the beat (bust), and one is a perfect bongo solo (jackpot).
+board. A running multiplier starts at x1 and every tile you flip MULTIPLIES
+it; you cash out whenever. Two scared cats end the set (you lose everything).
+One kitty tile ends the set with a jackpot.
+
+Board (16 tiles): 2 scared cats (enders), 1 kitty, 3 bongos (x25 each),
+4 hundreds (x100 each), 6 paw-taps (x1.5 each).
 
 It pays WAY better than the woods — and it's strictly ONCE PER DAY per player.
 The day is spent the moment a game actually begins (view built, message sent),
@@ -10,6 +14,7 @@ so a refused/broke attempt costs nobody their shot.
 import discord
 from discord.ext import commands
 from discord import app_commands
+from fractions import Fraction
 import random
 import logging
 
@@ -26,15 +31,20 @@ GRID_ROWS = 4
 GRID_COLS = 4
 GRID_SIZE = GRID_ROWS * GRID_COLS  # 16
 
-# Tile composition per game:
-NUM_BUST_CATS = 2    # scared cats — bust tiles (dropped the beat)
-NUM_BONGO = 1        # perfect-solo tile — auto-wins on reveal
-# remaining 13 are paw-taps that bump the multiplier
-SAFE_BUMP = 1.0      # +100% of bet per clean paw-tap
-BONGO_MULT = 25.0    # whole-bet multiplier for a perfect solo
-# Nailing the solo on your very first tap (1-in-16 per game) skips the paw
-# math entirely and pays this flat.
-FIRST_SHOT_MULT = 250.0
+# Tile composition per game (must sum to <= GRID_SIZE):
+NUM_ENDERS = 2    # scared cats — bust tiles, lose everything
+NUM_KITTY = 1     # the star — ends the set with a jackpot
+NUM_BONGO = 3     # x25 stacking multipliers
+NUM_BIG = 4       # x100 stacking multipliers
+NUM_SMALL = GRID_SIZE - NUM_ENDERS - NUM_KITTY - NUM_BONGO - NUM_BIG  # 6 paw-taps
+
+# Multiplier each tile applies to the running total (multiplicative).
+SMALL_MULT = Fraction(3, 2)   # 1.5x
+BONGO_MULT = Fraction(25)     # 25x
+BIG_MULT = Fraction(100)      # 100x
+# Kitty ends the set: flat x1000 if it's your very first tap, else running x25.
+KITTY_MULT = Fraction(25)
+KITTY_FIRST_MULT = Fraction(1000)
 
 # Once per calendar day.
 KV_NAMESPACE = "bongo"
@@ -50,42 +60,63 @@ BUST_NARRATIVES = [
     "The cat stares at you, slowly pushes the bongo off the table, and leaves.",
 ]
 
-FIRST_SHOT_NARRATIVES = [
-    "First tap. The cat's paw hits the skin and out comes a flawless solo nobody taught it. Stadiums will hear of this.",
-    "No warm-up, no rehearsal — one paw, one note, and the room goes silent before it goes insane.",
-    "The kitty cracks its tiny knuckles and lays down a first-tap solo so clean the metronome apologizes.",
+KITTY_FIRST_NARRATIVES = [
+    "FIRST TAP and you found the kitty herself — she lays down a thousand-fold solo nobody will believe.",
+    "No warm-up, no rehearsal — your very first tap is THE cat, and the room detonates.",
+    "One tap. The kitty. A x1000 miracle. Jazz historians are already arguing about it.",
+]
+
+KITTY_NARRATIVES = [
+    "The kitty struts out, multiplies the whole set by 25, bows, and leaves on top.",
+    "You found her. The kitty caps the run x25 and the crowd loses it.",
+    "Grand finale: the kitty takes everything you've built and x25's it. Set closed.",
 ]
 
 BONGO_NARRATIVES = [
-    "The cat finds the pocket and does NOT leave it. A perfect solo. The crowd is weeping.",
-    "Paws blur. The bongo sings. Somewhere a jazz legend tips their hat.",
-    "A flawless fill, a cymbal of pure meow, and the set ends in a standing ovation.",
-    "The kitty nails the solo, blinks slowly at you, and demands royalties. Worth it.",
-    "Studio-clean, impossibly tight — the cat just reinvented percussion. You're rich.",
+    "A perfect bongo fill — x25 and the pocket deepens.",
+    "The cat nails a solo. x25. Keep going or bank it.",
+    "Bongo! x25. The groove is getting dangerous.",
+]
+
+BIG_NARRATIVES = [
+    "💯 — a hundred-fold hit. The rig is smoking.",
+    "x100. The cat is operating on another plane now.",
+    "💯 clean. Your multiplier just ate a zero.",
 ]
 
 PAW_FLAVOR = [
-    "A clean paw-tap. The rhythm holds.",
-    "Another tap, right on the one.",
-    "The cat finds the groove. Nice.",
-    "Tiny paws, big pocket. Keep going.",
-    "A confident little *bop*. Crowd nods.",
-    "The kitty tilts an ear and taps again.",
-    "Steady as a kitten. The beat deepens.",
-    "That one slapped. Literally.",
+    "A clean paw-tap. x1.5 and the rhythm holds.",
+    "Another tap, right on the one. x1.5.",
+    "The cat finds the groove. x1.5.",
+    "Tiny paws, big pocket. x1.5.",
 ]
 
 CASHOUT_FLAVOR = [
     "The cat takes a bow and struts offstage with the winnings.",
     "You call the set before the zoomies hit. Smart.",
     "Kitty's had enough. Cash the groove in.",
-    "A wise raccoon in the front row signals to bank. You listen.",
     "You quit while the beat's still hot.",
 ]
 
 
-def current_multiplier(paws: int) -> float:
-    return 1.0 + SAFE_BUMP * paws
+def tile_mult(kind: str) -> Fraction:
+    """The stacking multiplier a continue-tile applies to the running total."""
+    return {"small": SMALL_MULT, "bongo": BONGO_MULT, "big": BIG_MULT}[kind]
+
+
+def kitty_mult(running: Fraction, first_tile: bool) -> Fraction:
+    """Final multiplier when the kitty is revealed (the set ends)."""
+    return KITTY_FIRST_MULT if first_tile else running * KITTY_MULT
+
+
+def _fmt_mult(m: Fraction) -> str:
+    try:
+        f = float(m)
+    except OverflowError:
+        return "huge"
+    if f >= 100_000:
+        return format_compact(int(m))
+    return f"{f:,.2f}"
 
 
 def _day_gate_refusal(last_day, today):
@@ -108,101 +139,112 @@ class BongoView(GridView):
         self.guild_id = guild_id
         self.user_name = user_name
         self.bet = bet
-        # Randomly place scared cats and 1 bongo solo
+        # Randomly place every tile type.
         slots = list(range(GRID_SIZE))
         random.shuffle(slots)
-        self.bust_cats = set(slots[:NUM_BUST_CATS])
-        self.bongo = slots[NUM_BUST_CATS]
+        self.enders = set(slots[:NUM_ENDERS])
+        self.kitty = slots[NUM_ENDERS]
+        b0 = NUM_ENDERS + NUM_KITTY
+        self.bongos = set(slots[b0:b0 + NUM_BONGO])
+        g0 = b0 + NUM_BONGO
+        self.bigs = set(slots[g0:g0 + NUM_BIG])
+        # everything else is a small 1.5x paw-tap
         self.revealed: set[int] = set()
-        self.paws_found = 0
+        self.mult = Fraction(1)
+        self.reveals = 0
         self.action_btn.label = "Call the Set (1.00×)"
         self.action_btn.emoji = "🎤"
 
+    def _kind(self, idx: int) -> str:
+        if idx in self.enders:
+            return "ender"
+        if idx == self.kitty:
+            return "kitty"
+        if idx in self.bongos:
+            return "bongo"
+        if idx in self.bigs:
+            return "big"
+        return "small"
+
     # ---- GridView hooks ---------------------------------------------------
     def tile_face(self, idx: int):
-        if idx in self.bust_cats:
+        kind = self._kind(idx)
+        faces = {"ender": "🙀", "kitty": "😻", "bongo": "🥁", "big": "💯", "small": "🐾"}
+        if kind == "ender":
             return "🙀", discord.ButtonStyle.danger
-        if idx == self.bongo:
-            return "🥁", (discord.ButtonStyle.success if idx in self.revealed
-                          else discord.ButtonStyle.secondary)
-        if idx in self.revealed:
-            return "🐾", discord.ButtonStyle.success
-        return None
+        style = discord.ButtonStyle.success if idx in self.revealed else discord.ButtonStyle.secondary
+        return faces[kind], style
 
     async def on_tile(self, interaction: discord.Interaction, idx: int):
         self.revealed.add(idx)
         self.tile_btns[idx].disabled = True
+        kind = self._kind(idx)
 
-        if idx in self.bust_cats:
+        if kind == "ender":
             record_game(self.guild_id, self.user_id, "bongo", won=False)
             self.finish()
-            narrative = random.choice(BUST_NARRATIVES)
             content = self.cog._render(
-                self, f"🙀 **DROPPED THE BEAT!** {narrative}\nYou lose **{self.bet:,}** coins.")
+                self, f"🙀 **DROPPED THE BEAT!** {random.choice(BUST_NARRATIVES)}\n"
+                      f"You lose **{self.bet:,}** coins.")
             await interaction.response.edit_message(content=content, view=self)
             return
 
-        if idx == self.bongo:
-            first_shot = len(self.revealed) == 1
-            if first_shot:
-                # Perfect solo on the very first tap: flat FIRST_SHOT_MULT jackpot.
-                final_mult = FIRST_SHOT_MULT
-                headline = "🥁 **FIRST-TAP SOLO!** " + random.choice(FIRST_SHOT_NARRATIVES)
-                breakdown = f"Final multiplier: **{final_mult:.0f}×** — first-tap jackpot, no warm-up needed."
-            else:
-                base_mult = current_multiplier(self.paws_found)
-                final_mult = base_mult * BONGO_MULT
-                headline = f"🥁 **PERFECT BONGO SOLO!** {random.choice(BONGO_NARRATIVES)}"
-                breakdown = (f"Final multiplier: **{final_mult:.2f}×** "
-                             f"({base_mult:.2f}× paws × {BONGO_MULT:.0f}× solo).")
-            requested = int(self.bet * final_mult)
+        if kind == "kitty":
+            first = len(self.revealed) == 1
+            final = kitty_mult(self.mult, first)
+            requested = int(self.bet * final)
             paid = casino_payout(self.guild_id, self.user_id, requested)
             record_game(self.guild_id, self.user_id, "bongo", won=True)
             self.finish()
             net = paid - self.bet
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            if first:
+                headline = "😻 **FIRST-TAP KITTY!** " + random.choice(KITTY_FIRST_NARRATIVES)
+            else:
+                headline = "😻 **THE KITTY!** " + random.choice(KITTY_NARRATIVES)
             content = self.cog._render(
-                self, f"{headline}\n{breakdown} Net **{net:+,}** coins.{short}")
+                self, f"{headline}\nFinal multiplier **{_fmt_mult(final)}×** → net **{net:+,}** coins.{short}")
             await interaction.response.edit_message(content=content, view=self)
             return
 
-        # Paw-tap (safe)
-        self.paws_found += 1
-        self.tile_btns[idx].label = "🐾"
+        # Stacking continue-tile (small / bongo / big)
+        self.mult *= tile_mult(kind)
+        self.reveals += 1
+        face = {"bongo": "🥁", "big": "💯", "small": "🐾"}[kind]
+        self.tile_btns[idx].label = face
         self.tile_btns[idx].style = discord.ButtonStyle.success
+        flavor = {"bongo": BONGO_NARRATIVES, "big": BIG_NARRATIVES, "small": PAW_FLAVOR}[kind]
         self._refresh_cashout()
-        await interaction.response.edit_message(content=self.cog._render(self), view=self)
+        await interaction.response.edit_message(
+            content=self.cog._render(self, random.choice(flavor)), view=self)
 
     async def on_action(self, interaction: discord.Interaction):
-        if self.paws_found == 0:
+        if self.reveals == 0:
             await interaction.response.send_message(
                 "The cat hasn't touched the drum yet.", ephemeral=True)
             return
-        mult = current_multiplier(self.paws_found)
-        requested = int(self.bet * mult)
+        requested = int(self.bet * self.mult)
         paid = casino_payout(self.guild_id, self.user_id, requested)
         record_game(self.guild_id, self.user_id, "bongo", won=True)
         self.finish()
         net = paid - self.bet
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-        narrative = random.choice(CASHOUT_FLAVOR)
         content = self.cog._render(
             self,
-            f"🎤 **Called the set after {self.paws_found} clean taps.** {narrative}\n"
-            f"Multiplier **{mult:.2f}×** → net **{net:+,}** coins.{short}",
+            f"🎤 **Called the set after {self.reveals} tiles.** {random.choice(CASHOUT_FLAVOR)}\n"
+            f"Multiplier **{_fmt_mult(self.mult)}×** → net **{net:+,}** coins.{short}",
         )
         await interaction.response.edit_message(content=content, view=self)
 
     async def on_abandon(self):
-        # Walked away mid-set: bank whatever taps landed, or refund the stake
-        # if the cat never touched the drum.
-        if self.paws_found > 0:
-            mult = current_multiplier(self.paws_found)
-            requested = int(self.bet * mult)
+        # Walked away mid-set: bank whatever stacked, or refund if nothing did.
+        if self.reveals > 0:
+            requested = int(self.bet * self.mult)
             paid = casino_payout(self.guild_id, self.user_id, requested)
             record_game(self.guild_id, self.user_id, "bongo", won=True)
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            footer = f"⏰ **Auto-called the set** at **{mult:.2f}×** — you went quiet. Net **{paid - self.bet:+,}** coins.{short}"
+            footer = (f"⏰ **Auto-called the set** at **{_fmt_mult(self.mult)}×** — you went quiet. "
+                      f"Net **{paid - self.bet:+,}** coins.{short}")
         else:
             footer = refund_stake(self.guild_id, self.user_id, self.bet)
         self.finish()
@@ -214,9 +256,8 @@ class BongoView(GridView):
             pass
 
     def _refresh_cashout(self):
-        mult = current_multiplier(self.paws_found)
-        net = int(self.bet * mult) - self.bet
-        self.action_btn.label = button_label(f"Call the Set ({mult:.2f}×, +{format_compact(net)})")
+        net = int(self.bet * self.mult) - self.bet
+        self.action_btn.label = button_label(f"Call the Set ({_fmt_mult(self.mult)}×, +{format_compact(net)})")
 
 
 class BongoKitty(commands.Cog):
@@ -232,16 +273,16 @@ class BongoKitty(commands.Cog):
         return _day_gate_refusal(last_day, economy.today_str())
 
     def _render(self, v: BongoView, footer: str | None = None) -> str:
-        mult = current_multiplier(v.paws_found)
         lines = [
             f"🥁 **{v.user_name}'s Bongo Solo** — bet **{v.bet:,}** coins",
-            f"Somewhere in these **{GRID_SIZE}** tiles: **{NUM_BUST_CATS} scared cats** and **1 perfect solo** (jackpot ×{BONGO_MULT:.0f}).",
-            f"Clean taps: **{v.paws_found}** | Multiplier: **{mult:.2f}×**",
+            f"**{NUM_SMALL}×🐾 (×1.5)**, **{NUM_BIG}×💯 (×100)**, **{NUM_BONGO}×🥁 (×25)**, "
+            f"**1×😻 kitty**, **{NUM_ENDERS}×🙀 enders** across **{GRID_SIZE}** tiles.",
+            f"Tiles flipped: **{v.reveals}** | Running multiplier: **{_fmt_mult(v.mult)}×**",
         ]
         if not v.resolved:
             lines.append(
-                f"Each clean paw-tap bumps the multiplier. Hit the 🥁 and the multiplier is ×{BONGO_MULT:.0f} — "
-                f"or a flat **×{FIRST_SHOT_MULT:.0f}** if it's your very first tap. Once a day, so make it count."
+                "Every tile MULTIPLIES your total — cash out any time. A 🙀 ends it all. "
+                "The 😻 kitty closes the set at **×25** (or a flat **×1000** if it's your first tap). Once a day."
             )
         if footer:
             lines.append("")

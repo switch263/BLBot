@@ -1,43 +1,58 @@
 """Bongo (Kitty Plays the Bongo) — pin the payout math and the once-per-day
 gate. Imports the cog module (which imports discord), so it skips cleanly
 where the bot's deps aren't installed."""
+from fractions import Fraction
+
 import pytest
 
 pytest.importorskip("discord")
 
 from bongo import (  # noqa: E402
-    current_multiplier,
+    tile_mult,
+    kitty_mult,
     _day_gate_refusal,
-    SAFE_BUMP,
+    SMALL_MULT,
     BONGO_MULT,
-    FIRST_SHOT_MULT,
-    NUM_BUST_CATS,
+    BIG_MULT,
+    KITTY_MULT,
+    KITTY_FIRST_MULT,
+    NUM_ENDERS,
+    NUM_KITTY,
     NUM_BONGO,
+    NUM_BIG,
+    NUM_SMALL,
     GRID_SIZE,
 )
 
 
-def test_current_multiplier_math():
-    assert current_multiplier(0) == 1.0
-    assert current_multiplier(1) == 1.0 + SAFE_BUMP
-    assert current_multiplier(5) == 1.0 + SAFE_BUMP * 5
-    # Climbs by exactly SAFE_BUMP per clean tap.
-    for paws in range(0, GRID_SIZE):
-        assert current_multiplier(paws + 1) - current_multiplier(paws) == pytest.approx(SAFE_BUMP)
+def test_board_composition_sums_to_grid():
+    assert NUM_ENDERS + NUM_KITTY + NUM_BONGO + NUM_BIG + NUM_SMALL == GRID_SIZE
+    # Exactly the layout the design calls for.
+    assert (NUM_ENDERS, NUM_KITTY, NUM_BONGO, NUM_BIG, NUM_SMALL) == (2, 1, 3, 4, 6)
 
 
-def test_tuning_pays_better_than_bigfoot():
-    # The whole point: way juicier than the woods.
-    assert SAFE_BUMP == 1.0
-    assert BONGO_MULT == 25.0
-    assert FIRST_SHOT_MULT == 250.0
-    assert NUM_BUST_CATS == 2
-    assert NUM_BONGO == 1
+def test_tile_multipliers():
+    assert tile_mult("small") == SMALL_MULT == Fraction(3, 2)
+    assert tile_mult("bongo") == BONGO_MULT == 25
+    assert tile_mult("big") == BIG_MULT == 100
 
 
-def test_board_composition_leaves_room_to_play():
-    # Scared cats + the solo + at least one safe tap.
-    assert NUM_BUST_CATS + NUM_BONGO < GRID_SIZE
+def test_multiplicative_stacking_is_exact_and_overflow_safe():
+    # A big bet times a huge compounded multiplier must stay an exact int.
+    bet = 10 ** 200
+    mult = SMALL_MULT * BIG_MULT * BIG_MULT  # 1.5 * 100 * 100 = 15000
+    assert mult == Fraction(15000)
+    assert int(bet * mult) == 15000 * bet  # no float, no overflow
+
+
+def test_kitty_first_tap_is_flat_1000x():
+    # On the very first tile the running total is x1; kitty pays a flat 1000x.
+    assert kitty_mult(Fraction(1), first_tile=True) == KITTY_FIRST_MULT == 1000
+
+
+def test_kitty_otherwise_caps_running_total_times_25():
+    running = SMALL_MULT * BIG_MULT  # 150
+    assert kitty_mult(running, first_tile=False) == running * KITTY_MULT == 3750
 
 
 def test_day_gate_refuses_when_played_today():
