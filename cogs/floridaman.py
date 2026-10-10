@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import random
 import logging
 import os
@@ -58,10 +57,6 @@ class FloridaMan(commands.Cog):
     async def floridaman(self, ctx):
         """Generate a random Florida Man headline."""
         await ctx.send(embed=self._generate())
-
-    @app_commands.command(name="floridaman", description="Generate a random Florida Man headline")
-    async def floridaman_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_message(embed=self._generate())
 
 
 async def setup(bot):

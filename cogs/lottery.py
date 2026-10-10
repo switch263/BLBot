@@ -225,10 +225,6 @@ class Lottery(commands.Cog):
     async def tickets_prefix(self, ctx):
         await ctx.send(self._ticket_list())
 
-    @app_commands.command(name="tickets", description="List the instant lottery tickets you can buy.")
-    async def tickets_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_message(self._ticket_list())
-
 
 async def setup(bot):
     await bot.add_cog(Lottery(bot))

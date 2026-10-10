@@ -1452,6 +1452,8 @@ class Heist(commands.Cog):
                 line += f"\n💰 Bail is **{bail:,} coins**. A friend can `/bail @{member.display_name}`."
         return line
 
+    jail_group = app_commands.Group(name="jail", description="Casino jail — check status or extend a sentence")
+
     @commands.command(name="jail")
     @commands.guild_only()
     async def jail_prefix(self, ctx, member: discord.Member = None):
@@ -1459,9 +1461,9 @@ class Heist(commands.Cog):
         target = member or ctx.author
         await ctx.send(self._format_jail_status(target))
 
-    @app_commands.command(name="jail", description="Check casino jail status")
+    @jail_group.command(name="status", description="Check casino jail status")
     @app_commands.describe(member="User to check (defaults to you)")
-    async def jail_slash(self, interaction: discord.Interaction, member: discord.Member = None):
+    async def jail_status_slash(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         await interaction.response.send_message(self._format_jail_status(target))
 
@@ -1631,7 +1633,7 @@ class Heist(commands.Cog):
         _ok, msg = await self._do_extend_jail(ctx.guild, ctx.author, member, hours)
         await ctx.send(msg)
 
-    @app_commands.command(name="extendjail", description="Pay coins to keep someone in casino jail longer")
+    @jail_group.command(name="extend", description="Pay coins to keep someone in casino jail longer")
     @app_commands.describe(
         member="The jailed user whose sentence you want to extend",
         hours="Extension tier",
@@ -1641,7 +1643,7 @@ class Heist(commands.Cog):
         app_commands.Choice(name="+12 hours — 1,000,000,000 coins", value=12),
         app_commands.Choice(name="+24 hours — 4,000,000,000 coins", value=24),
     ])
-    async def extendjail_slash(self, interaction: discord.Interaction, member: discord.Member, hours: app_commands.Choice[int]):
+    async def jail_extend_slash(self, interaction: discord.Interaction, member: discord.Member, hours: app_commands.Choice[int]):
         _ok, msg = await self._do_extend_jail(interaction.guild, interaction.user, member, hours.value)
         await interaction.response.send_message(msg)
 
