@@ -1,8 +1,8 @@
 """The prestige system + the bank-only PvP heist (economy.py).
 
 Prestige is a voluntary fortune reset: zero the wallet AND bank in exchange for
-a permanent, stacking boost to wins/loot and a per-level surcharge on bets/bail.
-These tests pin the ladder shape, the integer multiplier/surcharge math, the
+a permanent, stacking boost to wins and loot (no cost on what you risk).
+These tests pin the ladder shape, the integer multiplier math, the
 auto-applied win boost, the all-or-nothing buy, and bank_heist's bank->wallet
 transfer with headroom trimming.
 """
@@ -71,19 +71,29 @@ def test_win_and_loot_mult_are_one_plus_level():
     assert economy.prestige_loot_mult(GUILD, USER) == 8
 
 
-def test_surcharge_is_exact_integer_math():
+def test_surcharge_retired_is_a_noop():
     _fresh(GUILD, USER)
-    # Level 0 leaves the amount untouched.
+    # The surcharge is retired — prestige is pure upside. Every level returns
+    # the amount unchanged (identity pass-through).
     assert economy.prestige_surcharge(GUILD, USER, 1_000_000) == 1_000_000
-    # Level 4 -> amount * (4+4)//4 == amount * 2.
     _set_level(GUILD, USER, 4)
-    assert economy.prestige_surcharge(GUILD, USER, 1_000_000) == 2_000_000
-    # +25% per level, floored (integer only).
-    _set_level(GUILD, USER, 1)
-    assert economy.prestige_surcharge(GUILD, USER, 100) == 125
-    _set_level(GUILD, USER, 1)
-    assert economy.prestige_surcharge(GUILD, USER, 101) == 126  # 101*5//4 == 126
+    assert economy.prestige_surcharge(GUILD, USER, 1_000_000) == 1_000_000
+    _set_level(GUILD, USER, 30)
+    assert economy.prestige_surcharge(GUILD, USER, 101) == 101
     assert isinstance(economy.prestige_surcharge(GUILD, USER, 101), int)
+
+
+def test_full_wallet_bet_collects_at_high_prestige():
+    # Regression: an all/half stake once got surcharged above the wallet and
+    # was refused as "too broke". With the surcharge retired, a full-wallet
+    # bet is affordable at any prestige level.
+    g = GUILD + 9
+    _fresh(g, USER)
+    economy.add_coins(g, USER, 1_000_000)
+    _set_level(g, USER, 7)
+    wallet = economy.get_coins(g, USER)
+    res = economy.transfer_to_house(g, USER, wallet)
+    assert res["ok"], "a full-wallet bet must be affordable at any prestige level"
 
 
 def test_item_drop_bonus_capped():

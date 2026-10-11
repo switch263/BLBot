@@ -2667,12 +2667,11 @@ def prestige_item_drop_bonus(guild_id: int, user_id: int, base: float) -> float:
 
 
 def prestige_surcharge(guild_id: int, user_id: int, amount: int) -> int:
-    """The price of carrying the boost: a bet/bail of `amount` actually costs
-    amount * (4 + level) // 4 — +25% per level. Level 0 returns `amount`
-    unchanged. Pure integer math, clamped to the money guard."""
-    level = prestige_level(guild_id, user_id)
-    amount = clamp_amount(amount)
-    return clamp_amount(amount * (4 + level) // 4)
+    """Retired: prestige no longer makes anything more expensive — it is pure
+    upside (bigger wins and loot). Pinned to an identity pass-through so the
+    many call sites (bets, bail, shop, splurge, tax, loanshark, fees) stay
+    harmless no-ops, revivable by restoring the per-level math here."""
+    return clamp_amount(amount)
 
 
 def prestige_threshold(level: int) -> int | None:

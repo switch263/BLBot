@@ -90,8 +90,6 @@ def test_seeded_rng_is_deterministic_and_in_range():
             assert new_level <= economy.PRESTIGE_MAX_LEVEL
 
 
-def test_win_multiplier_and_surcharge():
+def test_win_multiplier():
     assert prestige.win_multiplier(0) == 1
     assert prestige.win_multiplier(3) == 4
-    assert prestige.surcharge_factor(0) == 1
-    assert prestige.surcharge_factor(4) == 2  # +100% at level 4

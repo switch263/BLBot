@@ -2,8 +2,8 @@
 
 The one button in the casino that asks for everything you have. Prestige wipes
 your entire fortune (wallet + bank) to zero in exchange for a permanent level:
-every level multiplies your future winnings (×(1 + level)) but also fattens a
-surcharge on what you risk (×(1 + level/4)). The richer you get, the more a
+every level permanently multiplies your future winnings (×(1 + level)) and your
+loot — pure upside, no catch on what you risk. The richer you get, the more a
 level costs to buy — the threshold to climb FROM your current level is a wealth
 gate (economy.prestige_threshold).
 
@@ -48,11 +48,6 @@ _CONFIRM_TIMEOUT = 60.0
 def win_multiplier(level: int) -> int:
     """Winnings multiplier granted by a prestige level: ×(1 + level)."""
     return 1 + level
-
-
-def surcharge_factor(level: int) -> float:
-    """Stake surcharge: ×(1 + level/4) — the cost of carrying the multiplier."""
-    return 1 + level / 4
 
 
 def roll_prestige(level: int, rng: random.Random):
@@ -160,11 +155,6 @@ class ConfirmPrestige(discord.ui.View):
                     f"win multiplier **×{win_multiplier(n)}**!"),
                 color=discord.Color.gold(),
             )
-        if not is_setback:
-            embed.add_field(
-                name="Surcharge",
-                value=f"Your stakes now carry **+{int((surcharge_factor(res.get('new_level', new_level)) - 1) * 100)}%**.",
-                inline=True)
         to_pot = res.get("to_pot", 0)
         granted = res.get("granted", 0)
         embed.add_field(
@@ -218,15 +208,12 @@ class Prestige(commands.Cog):
         lifetime = int(economy.kv_get(gid, uid, _LIFETIME_NS, _LIFETIME_KEY, 0) or 0)
         wealth = economy.get_wealth(gid, uid)
         mult = win_multiplier(level)
-        surcharge_pct = int((surcharge_factor(level) - 1) * 100)
 
         embed = discord.Embed(
             title=f"🏅 Prestige — Level {level}",
             color=discord.Color.gold(),
         )
         embed.add_field(name="Win multiplier", value=f"**×{mult}**", inline=True)
-        embed.add_field(name="Stake surcharge",
-                        value=f"**+{surcharge_pct}%** per level", inline=True)
         embed.add_field(name="Lifetime levels unlocked",
                         value=f"**{lifetime}**", inline=True)
 
