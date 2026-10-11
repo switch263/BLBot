@@ -192,6 +192,7 @@ class Slots(commands.Cog):
         ("coinflip",   "🪙 Coinflip",               "Flips",   "Wins"),
         ("bongo",      "🥁 Kitty Plays the Bongo",  "Plays",   "Wins"),
         ("prestige",   "⭐ Prestige",               "Attempts","Ascensions"),
+        ("juju",       "⛏️ Loot Dig",               "Digs",    "Hauls"),
         ("vault",      "🏦 Vault (/vault)",         "Plays",   "Cracked"),
         ("vault_hard", "🔒 Vault Hard (/vault hard)", "Plays", "Cracked"),
         ("vault_extra_hard", "🧳 Suitcase Lock (/vault extra)", "Plays", "Cracked"),
