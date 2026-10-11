@@ -42,16 +42,18 @@ async def on_ready():
     if bot.user:
         economy.set_house_id(bot.user.id)
     try:
-        # Sync globally
+        # Sync globally — commands become available in every guild the bot is in.
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} slash commands globally.")
-        # Also sync to specific guild for instant availability
+        # Clear any leftover guild-scoped copies. Commands are registered
+        # globally; a guild-scoped copy of the same command renders as a second,
+        # duplicate entry in that guild. Pushing an empty guild set removes them.
         guild_id = os.environ.get('DISCORD_GUILD_ID')
         if guild_id:
             guild = discord.Object(id=int(guild_id))
-            bot.tree.copy_global_to(guild=guild)
-            guild_synced = await bot.tree.sync(guild=guild)
-            logger.info(f"Synced {len(guild_synced)} slash commands to guild {guild_id} (instant).")
+            bot.tree.clear_commands(guild=guild)
+            await bot.tree.sync(guild=guild)
+            logger.info(f"Cleared guild-scoped command copies from guild {guild_id}.")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
     logger.info(f"Logged in as {bot.user.name} with user id of {bot.user.id}.")

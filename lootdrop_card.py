@@ -5,7 +5,7 @@ randomly selected per drop; the rarity color tints the art and the frame.
 Mythic gets an extra chromatic shimmer pass so it visually outranks Legendary.
 
 Run this module directly to render a sample card to /tmp:
-    python3 -m cogs.lootdrop_card
+    python3 -m lootdrop_card
 """
 import io
 import math

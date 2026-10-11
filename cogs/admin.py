@@ -84,13 +84,15 @@ class Admin(commands.Cog):
         try:
             synced = await self.bot.tree.sync()
             lines = [f"✅ Globally synced **{len(synced)}** slash commands "
-                     "(all servers — Discord can take up to ~1 hour to show these)."]
+                     "(all servers — Discord can take up to ~1 hour to show new/changed ones)."]
             if ctx.guild is not None:
-                # Default to THIS guild (the admin channel's) so the change lands
-                # here immediately — no DISCORD_GUILD_ID env var required.
-                self.bot.tree.copy_global_to(guild=ctx.guild)
-                gsynced = await self.bot.tree.sync(guild=ctx.guild)
-                lines.append(f"✅ Synced **{len(gsynced)}** to **{ctx.guild.name}** — live here right now.")
+                # Drop any guild-scoped copies in THIS guild. Commands are
+                # registered globally; a lingering guild copy renders as a
+                # duplicate alongside the global one. Pushing an empty guild
+                # set removes them.
+                self.bot.tree.clear_commands(guild=ctx.guild)
+                await self.bot.tree.sync(guild=ctx.guild)
+                lines.append(f"🧹 Cleared guild-scoped copies from **{ctx.guild.name}** (dedupes the list).")
             names = sorted(c.name for c in self.bot.tree.get_commands())
             registered = ", ".join("/" + n for n in names)
             lines.append(f"**{len(names)}** commands registered: {registered}")
