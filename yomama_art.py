@@ -1,6 +1,6 @@
 """Procedural "artist's rendering" of the mother in question.
 
-Pure module (PIL only, no Discord, no DB) in the spirit of cogs/lootdrop_card.py,
+Pure module (PIL only, no Discord, no DB) in the spirit of lootdrop_card.py,
 but living at the repo root because bot.py tries to load every cogs/*.py as an
 extension and a module without setup() just logs a failure on boot.
 

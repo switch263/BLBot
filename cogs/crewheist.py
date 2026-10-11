@@ -1074,7 +1074,7 @@ class CrewHeist(commands.Cog):
         <physical|cyber|social|inside>` — one player's safe-deposit box."""
         await self._start(ctx, victim, account, approach)
 
-    @app_commands.command(name="crewheist", description=f"Recruit a crew ({CREW_BUYIN:,}/recruit, paid to you) to hit a player, the whole casino, or one player's bank box")
+    @app_commands.command(name="crewheist", description=f"Recruit a crew ({CREW_BUYIN:,}/recruit) to hit a player, the whole casino, or one bank box")
     @app_commands.describe(
         target="The player whose stash you're hitting — or the bot for the full sweep (vault + every bank account)",
         account="(bot jobs only) Whose safe-deposit box — their bank account — the crew cracks instead of the vault",

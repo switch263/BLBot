@@ -9,7 +9,7 @@ import logging
 import economy
 from amount import format_compact
 from game_common import button_label
-from cogs.lootdrop_card import render_card, pick_species, _OBJECT_DISPLAY_NAMES
+from lootdrop_card import render_card, pick_species, _OBJECT_DISPLAY_NAMES
 from items import ITEMS, ALL_ITEMS
 
 logger = logging.getLogger(__name__)

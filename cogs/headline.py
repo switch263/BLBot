@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 SUBJECTS = [
-    "Florida Man", "Local Gamer", "Area Dad", "Neighborhood Cat", "Drunk Uncle",
+    "Local Gamer", "Area Dad", "Neighborhood Cat", "Drunk Uncle",
     "A Sentient Roomba", "Unnamed Discord Moderator", "Guy From Craigslist",
     "Walmart Shopper", "Former Child", "Self-Proclaimed Influencer",
     "Man Wearing Crocs", "Woman With 47 Cats", "HOA President",

@@ -4,7 +4,7 @@ loot-droppable items.
 economy.py stores inventory by the string keys below; this module owns
 everything human-facing (names, prices, flavor) plus the loot-drop weights.
 Imported by cogs/shop.py, cogs/slots.py, cogs/heist.py, cogs/lootdrop.py and
-cogs/lootdrop_card.py. It's a pure data module — no Discord, no DB.
+lootdrop_card.py. It's a pure data module — no Discord, no DB.
 """
 
 # --- Item keys -------------------------------------------------------------
@@ -26,7 +26,7 @@ HEIST_SHIELD = "heist_shield"
 #   refuses a buy that would exceed it. Omit for no cap.
 # `loot_weight` is the relative chance of this item on an item loot drop.
 # `card_species` (optional) pins the loot-card art to a specific locked species
-# slug in cogs/lootdrop_card.py; omit it to let the card use random art.
+# slug in lootdrop_card.py; omit it to let the card use random art.
 ITEMS = {
     JAIL_CARD: {
         "name": "Get Out of Jail Free",

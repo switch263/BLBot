@@ -23,33 +23,6 @@ SILLY_NICKNAMES = [
     "The Inverse Midas", "Couponless", "Scholarship Loser", "Subprime Sam",
 ]
 
-FLORIDA_MAN_HEADLINES = [
-    "punched a manatee and demanded 50 coins from the gulf",
-    "set their own mailbox on fire to 'send a message to the sky'",
-    "challenged a vending machine to a duel and lost",
-    "was found wearing nothing but a traffic cone and a smile",
-    "tried to trade a raccoon for bonus spins",
-    "licked a toad and claimed enlightenment, then 50 coins",
-    "attempted to deposit a live iguana at the coin ATM",
-    "swore at a pelican for 40 minutes with no provocation",
-    "declared war on the concept of 'pineapple' in the Publix parking lot",
-    "drove a riding mower through a Chick-fil-A drive-thru demanding waffle fries",
-    "stole 11 garden gnomes and allegedly 'made them into a council'",
-    "was arrested trying to 'exorcise' a Waffle House at 3 AM",
-    "wrestled an emu at a quinceañera for reasons unclear to all parties",
-    "attempted to marry a pontoon boat in a civil ceremony",
-    "claimed to be the rightful heir to the Gulf of Mexico",
-    "threw a frozen turkey at a weather reporter live on air",
-    "was mistaken for a DeSantis staffer and given $40 anyway",
-    "hot-wired a pontoon and joined a flotilla without permission",
-    "was found asleep inside a Build-A-Bear holding a crossbow",
-    "tried to file a restraining order against a specific cloud",
-    "attempted to register an armadillo to vote in the primary",
-    "was caught painting 'SEX COINS' on the side of a church in period-accurate Comic Sans",
-    "attempted to sell a timeshare of the moon at a Cracker Barrel",
-    "was tasered while arguing with a jukebox about Jimmy Buffett royalties",
-]
-
 # (weight, key)
 OUTCOMES = [
     (2,  "jackpot_10x"),
@@ -61,7 +34,6 @@ OUTCOMES = [
     (10, "lose_extra"),
     (10, "pay_channel"),
     (5,  "pay_random_user"),
-    (5,  "florida_man"),
     (5,  "silly_nickname"),
     (5,  "wheel_again"),
 ]
@@ -162,14 +134,6 @@ class WheelOfMisfortune(commands.Cog):
             lucky = random.choice(members)
             casino_payout(guild_id, lucky.id, bet)
             return f"🎰 **The wheel chose a benefactor!** **{lucky.display_name}** pockets your **{bet:,}** coins."
-
-        if outcome == "florida_man":
-            headline = random.choice(FLORIDA_MAN_HEADLINES)
-            try:
-                await user.send(f"💌 **BREAKING:** *{user.display_name} {headline}.*")
-            except discord.Forbidden:
-                pass
-            return f"📰 **Florida Man Incident!** You lose **{bet:,}** and your dignity. Check your DMs."
 
         if outcome == "silly_nickname":
             nick = random.choice(SILLY_NICKNAMES)

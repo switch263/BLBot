@@ -26,13 +26,15 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!dig <bet>` | Raccoon's Den — 4×4 grid of bins, 3 raccoons bite |
 | `!bigfoot <bet>` | Hunt Bigfoot — 3 bears + 1 Bigfoot jackpot tile |
 | `!dogs <bet>` | Hot Dog Eating Contest — each dog raises mult + hurl risk |
-| `!wheel <bet>` | Wheel of Misfortune — 12 chaotic outcomes |
+| `!wheel <bet>` | Wheel of Misfortune — chaotic weighted outcomes |
 | `!vend <bet>` | The Vending Machine From Hell — 6 cursed sodas |
-| `!sushi <bet>` | Gas Station Sushi — wide variance, food-poisoning fines |
 | `!methgator <bet>` | You are a gator on meth. Pick one of 8 rampages. |
-| `!sunnyvale <bet>` | A day in Sunnyvale Trailer Park (TPB-themed events) |
-| `!mayor <bet>` | Run for Trailer Park Mayor — 3 rounds vs 3 absurd opponents |
 | `!troll <bet>` | Troll Bridge — correct answer to a nonsense riddle = ×3 |
+| `!insurance <bet>` | File a fraudulent insurance claim — pick a scheme, try not to get caught |
+| `!microwave <bet>` | "Is it a good idea to microwave this?" |
+| `!bongo <bet>` | Let the kitty play the bongos — multiplicative board, pays big once a day |
+| `!scratch <bet>` | Buy an instant-win lottery ticket and scratch it (`!tickets` for odds) |
+| `!juju` | Tempt the juju — a free loot grid, twice a day; one tile curses you |
 
 #### 👥 Multiplayer & PvP
 | Command | Description |
@@ -40,8 +42,11 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!roulette` | Russian Roulette — ALL IN your entire wallet, winner takes all |
 | `!pigderby <bet>` | 5-pig race with fixed-odds betting (2×–15× payouts) |
 | `!roach @user <bet>` | Cockroach Fight Club — 1v1 duel, winner takes pot |
-| `!heist @victim [@accomplice]` | Rob someone (or the bot at 1% odds) |
+| `!heist @victim [@accomplice]` | Rob someone (or the bot, at long odds) |
+| `!crewheist <target> [account] [approach]` | Recruit a paid crew to hit a player, the whole casino, or one bank box |
 | `!insure` / `!reclaim` | Buy heist insurance; reclaim 60% of a robbery from the bank |
+| `!bounty @user <bet>` | Pay to maybe-jail someone — odds scale with the bet; a miss jails you |
+| `!bingle @user` | Get bingled, or bingle someone |
 
 #### 💰 Earning & Economy
 | Command | Description |
@@ -51,20 +56,37 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!gift @user <amount>` | Send coins to another user |
 | `!richest` | Leaderboard & server economy stats |
 | `!jail [@user]` | Check casino jail status |
+| `!bank` / `!deposit` / `!withdraw` | Private, heist-resistant, un-gamblable vault (earns interest) |
+| `!shop` / `!buy` / `!inventory` / `!use` / `!sell` | Item shop — Get Out of Jail Free, Bonus Spin, Heist Shield |
+| `!splurge` / `!flex` / `!bonfire` | Wealth-gated coin sink — buy cosmetic trophies, show them off |
+| `!burn <amount>` | Burn coins to the house pot (or set vanish to destroy them) |
+| `!prestige` / `!legacy` | Wipe your fortune for a permanent winnings multiplier; lifetime leaderboard |
+| `!dividends` | House profit-sharing — who owns a piece of the house |
+| `!loan borrow/repay/job/tab` | Big Sal's loan business — the vig is not negotiable |
+| `!taxbill` / `!paytax` | Check and pay what you owe the casino |
+
+#### 🚔 Crime & Jail
+| Command | Description |
+|---------|-------------|
+| `!bailbonds @user` / `!bondboard` | Post bond on a jailed user (roll for vig — or for jail); see who's bondable |
+| `!jailbreak` | Risk it for early release — or make your sentence worse |
+| `!lawyer` | Hire a lawyer to fight your sentence for a cut of your wallet |
+| `!trial` | Jury trial — argue your way out (`!jury` / `!objection`) |
+| `!prison file/labor/dice/gym/shiv/guard/cards` | The prison economy — only works while you're locked up |
 
 ### Humor & Generators
 | Command | Description |
 |---------|-------------|
 | `!roast @user` | Template-based creative roasts |
-| `!insult @user` | 700+ insults with 15 templates, 25% chance of savage mode |
+| `!yourmother @user` | Your-mother jokes (`!yomama` / `!urmom`) |
 | `!fortune` | Sarcastic fortune cookie with lucky numbers |
 | `!headline` | Absurd fake news headlines |
-| `!floridaman` | Florida Man headlines (100 in data file) |
 | `!conspiracy` | Unhinged conspiracy theory generator |
-| `!therapy` | Increasingly unhinged therapist advice (100 responses) |
+| `!therapy` | Increasingly unhinged therapist advice (99 responses) |
 | `!thought` | Shower thoughts (100 in data file) |
 | `!advice` | Terrible life advice (100 in data file) |
 | `!excuse` | Absurd excuse generator (40x40x40x40 combinations) |
+| `!8ball <question>` | Ask the magic 8-ball |
 
 ### Text Manipulation
 | Command | Description |
@@ -82,9 +104,7 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!bdsm @user` | BDSM scenario generator (720k+ combinations) |
 | `!rekt @user` | Get Riggity Rekt (10% combo chance) |
 | `!pickup @user` | Terrible pickup lines |
-| `!villain @user` | Dramatic villain monologue |
 | `!lifestats @user` | Deterministic RPG character sheet |
-| `!random @user` | Random out-of-context message from history (or fake) |
 
 ### Utility & Info
 | Command | Description |
@@ -95,29 +115,18 @@ Shared coin wallet across all games. Start with 100 coins. The bot itself is the
 | `!chucknorris` | Random Chuck Norris fact |
 | `!tarkov_time` | Escape from Tarkov in-game times |
 | `!quote [add/get]` | Quote database |
-| `!ctf` / `!ftc` | Temperature conversion |
+| `!convert <value>` | Units & currency (e.g. `72f to c`, `100 usd to eur`, `5mi to km`) |
 | `!roll NdN` | Dice roller |
 | `!serverstats` | Server statistics embed |
-| `/whoami` | Your user info (ephemeral, slash only) |
-| `/channelinfo` | Channel info (ephemeral, slash only) |
-| `/help` | Paginated help with buttons (ephemeral, slash only) |
+| `!date` | Current date/time (`!date set <tz>` for your timezone) |
+| `!remindme <time> <text>` | Set a reminder (`!reminders` / `!cancelreminder`) |
+| `!achievements` | Track your achievements (`/achievements view` / `top`) |
+| `/info me` | Your user info (ephemeral, slash only) |
+| `/info channel` | Channel info (ephemeral, slash only) |
+| `/info server` | Server info + bot reach (ephemeral, slash only) |
 
 ### Meme Images
-`!lasaga` `!pineapple` `!ohio` `!hf` `!lenny` `!gaslight`
-
-### Passive Chaos (no commands, just happens)
-| Feature | What it does |
-|---------|-------------|
-| **Gaslight** | Sends a message then sneakily edits it. Fake misquotes. Suspicious reacts. |
-| **Dad Bot** | 5% chance to reply "Hi X, I'm Dad!" when someone says "I'm X" |
-| **Typo Police** | 2% chance to "correct" spelling incorrectly |
-| **Fake Typing** | Shows typing for 30 seconds then sends "nvm" (every 4-48 hours) |
-| **Lurker Callout** | Pings someone who hasn't spoken in 7 days (every 5-14 days) |
-| **Sleep Police** | Tells people to go to bed if they post between 2-5am UTC |
-| **Selective Memory** | "Remembers" events that never happened about random users (every 2-7 days) |
-| **Phantom Ping** | "who pinged me?" when nobody did, with paranoid followups (every 1-4 days) |
-| **Unhinged** | Replies to random old messages with unhinged commentary (every 3-60 days) |
-| **Chaos Engine** | Wrong channel messages, existential crises, fake maintenance alerts, vague threats, relationship drama, abandonment issues, context crimes, passive aggressive reaction chains |
+`!lasaga` `!pineapple` `!ohio` `!hf` `!lenny`
 
 ## Setup
 
@@ -169,15 +178,9 @@ BLBot/
 
 ### Adding Content
 Most generators read from plain text files in `data_files/`. To add content, just append lines:
-- `data_files/insults.txt` — one insult noun per line
-- `data_files/savage_insults.txt` — full savage insult sentences
 - `data_files/thoughts.txt` — shower thoughts
 - `data_files/therapy_responses.txt` — therapist responses
-- `data_files/floridaman_actions.txt` — Florida Man actions
 - `data_files/bad_advice.txt` — terrible life advice
-- `data_files/fake_quotes.txt` — static fake quotes
-- `data_files/fakequote_starters.txt` / `fakequote_actions.txt` / `fakequote_endings.txt` — templated fake quotes
-- `data_files/unhinged_replies.txt` — unhinged reply messages
 - `data_files/bdsm_templates.txt` / `bdsm_actions.txt` / `bdsm_toys.txt` / `bdsm_traps.txt` — BDSM generator
 
 Use `!reload` (bot owner only) to pick up changes without restarting.
