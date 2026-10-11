@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("discord")
 
-from dig import (  # noqa: E402
+from juju import (  # noqa: E402
     PAYOUT_CUMULATIVE,
     DIG_CAP,
     NUM_LOOT,
@@ -41,7 +41,7 @@ def test_payouts_are_strictly_increasing_and_escalating():
 
 
 def test_cooldown_gate_predicate(monkeypatch):
-    import dig
+    import juju
     import economy
 
     today = date.today().isoformat()
@@ -51,7 +51,7 @@ def test_cooldown_gate_predicate(monkeypatch):
     monkeypatch.setattr(economy, "kv_set",
                         lambda g, u, ns, k, v: store.__setitem__((g, u, ns, k), v))
 
-    cog = dig.LootDig.__new__(dig.LootDig)
+    cog = juju.LootDig.__new__(juju.LootDig)
     # Fresh slot -> allowed.
     assert cog._cooldown_refusal(1, 2) is None
     # Stamp it -> refused this slot.

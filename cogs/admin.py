@@ -73,6 +73,33 @@ class Admin(commands.Cog):
         await ctx.send(f"⏱️ Up for **{format_uptime(time.time() - BOOT_TIME)}** "
                        f"(since <t:{int(BOOT_TIME)}:F>).")
 
+    @commands.command(name="resync", aliases=["sync", "synccommands"])
+    async def resync(self, ctx):
+        """Force a re-sync of the slash-command tree with Discord — drops retired
+        commands and registers new ones. Use after a deploy if the command list
+        looks stale (old commands lingering, new ones missing). Admin channel only."""
+        if ctx.channel.id != ADMIN_CHANNEL_ID:
+            return  # Silently ignore if not in admin channel
+        status = await ctx.send("🔄 Re-syncing slash commands with Discord…")
+        try:
+            synced = await self.bot.tree.sync()
+            lines = [f"✅ Globally synced **{len(synced)}** slash commands "
+                     "(all servers — Discord can take up to ~1 hour to show these)."]
+            if ctx.guild is not None:
+                # Default to THIS guild (the admin channel's) so the change lands
+                # here immediately — no DISCORD_GUILD_ID env var required.
+                self.bot.tree.copy_global_to(guild=ctx.guild)
+                gsynced = await self.bot.tree.sync(guild=ctx.guild)
+                lines.append(f"✅ Synced **{len(gsynced)}** to **{ctx.guild.name}** — live here right now.")
+            names = sorted(c.name for c in self.bot.tree.get_commands())
+            registered = ", ".join("/" + n for n in names)
+            lines.append(f"**{len(names)}** commands registered: {registered}")
+            logger.info(f"Admin {ctx.author} re-synced {len(synced)} slash commands.")
+            await status.edit(content="\n".join(lines)[:1990])
+        except Exception as e:
+            logger.exception("resync failed")
+            await status.edit(content=f"❌ Sync failed: `{type(e).__name__}: {e}`")
+
     @commands.command(name="unjail", aliases=["pardon"])
     async def unjail(self, ctx, user: discord.Member):
         """Release a user from casino jail. Allowed in the admin channel, OR anywhere

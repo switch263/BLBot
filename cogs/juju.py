@@ -233,13 +233,13 @@ class LootDig(commands.Cog):
         # failed message doesn't silently burn it).
         self._stamp(guild.id, user.id)
 
-    @commands.command(name="dig", aliases=["juju", "lootdig"])
+    @commands.command(name="juju", aliases=["lootdig"])
     @commands.guild_only()
-    async def dig_prefix(self, ctx):
+    async def juju_prefix(self, ctx):
         await self._start(ctx)
 
-    @app_commands.command(name="dig", description="Dig for loot — free, twice a day. One tile is bad juju.")
-    async def dig_slash(self, interaction: discord.Interaction):
+    @app_commands.command(name="juju", description="Tempt the juju — a free loot grid, twice a day. One tile curses you.")
+    async def juju_slash(self, interaction: discord.Interaction):
         await self._start(interaction)
 
 
