@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import StakeView, casino_prelude
+from game_common import StakeView, casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class TrollBridge(commands.Cog):
             paid = casino_payout(guild_id, user_id, requested)
             net = paid - bet
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            result = f"✅ **Correct!** {random.choice(WIN_FLAVOR)}\n**{net:+,}** coins.{short}"
+            result = f"✅ **Correct!** {random.choice(WIN_FLAVOR)}\n**{net:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
         else:
             fine_target = bet // 2
             extra = 0

@@ -29,6 +29,7 @@ import time
 import logging
 
 import economy
+from game_common import prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,7 @@ class HeistInsurance(commands.Cog):
         await reply(
             f"🧾💰 **Claim approved.** You were robbed of **{amount:,}**; the bank reimburses "
             f"**{payout:,}** ({int(INSURANCE_COVERAGE_PCT * 100)}%). Policy is now spent.{mint_note}"
+            + prestige_trailer(guild.id, user.id)
         )
 
     # ---- /policy --------------------------------------------------------

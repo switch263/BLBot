@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import StakeView, casino_prelude
+from game_common import StakeView, casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -159,22 +159,22 @@ class VendingMachine(commands.Cog):
         if outcome == "jackpot":
             paid = casino_payout(gid, uid, bet * 10)
             short = f" *(house was short — owed {bet*10:,})*" if paid < bet * 10 else ""
-            return f"💎 **JACKPOT.** The can was stuffed with hundred-dollar bills. **{paid - bet:+,}** coins.{short}"
+            return f"💎 **JACKPOT.** The can was stuffed with hundred-dollar bills. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "big_win":
             paid = casino_payout(gid, uid, bet * 5)
             short = f" *(house was short — owed {bet*5:,})*" if paid < bet * 5 else ""
-            return f"🎰 **×5!** Crungus smiles upon you. **{paid - bet:+,}** coins.{short}"
+            return f"🎰 **×5!** Crungus smiles upon you. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "medium_win":
             paid = casino_payout(gid, uid, bet * 3)
             short = f" *(house was short — owed {bet*3:,})*" if paid < bet * 3 else ""
-            return f"✨ **×3!** The soda is also cold. **{paid - bet:+,}** coins.{short}"
+            return f"✨ **×3!** The soda is also cold. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "small_win":
             paid = casino_payout(gid, uid, bet * 2)
             short = f" *(house was short — owed {bet*2:,})*" if paid < bet * 2 else ""
-            return f"🥤 **×2!** It's drinkable. **{paid - bet:+,}** coins.{short}"
+            return f"🥤 **×2!** It's drinkable. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "break_even":
             casino_payout(gid, uid, bet)
-            return "😐 **Break even.** The can is empty but the coin fell back out. Weird."
+            return "😐 **Break even.** The can is empty but the coin fell back out. Weird." + prestige_trailer(gid, uid)
         if outcome == "nothing":
             return f"💀 **Nothing drops.** The machine takes your **{bet:,}** and whistles innocently."
         if outcome == "extra_loss":

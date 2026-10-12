@@ -5,7 +5,7 @@ import random
 import logging
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount
+from game_common import parse_wallet_amount, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,8 @@ class CoinFlip(commands.Cog):
             new_bal = balance + winnings
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and won **{winnings:,}** coins! {random.choice(WIN_MESSAGES)}",
+                description=f"You called **{call_full}** and won **{winnings:,}** coins! {random.choice(WIN_MESSAGES)}"
+                            + prestige_trailer(guild_id, user_id),
                 color=discord.Color.green()
             )
         else:

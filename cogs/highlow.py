@@ -6,7 +6,7 @@ import logging
 
 from economy import get_coins, record_game, casino_payout
 from amount import format_compact
-from game_common import StakeView, casino_prelude, refund_stake, button_label
+from game_common import StakeView, casino_prelude, refund_stake, button_label, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ class CashOutButton(discord.ui.Button):
             f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{paid:,}** coins "
             f"(net **{net:+,}**).{short} Streak: **{g.streak}**.\n"
             f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
-        )
+        ) + prestige_trailer(g.guild_id, g.user_id)
         await interaction.response.edit_message(content=view.cog._render(g, footer), view=view)
 
 
@@ -141,7 +141,7 @@ class HighLowView(StakeView):
             f"⏰ **Auto-cashed out** at **{g.multiplier:.2f}×** — you went quiet. "
             f"**{paid:,}** coins (net **{paid - g.bet:+,}**).{short} Streak: **{g.streak}**.\n"
             f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
-        ))
+        ) + prestige_trailer(g.guild_id, g.user_id))
 
 
 class HigherOrLower(commands.Cog):

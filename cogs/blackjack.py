@@ -7,7 +7,7 @@ import asyncio
 import time
 
 from economy import get_coins, jail_message, record_game, transfer_to_house, casino_payout
-from game_common import casino_prelude
+from game_common import casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -547,6 +547,8 @@ class Blackjack(commands.Cog):
             total_bet = sum(p.hand_bets)
             record_game(r.guild_id, p.user_id, "blackjack", won=payout > total_bet)
             p.result_text = " | ".join(results)
+            if payout:
+                p.result_text += prestige_trailer(r.guild_id, p.user_id)
 
         content = self._render_playing(r, reveal_dealer=True, header_note="**Round complete!**")
         try:

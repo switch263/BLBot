@@ -9,7 +9,7 @@ from economy import (
     get_coins, transfer_to_house, casino_payout,
     record_game, check_bet,
 )
-from game_common import casino_prelude
+from game_common import casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -175,14 +175,14 @@ class Lottery(commands.Cog):
             if mult >= 1:
                 net = paid - price
                 if net > 0:
-                    outcome = f"🟢 **WINNER ×{mult:g}** → **+{net:,}** coins!{short}"
+                    outcome = f"🟢 **WINNER ×{mult:g}** → **+{net:,}** coins!{short}" + prestige_trailer(guild.id, user.id)
                 else:
-                    outcome = f"⚪ Money back (**×{mult:g}**). Broke even.{short}"
+                    outcome = f"⚪ Money back (**×{mult:g}**). Broke even.{short}" + prestige_trailer(guild.id, user.id)
             else:
                 outcome = (
                     f"🟡 Partial **×{mult:g}** → got **{paid:,}** back, "
                     f"lost **{price - paid:,}**.{short}"
-                )
+                ) + prestige_trailer(guild.id, user.id)
         else:
             outcome = f"🔴 **No win.** Down **{price:,}**."
 

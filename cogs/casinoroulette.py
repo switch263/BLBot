@@ -10,7 +10,7 @@ from economy import (
     HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT, BOT_HEIST_VAULT_ODDS,
     POT_WIN_SKIM_PCT, POT_ACCRUAL_SECONDS,
 )
-from game_common import casino_prelude
+from game_common import casino_prelude, prestige_trailer
 
 
 class CasinoRoulette(commands.Cog):
@@ -82,6 +82,7 @@ class CasinoRoulette(commands.Cog):
                             f"\n💰 **JACKPOT!!** You raked **{jackpot_paid:,}** — "
                             f"**{int(round(jackpot_pct * 100))}%** of on-hand. Safe harbor untouched."
                         )
+            final_text += prestige_trailer(guild.id, user.id)
         else:
             # Bet already went to house above; nothing more to do on a loss.
             final_text = f"{result_msg}\n💀 **L.** Your **{amount:,}** is in the pot now."

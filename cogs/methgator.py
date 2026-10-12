@@ -4,7 +4,7 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import StakeView, casino_prelude
+from game_common import StakeView, casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +209,7 @@ class MethGator(commands.Cog):
                 result = f"**×{mult:.2f}** → **{paid - bet:+,}** coins.{short}"
             else:
                 result = f"**×{mult:.2f}** → partial refund **{paid:,}**. Lost **{bet - paid:,}**.{short}"
+            result += prestige_trailer(guild_id, user_id)
         else:
             result = f"**Lost {bet:,}** coins."
 

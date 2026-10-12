@@ -5,7 +5,7 @@ import random
 import logging
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount
+from game_common import parse_wallet_amount, prestige_trailer
 from items import BONUS_SPIN
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,10 @@ class Slots(commands.Cog):
         # Kept on the NOMINAL bet, as today.
         economy.memorial_tithe(guild_id, bet)
 
-        return self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net, gross, stake)
+        embed = self._build_spin_embed(reels, payout_mult, desc, bet, wallet, net, gross, stake)
+        if payout_mult > 0:
+            embed.description += prestige_trailer(guild_id, user_id)
+        return embed
 
     async def _freespin(self, guild_id: int, user_id: int) -> discord.Embed:
         """Play one Bonus Spin item — a free spin at FREE_SPIN_BET notional.
@@ -168,7 +171,7 @@ class Slots(commands.Cog):
         reel_display = f"**[ {reels[0]} | {reels[1]} | {reels[2]} ]**"
         if winnings > 0:
             color = discord.Color.gold() if payout_mult >= 50 else discord.Color.green()
-            result_text = f"{desc} You won **{winnings:,}** coins — and risked nothing!"
+            result_text = f"{desc} You won **{winnings:,}** coins — and risked nothing!" + prestige_trailer(guild_id, user_id)
         else:
             color = discord.Color.dark_grey()
             result_text = f"{desc} No win — but a free spin costs you nothing."

@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import casino_prelude
+from game_common import casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -72,26 +72,26 @@ class WheelOfMisfortune(commands.Cog):
         if outcome == "jackpot_10x":
             paid = casino_payout(guild_id, user_id, bet * 10)
             short = f" *(house was short — owed {bet*10:,})*" if paid < bet * 10 else ""
-            return f"🎉 **JACKPOT ×10!** You won **{paid - bet:+,}** coins.{short}"
+            return f"🎉 **JACKPOT ×10!** You won **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "jackpot_5x":
             paid = casino_payout(guild_id, user_id, bet * 5)
             short = f" *(house was short — owed {bet*5:,})*" if paid < bet * 5 else ""
-            return f"💎 **×5 HIT!** **{paid - bet:+,}** coins.{short}"
+            return f"💎 **×5 HIT!** **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "payout_3x":
             paid = casino_payout(guild_id, user_id, bet * 3)
             short = f" *(house was short — owed {bet*3:,})*" if paid < bet * 3 else ""
-            return f"🎰 **×3!** **{paid - bet:+,}** coins.{short}"
+            return f"🎰 **×3!** **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "payout_2x":
             paid = casino_payout(guild_id, user_id, bet * 2)
             short = f" *(house was short — owed {bet*2:,})*" if paid < bet * 2 else ""
-            return f"✨ **×2!** **{paid - bet:+,}** coins.{short}"
+            return f"✨ **×2!** **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "break_even":
             casino_payout(guild_id, user_id, bet)
-            return "🙃 **Break even.** The wheel is bored. Bet returned."
+            return "🙃 **Break even.** The wheel is bored. Bet returned." + prestige_trailer(guild_id, user_id)
 
         if outcome == "nothing":
             return f"💀 **The wheel ate your {bet:,} coins and stared silently.**"

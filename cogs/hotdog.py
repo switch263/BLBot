@@ -6,7 +6,7 @@ import logging
 
 from economy import get_coins, casino_payout, record_game
 from amount import format_compact
-from game_common import StakeView, casino_prelude, refund_stake, button_label
+from game_common import StakeView, casino_prelude, refund_stake, button_label, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class HotDogView(StakeView):
             requested = int(g.bet * g.multiplier)
             paid = casino_payout(g.guild_id, g.user_id, requested)
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            g.log.append(f"⏰ **Auto-tapped out at ×{g.multiplier:.2f}** — you went quiet.{short}")
+            g.log.append(f"⏰ **Auto-tapped out at ×{g.multiplier:.2f}** — you went quiet.{short}" + prestige_trailer(g.guild_id, g.user_id))
         self._refresh()
         return self.cog._render(g, final=True)
 
@@ -171,7 +171,7 @@ class HotDogView(StakeView):
             requested = int(g.bet * g.multiplier)
             paid = casino_payout(g.guild_id, g.user_id, requested)
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            g.log.append(f"🏆 **TEN DOG LIMIT REACHED.** You are a national treasure. Auto-bank at ×{g.multiplier:.2f}.{short}")
+            g.log.append(f"🏆 **TEN DOG LIMIT REACHED.** You are a national treasure. Auto-bank at ×{g.multiplier:.2f}.{short}" + prestige_trailer(g.guild_id, g.user_id))
             self._refresh()
             for child in self.children:
                 child.disabled = True
@@ -198,7 +198,7 @@ class HotDogView(StakeView):
         requested = int(g.bet * g.multiplier)
         paid = casino_payout(g.guild_id, g.user_id, requested)
         short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-        g.log.append(f"✅ **Tapped out at ×{g.multiplier:.2f}.** {random.choice(BANK_MESSAGES)}{short}")
+        g.log.append(f"✅ **Tapped out at ×{g.multiplier:.2f}.** {random.choice(BANK_MESSAGES)}{short}" + prestige_trailer(g.guild_id, g.user_id))
         self._refresh()
         for child in self.children:
             child.disabled = True

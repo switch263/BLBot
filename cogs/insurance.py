@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_user, casino_payout, record_game
-from game_common import StakeView, casino_prelude
+from game_common import StakeView, casino_prelude, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +154,12 @@ class Insurance(commands.Cog):
             requested = int(bet * mult)
             paid = casino_payout(guild_id, user_id, requested)
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            result = f"**×{mult:.2f}** → **{paid - bet:+,}** coins.{short}"
+            result = f"**×{mult:.2f}** → **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
         elif mult > 0:
             requested = int(bet * mult)
             paid = casino_payout(guild_id, user_id, requested)
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            result = f"**×{mult:.2f}** → partial payout **{paid:,}**. Lost **{bet - paid:,}**.{short}"
+            result = f"**×{mult:.2f}** → partial payout **{paid:,}**. Lost **{bet - paid:,}**.{short}" + prestige_trailer(guild_id, user_id)
         else:
             result = f"**Lost {bet:,}** coins."
 

@@ -22,7 +22,7 @@ import time
 from collections import Counter
 
 from economy import get_coins, record_game, casino_payout, kv_get, kv_set
-from game_common import StakeView, casino_prelude, refund_stake
+from game_common import StakeView, casino_prelude, refund_stake, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,7 @@ class SubmitButton(discord.ui.Button):
                 f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{paid:,}** coins "
                 f"(net **{paid - g.bet:+,}**).{short_note}\n"
                 f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
-            )
+            ) + prestige_trailer(g.guild_id, g.user_id)
         elif attempts_used >= MAX_ATTEMPTS:
             g.ended = True
             # Bet already went to the house at game start; nothing more to move.

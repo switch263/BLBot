@@ -7,6 +7,7 @@ auto-applied win boost, the all-or-nothing buy, and bank_heist's bank->wallet
 transfer with headroom trimming.
 """
 import economy
+from game_common import prestige_trailer
 
 GUILD = 880_001
 USER = 880_002
@@ -211,3 +212,21 @@ def test_bank_heist_memorial_guarded():
     m = economy.MEMORIAL_USER_ID
     assert economy.bank_heist(GUILD, m, THIEF, 0.5)["error"] == "memorial"
     assert economy.bank_heist(GUILD, VICTIM, m, 0.5)["error"] == "memorial"
+
+
+# ---- the payout trailer ------------------------------------------------------
+
+def test_prestige_trailer_empty_at_level_zero():
+    g = GUILD + 8
+    _fresh(g, USER)
+    assert prestige_trailer(g, USER) == "", \
+        "a non-prestiged player's payout gets no extra line"
+
+
+def test_prestige_trailer_shows_win_multiplier():
+    g = GUILD + 8
+    _fresh(g, USER)
+    _set_level(g, USER, 2)  # win multiplier is 1 + level == 3
+    trailer = prestige_trailer(g, USER)
+    assert "×3" in trailer, f"should quote the ×3 win multiplier, got {trailer!r}"
+    assert "Prestige" in trailer

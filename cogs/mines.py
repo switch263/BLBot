@@ -32,7 +32,7 @@ import logging
 
 import economy
 from amount import amount_error, format_compact
-from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label, prestige_trailer
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ class MinesView(GridView):
             lead = f"You banked **{len(self.revealed)}** gem(s) at **×{self.current_mult:g}**."
         return discord.Embed(
             title=title,
-            description=f"{lead}\nPayout: **{paid:,}**  (net {sign}{net:,}){mint_note}",
+            description=f"{lead}\nPayout: **{paid:,}**  (net {sign}{net:,}){mint_note}" + prestige_trailer(self.guild_id, self.user_id),
             color=discord.Color.green(),
         )
 

@@ -34,7 +34,8 @@ Pure glue — talks to economy.py, never to SQLite.
 import discord
 
 from economy import (casino_ban_message, check_bet, get_coins, jail_message,
-                     prestige_surcharge, refund_from_house, transfer_to_house)
+                     prestige_surcharge, prestige_win_mult, refund_from_house,
+                     transfer_to_house)
 from amount import parse_amount, amount_error
 from taunts import broke_taunt
 
@@ -66,6 +67,21 @@ def charge_fee(guild_id: int, user_id: int, amount: int, label: str) -> str | No
 def fee_trailer(amount: int) -> str:
     """The receipt line appended to a paid command's output."""
     return f"\n-# −{amount:,} coins. Worth it."
+
+
+def prestige_trailer(guild_id: int, user_id: int) -> str:
+    """The small-text line a prestiged player gets on a boosted payout.
+
+    `casino_payout` already multiplies every house win by `prestige_win_mult`
+    (1 + level) before the number ever reaches the cog, so the payout a player
+    sees is silently larger than the game's own `×mult` suggests. This line
+    names the prestige factor that did it, so the number isn't a mystery.
+    Empty at level 0 (mult == 1), so appending it is a no-op for everyone who
+    hasn't prestiged — the one call every payout branch makes unconditionally."""
+    mult = prestige_win_mult(guild_id, user_id)
+    if mult <= 1:
+        return ""
+    return f"\n-# ⭐ Prestige multiplier: ×{mult}"
 
 
 # Discord rejects the whole message edit (400, "Must be 80 or fewer in

@@ -11,6 +11,7 @@ from economy import (
     get_active_jails, pay_bail, jail_user,
     casino_payout,
 )
+from game_common import prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,10 @@ class BailBonds(commands.Cog):
         else:
             lines.append(f"📉 Net: **{net:,}** coins.{short_note}")
         lines.append(f"Balance: **{get_coins(guild.id, payer.id):,}**")
-        return "\n".join(lines)
+        result_text = "\n".join(lines)
+        if payout > 0:
+            result_text += prestige_trailer(guild.id, payer.id)
+        return result_text
 
     # ---- Commands ------------------------------------------------------
 

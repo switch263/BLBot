@@ -6,6 +6,7 @@ import logging
 
 import economy
 from achievements import ACHIEVEMENTS, TOTAL_POINTS, points, reward
+from game_common import prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,8 @@ class Achievements(commands.Cog):
                 reward_note = f" — **+{paid:,}** coins" if paid > 0 else ""
                 lines.append(f"{a['emoji']} **{a['name']}** ({points(aid)} pts){reward_note}\n   _{a['desc']}_")
             text = "\n".join(lines)
+        if any(paid > 0 for _aid, _a, paid in newly):
+            text += prestige_trailer(guild_id, user.id)
         try:
             await channel.send(text)
         except discord.HTTPException:

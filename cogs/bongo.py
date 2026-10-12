@@ -21,7 +21,7 @@ import logging
 import economy
 from economy import get_coins, casino_payout, record_game
 from amount import format_compact
-from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label
+from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label, prestige_trailer
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -203,7 +203,8 @@ class BongoView(GridView):
             else:
                 headline = "😻 **THE KITTY!** " + random.choice(KITTY_NARRATIVES)
             content = self.cog._render(
-                self, f"{headline}\nFinal multiplier **{_fmt_mult(final)}×** → net **{net:+,}** coins.{short}")
+                self, f"{headline}\nFinal multiplier **{_fmt_mult(final)}×** → net **{net:+,}** coins.{short}"
+                + prestige_trailer(self.guild_id, self.user_id))
             await interaction.response.edit_message(content=content, view=self)
             return
 
@@ -232,7 +233,8 @@ class BongoView(GridView):
         content = self.cog._render(
             self,
             f"🎤 **Called the set after {self.reveals} tiles.** {random.choice(CASHOUT_FLAVOR)}\n"
-            f"Multiplier **{_fmt_mult(self.mult)}×** → net **{net:+,}** coins.{short}",
+            f"Multiplier **{_fmt_mult(self.mult)}×** → net **{net:+,}** coins.{short}"
+            + prestige_trailer(self.guild_id, self.user_id),
         )
         await interaction.response.edit_message(content=content, view=self)
 
@@ -244,7 +246,8 @@ class BongoView(GridView):
             record_game(self.guild_id, self.user_id, "bongo", won=True)
             short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
             footer = (f"⏰ **Auto-called the set** at **{_fmt_mult(self.mult)}×** — you went quiet. "
-                      f"Net **{paid - self.bet:+,}** coins.{short}")
+                      f"Net **{paid - self.bet:+,}** coins.{short}"
+                      + prestige_trailer(self.guild_id, self.user_id))
         else:
             footer = refund_stake(self.guild_id, self.user_id, self.bet)
         self.finish()
