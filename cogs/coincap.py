@@ -3,9 +3,10 @@
 economy.MAX_COINS is the hard ceiling on any stored balance (SQLite silently
 turns an overflowed INTEGER into a float, which is what used to corrupt
 wallets). When a payout is bigger than the room left in a winner's wallet, the
-coins stay in the house and economy.py logs a "ceiling strike". No game cog
-knows or cares: every path through casino_payout / refund_from_house /
-mint_house_bailout participates for free.
+overflow goes to the house pot — or, economy.CEILING_DISPERSE_CHANCE of the
+time, is split among the other active players — and economy.py logs a
+"ceiling strike". No game cog knows or cares: every path through
+casino_payout / refund_from_house / mint_house_bailout participates for free.
 
 This cog drains that queue on a 30s poll and announces the loss in #game-spam,
 blaming the player entirely — because it IS their fault. They chose to sit on
@@ -32,6 +33,9 @@ _SOURCE_TEXT = {
     "refund": "a refund",
     "bailout": "a bankruptcy bailout",
 }
+
+# Recipients named individually before the list collapses (embed size limit).
+_MAX_LISTED = 15
 
 
 class CoinCap(commands.Cog):
@@ -81,15 +85,29 @@ class CoinCap(commands.Cog):
         if lost <= 0:
             return
         what = _SOURCE_TEXT.get(ev.get("source"), "a payout")
+        dispersed = [(int(uid), int(amt)) for uid, amt in ev.get("dispersed") or []]
         lines = [
             ceiling_taunt(),
             "",
             f"The house owed **{format_coins(owed)}** on {what}. Their wallet had room for "
             f"**{format_coins(paid)}**.",
-            f"**{format_coins(lost)}** coins bounced off the ceiling and stayed with the house.",
-            "",
-            f"Wallets cap at **{economy.MAX_COINS_LABEL}** coins. Spend something.",
         ]
+        if dispersed:
+            given = sum(amt for _, amt in dispersed)
+            lines.append(
+                f"**{format_coins(lost)}** coins bounced off the ceiling — and "
+                f"**{format_coins(given)}** of it rained down on everyone else at the tables:"
+            )
+            lines += [f"• <@{uid}> +**{format_coins(amt)}**" for uid, amt in dispersed[:_MAX_LISTED]]
+            if len(dispersed) > _MAX_LISTED:
+                lines.append(f"• …and {len(dispersed) - _MAX_LISTED} more")
+            if given < lost:
+                lines.append(f"The other **{format_coins(lost - given)}** went to the pot.")
+        else:
+            lines.append(
+                f"**{format_coins(lost)}** coins bounced off the ceiling and landed in the pot."
+            )
+        lines += ["", f"Wallets cap at **{economy.MAX_COINS_LABEL}** coins. Spend something."]
         embed = discord.Embed(
             title="🧱 TOO RICH FOR THE ENGINE",
             description="\n".join(lines),

@@ -6,6 +6,7 @@ from decimal import Context, Decimal, InvalidOperation
 import json
 import os
 import logging
+import random
 from datetime import datetime
 from config import DATA_DIR
 
@@ -733,6 +734,7 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
 
 def record_game(guild_id: int, user_id: int, game: str, won: bool):
     """Upsert a play (and optional win) into game_stats. Replaces the per-game record_* shims."""
+    import time as _t
     try:
         with _connect() as conn:
             conn.execute(
@@ -741,6 +743,13 @@ def record_game(guild_id: int, user_id: int, game: str, won: bool):
                 "ON CONFLICT(guild_id, user_id, game) DO UPDATE SET "
                 "plays = plays + 1, wins = wins + excluded.wins",
                 (guild_id, user_id, game, 1 if won else 0),
+            )
+            # Every settled game stamps the player as active — the pool a
+            # ceiling overflow can be dispersed to (_settle_overflow).
+            conn.execute(
+                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=excluded.value",
+                (guild_id, user_id, _ACTIVITY_NS, _ACTIVITY_KEY, int(_t.time())),
             )
             conn.commit()
     except sqlite3.Error as e:
@@ -1446,7 +1455,12 @@ def casino_payout(guild_id: int, user_id: int, amount: int) -> int:
             capped = min(pay, headroom(winner_row[0] if winner_row else 0))
             if capped < pay:
                 # Their wallet, their problem — cogs/coincap.py says so out loud.
-                _record_ceiling_event(conn, guild_id, user_id, pay, capped, "payout")
+                # The overflow is still sitting in on-hand: it stays in the
+                # pot, or (sometimes) goes to the other active players.
+                dispersed = _settle_overflow(conn, guild_id, user_id, pay - capped,
+                                             from_house=True)
+                _record_ceiling_event(conn, guild_id, user_id, pay, capped, "payout",
+                                      dispersed)
             pay = capped
             if pay <= 0:
                 conn.commit()  # keep the interest normalization + the event
@@ -1521,7 +1535,10 @@ def refund_from_house(guild_id: int, user_id: int, amount: int) -> int:
             affordable = min(amount, max(0, house_coins))
             pay = min(affordable, headroom(player_row[0] if player_row else 0))
             if pay < affordable:
-                _record_ceiling_event(conn, guild_id, user_id, affordable, pay, "refund")
+                dispersed = _settle_overflow(conn, guild_id, user_id, affordable - pay,
+                                             from_house=True)
+                _record_ceiling_event(conn, guild_id, user_id, affordable, pay, "refund",
+                                      dispersed)
             if pay <= 0:
                 # Nothing moved, but a logged ceiling strike must survive.
                 conn.commit()
@@ -1663,17 +1680,94 @@ _CEILING_NS = "coincap"
 _CEILING_MAX_PENDING = 10
 
 
+# Where the overflow goes: into the house's on-hand pot, except
+# CEILING_DISPERSE_CHANCE of the time it's split evenly among everyone ELSE
+# who has settled a game in the last ACTIVE_PLAYER_WINDOW seconds. Activity is
+# stamped by record_game (cog_kv namespace "activity", key "last_played").
+# Each share is trimmed to its recipient's headroom; anything that can't land
+# (no one active, recipients maxed, the split's remainder) goes to the pot.
+CEILING_DISPERSE_CHANCE = 0.10
+ACTIVE_PLAYER_WINDOW = 15 * 60
+_ACTIVITY_NS = "activity"
+_ACTIVITY_KEY = "last_played"
+
+
+def _active_players(conn: sqlite3.Connection, guild_id: int,
+                    exclude: set[int]) -> list[int]:
+    """Players who settled a game within ACTIVE_PLAYER_WINDOW, minus `exclude`.
+    The value is a plain timestamp, not money — comparing it in SQL is fine."""
+    import time as _t
+    cutoff = int(_t.time()) - ACTIVE_PLAYER_WINDOW
+    rows = conn.execute(
+        "SELECT user_id FROM cog_kv WHERE guild_id=? AND namespace=? AND key=? "
+        "AND value >= ? ORDER BY user_id",
+        (guild_id, _ACTIVITY_NS, _ACTIVITY_KEY, cutoff),
+    ).fetchall()
+    return [uid for (uid,) in rows if uid not in exclude]
+
+
+def _settle_overflow(conn: sqlite3.Connection, guild_id: int, winner_id: int,
+                     overflow: int, from_house: bool) -> list[list[int]]:
+    """Within an open transaction, route coins the winner's wallet had no room
+    for. `from_house=True` means the coins are already in on-hand (a payout or
+    refund that wasn't debited); False means they don't exist yet (bailout
+    printer money) and are minted wherever they land. Returns the dispersal as
+    [[user_id, amount], ...] — empty when it all went to the pot."""
+    overflow = clamp_amount(overflow)
+    if overflow <= 0:
+        return []
+    house_id = get_house_id()
+    dispersed = []
+    if random.random() < CEILING_DISPERSE_CHANCE:
+        players = _active_players(conn, guild_id, {winner_id, house_id})
+        share = overflow // len(players) if players else 0
+        for uid in players if share > 0 else []:
+            row = conn.execute(
+                "SELECT coins FROM wallets WHERE guild_id = ? AND user_id = ?",
+                (guild_id, uid),
+            ).fetchone()
+            amt = min(share, headroom(row[0] if row else 0))
+            if amt <= 0:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO wallets (guild_id, user_id, coins) VALUES (?, ?, ?)",
+                (guild_id, uid, STARTING_COINS),
+            )
+            conn.execute(
+                f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+                (amt, guild_id, uid),
+            )
+            dispersed.append([uid, amt])
+    moved = sum(amt for _, amt in dispersed)
+    if from_house:
+        if moved:
+            conn.execute(
+                "UPDATE wallets SET coins = money_sub(coins, ?) WHERE guild_id = ? AND user_id = ?",
+                (moved, guild_id, house_id),
+            )
+    elif overflow - moved > 0:
+        _ensure_house_wallet(conn, guild_id)
+        conn.execute(
+            f"UPDATE wallets SET {_ADD_COINS} WHERE guild_id = ? AND user_id = ?",
+            (overflow - moved, guild_id, house_id),
+        )
+    return dispersed
+
+
 def _record_ceiling_event(conn: sqlite3.Connection, guild_id: int, user_id: int,
-                          owed: int, paid: int, source: str):
+                          owed: int, paid: int, source: str,
+                          dispersed: list | None = None):
     """Within an open transaction, log that the coin ceiling swallowed part of
     a payout. `owed` is what the player had coming, `paid` what their wallet
-    had room for; the difference is what their hoarding cost them."""
+    had room for; the difference is what their hoarding cost them.
+    `dispersed` is _settle_overflow's [[user_id, amount], ...] (empty = pot)."""
     lost = int(owed) - int(paid)
     if lost <= 0:
         return
     _append_pending_event(conn, guild_id, _CEILING_NS,
                           {"user_id": user_id, "owed": int(owed),
-                           "paid": int(paid), "lost": lost, "source": source},
+                           "paid": int(paid), "lost": lost, "source": source,
+                           "dispersed": dispersed or []},
                           _CEILING_MAX_PENDING)
 
 
@@ -1860,8 +1954,13 @@ def mint_house_bailout(guild_id: int, winner_id: int, amount: int) -> int:
             room = min(amount, headroom(row[0] if row else 0))
             if room < amount:
                 # Don't _Abort on a fully-capped bailout: that would roll back
-                # the strike we just logged. Commit the event, mint nothing.
-                _record_ceiling_event(conn, guild_id, winner_id, amount, room, "bailout")
+                # the strike we just logged. The overflow was never in the
+                # house (it's printer money), so it's minted into the pot — or
+                # straight to the other active players.
+                dispersed = _settle_overflow(conn, guild_id, winner_id, amount - room,
+                                             from_house=False)
+                _record_ceiling_event(conn, guild_id, winner_id, amount, room, "bailout",
+                                      dispersed)
             amount = room
             if amount <= 0:
                 return 0

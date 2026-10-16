@@ -532,6 +532,82 @@ def test_pending_event_queue_is_bounded():
     assert len(economy.pop_ceiling_events(G)) == economy._CEILING_MAX_PENDING
 
 
+# --- Ceiling overflow: pot, or dispersed to the active players -------------
+
+def _capped_payout_setup(G, U):
+    economy.get_house_state(G)
+    economy.add_coins(G, U, economy.MAX_COINS)      # winner is at the ceiling
+    economy.add_coins(G, 2, 900_000)
+    assert economy.transfer_to_house(G, 2, 900_000)["ok"]
+
+
+def test_overflow_stays_in_the_pot_when_the_roll_misses():
+    G, U = 9310, 1
+    _capped_payout_setup(G, U)
+    economy.record_game(G, 3, "slots", False)       # an active bystander
+    before = economy.get_coins(G, 3)
+    on_hand = economy.get_house_state(G)["on_hand"]
+    with mock.patch.object(economy.random, "random", lambda: 0.99):
+        assert economy.casino_payout(G, U, 400_000) == 0
+    assert economy.get_coins(G, 3) == before
+    assert economy.get_house_state(G)["on_hand"] == on_hand
+    assert economy.pop_ceiling_events(G)[0]["dispersed"] == []
+
+
+def test_overflow_is_split_among_active_players_only():
+    G, U = 9311, 1
+    _capped_payout_setup(G, U)
+    economy.record_game(G, U, "slots", True)        # the winner never shares
+    economy.record_game(G, 3, "slots", False)
+    economy.record_game(G, 4, "blackjack", True)
+    stale = time.time() - economy.ACTIVE_PLAYER_WINDOW - 60
+    with mock.patch("time.time", lambda: stale):
+        economy.record_game(G, 5, "slots", False)   # played, but too long ago
+    b3, b4, b5 = (economy.get_coins(G, u) for u in (3, 4, 5))
+    on_hand = economy.get_house_state(G)["on_hand"]
+    with mock.patch.object(economy.random, "random", lambda: 0.0):
+        assert economy.casino_payout(G, U, 400_001) == 0
+    lost = 396_000  # 400,001 after the 1% skim
+    assert economy.get_coins(G, 3) == b3 + lost // 2
+    assert economy.get_coins(G, 4) == b4 + lost // 2
+    assert economy.get_coins(G, 5) == b5
+    assert economy.get_house_state(G)["on_hand"] == on_hand - lost  # moved, not minted
+    ev = economy.pop_ceiling_events(G)[0]
+    assert sorted(map(tuple, ev["dispersed"])) == [(3, lost // 2), (4, lost // 2)]
+
+
+def test_dispersal_with_nobody_active_falls_back_to_the_pot():
+    G, U = 9312, 1
+    _capped_payout_setup(G, U)
+    on_hand = economy.get_house_state(G)["on_hand"]
+    with mock.patch.object(economy.random, "random", lambda: 0.0):
+        assert economy.casino_payout(G, U, 400_000) == 0
+    assert economy.get_house_state(G)["on_hand"] == on_hand
+    assert economy.pop_ceiling_events(G)[0]["dispersed"] == []
+
+
+def test_dispersal_never_overflows_a_maxed_recipient():
+    G, U = 9313, 1
+    _capped_payout_setup(G, U)
+    economy.add_coins(G, 3, economy.MAX_COINS)      # recipient is maxed too
+    economy.record_game(G, 3, "slots", False)
+    on_hand = economy.get_house_state(G)["on_hand"]
+    with mock.patch.object(economy.random, "random", lambda: 0.0):
+        economy.casino_payout(G, U, 400_000)
+    assert economy.get_coins(G, 3) == economy.MAX_COINS
+    assert economy.get_house_state(G)["on_hand"] == on_hand  # stayed in the pot
+
+
+def test_capped_bailout_overflow_is_minted_into_the_pot():
+    G, U = 9314, 1
+    economy.get_house_state(G)
+    economy.add_coins(G, U, economy.MAX_COINS)
+    on_hand = economy.get_house_state(G)["on_hand"]
+    with mock.patch.object(economy.random, "random", lambda: 0.99):
+        assert economy.mint_house_bailout(G, U, 250_000) == 0
+    assert economy.get_house_state(G)["on_hand"] == on_hand + 250_000
+
+
 def test_wealth_leaderboard_survives_maxed_wallets():
     # `wealth` used to be `w.coins + COALESCE(b.value, 0)` in SQL, with no
     # clamp to absorb an overflow — at a high ceiling that returns a float and
