@@ -734,7 +734,6 @@ def get_wallet(guild_id: int, user_id: int) -> dict:
 
 def record_game(guild_id: int, user_id: int, game: str, won: bool):
     """Upsert a play (and optional win) into game_stats. Replaces the per-game record_* shims."""
-    import time as _t
     try:
         with _connect() as conn:
             conn.execute(
@@ -743,13 +742,6 @@ def record_game(guild_id: int, user_id: int, game: str, won: bool):
                 "ON CONFLICT(guild_id, user_id, game) DO UPDATE SET "
                 "plays = plays + 1, wins = wins + excluded.wins",
                 (guild_id, user_id, game, 1 if won else 0),
-            )
-            # Every settled game stamps the player as active — the pool a
-            # ceiling overflow can be dispersed to (_settle_overflow).
-            conn.execute(
-                "INSERT INTO cog_kv (guild_id, user_id, namespace, key, value) VALUES (?,?,?,?,?) "
-                "ON CONFLICT(guild_id, user_id, namespace, key) DO UPDATE SET value=excluded.value",
-                (guild_id, user_id, _ACTIVITY_NS, _ACTIVITY_KEY, int(_t.time())),
             )
             conn.commit()
     except sqlite3.Error as e:
@@ -1681,27 +1673,22 @@ _CEILING_MAX_PENDING = 10
 
 
 # Where the overflow goes: into the house's on-hand pot, except
-# CEILING_DISPERSE_CHANCE of the time it's split evenly among everyone ELSE
-# who has settled a game in the last ACTIVE_PLAYER_WINDOW seconds. Activity is
-# stamped by record_game (cog_kv namespace "activity", key "last_played").
+# CEILING_DISPERSE_CHANCE of the time it's split evenly among every OTHER
+# casino player — anyone in the guild with a wallet who has played at least
+# one game (a game_stats row), not just any member who was ever looked up.
 # Each share is trimmed to its recipient's headroom; anything that can't land
-# (no one active, recipients maxed, the split's remainder) goes to the pot.
+# (no other players, recipients maxed, the split's remainder) goes to the pot.
 CEILING_DISPERSE_CHANCE = 0.10
-ACTIVE_PLAYER_WINDOW = 15 * 60
-_ACTIVITY_NS = "activity"
-_ACTIVITY_KEY = "last_played"
 
 
-def _active_players(conn: sqlite3.Connection, guild_id: int,
+def _casino_players(conn: sqlite3.Connection, guild_id: int,
                     exclude: set[int]) -> list[int]:
-    """Players who settled a game within ACTIVE_PLAYER_WINDOW, minus `exclude`.
-    The value is a plain timestamp, not money — comparing it in SQL is fine."""
-    import time as _t
-    cutoff = int(_t.time()) - ACTIVE_PLAYER_WINDOW
+    """Guild members with a wallet who have played a game, minus `exclude`."""
     rows = conn.execute(
-        "SELECT user_id FROM cog_kv WHERE guild_id=? AND namespace=? AND key=? "
-        "AND value >= ? ORDER BY user_id",
-        (guild_id, _ACTIVITY_NS, _ACTIVITY_KEY, cutoff),
+        "SELECT DISTINCT g.user_id FROM game_stats g "
+        "JOIN wallets w ON w.guild_id = g.guild_id AND w.user_id = g.user_id "
+        "WHERE g.guild_id = ? ORDER BY g.user_id",
+        (guild_id,),
     ).fetchall()
     return [uid for (uid,) in rows if uid not in exclude]
 
@@ -1719,7 +1706,7 @@ def _settle_overflow(conn: sqlite3.Connection, guild_id: int, winner_id: int,
     house_id = get_house_id()
     dispersed = []
     if random.random() < CEILING_DISPERSE_CHANCE:
-        players = _active_players(conn, guild_id, {winner_id, house_id})
+        players = _casino_players(conn, guild_id, {winner_id, house_id})
         share = overflow // len(players) if players else 0
         for uid in players if share > 0 else []:
             row = conn.execute(

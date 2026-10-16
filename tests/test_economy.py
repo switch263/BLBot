@@ -532,7 +532,7 @@ def test_pending_event_queue_is_bounded():
     assert len(economy.pop_ceiling_events(G)) == economy._CEILING_MAX_PENDING
 
 
-# --- Ceiling overflow: pot, or dispersed to the active players -------------
+# --- Ceiling overflow: pot, or dispersed to the other casino players -------
 
 def _capped_payout_setup(G, U):
     economy.get_house_state(G)
@@ -544,7 +544,7 @@ def _capped_payout_setup(G, U):
 def test_overflow_stays_in_the_pot_when_the_roll_misses():
     G, U = 9310, 1
     _capped_payout_setup(G, U)
-    economy.record_game(G, 3, "slots", False)       # an active bystander
+    economy.record_game(G, 3, "slots", False)       # another casino player
     before = economy.get_coins(G, 3)
     on_hand = economy.get_house_state(G)["on_hand"]
     with mock.patch.object(economy.random, "random", lambda: 0.99):
@@ -554,29 +554,27 @@ def test_overflow_stays_in_the_pot_when_the_roll_misses():
     assert economy.pop_ceiling_events(G)[0]["dispersed"] == []
 
 
-def test_overflow_is_split_among_active_players_only():
+def test_overflow_is_split_among_casino_players_only():
     G, U = 9311, 1
-    _capped_payout_setup(G, U)
+    _capped_payout_setup(G, U)                      # player 2 bet but never played
     economy.record_game(G, U, "slots", True)        # the winner never shares
     economy.record_game(G, 3, "slots", False)
     economy.record_game(G, 4, "blackjack", True)
-    stale = time.time() - economy.ACTIVE_PLAYER_WINDOW - 60
-    with mock.patch("time.time", lambda: stale):
-        economy.record_game(G, 5, "slots", False)   # played, but too long ago
-    b3, b4, b5 = (economy.get_coins(G, u) for u in (3, 4, 5))
+    economy.get_wallet(G, 5)                        # wallet, but never played
+    b2, b3, b4, b5 = (economy.get_coins(G, u) for u in (2, 3, 4, 5))
     on_hand = economy.get_house_state(G)["on_hand"]
     with mock.patch.object(economy.random, "random", lambda: 0.0):
         assert economy.casino_payout(G, U, 400_001) == 0
     lost = 396_000  # 400,001 after the 1% skim
     assert economy.get_coins(G, 3) == b3 + lost // 2
     assert economy.get_coins(G, 4) == b4 + lost // 2
-    assert economy.get_coins(G, 5) == b5
+    assert (economy.get_coins(G, 2), economy.get_coins(G, 5)) == (b2, b5)
     assert economy.get_house_state(G)["on_hand"] == on_hand - lost  # moved, not minted
     ev = economy.pop_ceiling_events(G)[0]
     assert sorted(map(tuple, ev["dispersed"])) == [(3, lost // 2), (4, lost // 2)]
 
 
-def test_dispersal_with_nobody_active_falls_back_to_the_pot():
+def test_dispersal_with_no_other_players_falls_back_to_the_pot():
     G, U = 9312, 1
     _capped_payout_setup(G, U)
     on_hand = economy.get_house_state(G)["on_hand"]
