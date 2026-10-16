@@ -10,7 +10,7 @@ from economy import (
     HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT, BOT_HEIST_VAULT_ODDS,
     POT_WIN_SKIM_PCT, POT_ACCRUAL_SECONDS,
 )
-from game_common import casino_prelude, prestige_trailer
+from game_common import casino_prelude, prestige_trailer, format_coins
 
 
 class CasinoRoulette(commands.Cog):
@@ -34,7 +34,7 @@ class CasinoRoulette(commands.Cog):
         winning_number = random.randint(0, 36)
         color = "🟢 GREEN" if winning_number == 0 else ("🔴 RED" if winning_number in self.red_numbers else "⚫ BLACK")
 
-        start_msg = f"🎰 **{user.display_name}** bets **{amount:,}** on **{bet_type}**... Spinning!"
+        start_msg = f"🎰 **{user.display_name}** bets **{format_coins(amount)}** on **{bet_type}**... Spinning!"
         msg = await start.reply(start_msg)
 
         await asyncio.sleep(3)
@@ -65,11 +65,11 @@ class CasinoRoulette(commands.Cog):
             paid = casino_payout(guild.id, user.id, winnings)
             if paid < winnings:
                 final_text = (
-                    f"{result_msg}\n🎉 **WINNER!** Owed **{winnings:,}** — house only had **{paid:,}**. "
+                    f"{result_msg}\n🎉 **WINNER!** Owed **{format_coins(winnings)}** — house only had **{format_coins(paid)}**. "
                     f"You got what was there."
                 )
             else:
-                final_text = f"{result_msg}\n🎉 **WINNER!** You won **{paid:,}** coins!"
+                final_text = f"{result_msg}\n🎉 **WINNER!** You won **{format_coins(paid)}** coins!"
 
             if hit_jackpot_shot:
                 on_hand = get_house_state(guild.id)["on_hand"]
@@ -79,17 +79,17 @@ class CasinoRoulette(commands.Cog):
                     jackpot_paid = casino_payout(guild.id, user.id, jackpot_cap)
                     if jackpot_paid > 0:
                         final_text += (
-                            f"\n💰 **JACKPOT!!** You raked **{jackpot_paid:,}** — "
+                            f"\n💰 **JACKPOT!!** You raked **{format_coins(jackpot_paid)}** — "
                             f"**{int(round(jackpot_pct * 100))}%** of on-hand. Safe harbor untouched."
                         )
             final_text += prestige_trailer(guild.id, user.id)
         else:
             # Bet already went to house above; nothing more to do on a loss.
-            final_text = f"{result_msg}\n💀 **L.** Your **{amount:,}** is in the pot now."
+            final_text = f"{result_msg}\n💀 **L.** Your **{format_coins(amount)}** is in the pot now."
 
         record_game(guild.id, user.id, "roulette", won)
 
-        await msg.edit(content=f"{final_text}\nBalance: **{get_coins(guild.id, user.id):,}**")
+        await msg.edit(content=f"{final_text}\nBalance: **{format_coins(get_coins(guild.id, user.id))}**")
 
     # --- PREFIX COMMAND ---
     @commands.command(name="bet")
@@ -120,15 +120,15 @@ class CasinoRoulette(commands.Cog):
         heist_pct_range = f"{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%"
         return (
             f"💰 **House Pot**\n"
-            f"• **On hand:** **{on_hand:,}** coins — heistable, funds payouts.\n"
+            f"• **On hand:** **{format_coins(on_hand)}** coins — heistable, funds payouts.\n"
             f"   • 📈 *always growing:* keeps **{POT_WIN_SKIM_PCT}%** of every win, **100%** of every lost bet, and ticks up **1 coin every {POT_ACCRUAL_SECONDS // 60} min** on its own.\n"
-            f"• **Safe harbor:** **{reserve + banked:,}** coins total —\n"
-            f"   • house reserve **{reserve:,}** earning **{apr_pct:.2f}% APR** — covers payouts when on-hand runs short, auto-refills from on-hand when tapped.\n"
-            f"   • safe-deposit boxes **{banked:,}** of player money earning **{bank_apr_pct:.2f}% APR** (`{prefix}bank`).\n"
-            f"• **House net worth:** **{on_hand + reserve:,}**\n\n"
+            f"• **Safe harbor:** **{format_coins(reserve + banked)}** coins total —\n"
+            f"   • house reserve **{format_coins(reserve)}** earning **{apr_pct:.2f}% APR** — covers payouts when on-hand runs short, auto-refills from on-hand when tapped.\n"
+            f"   • safe-deposit boxes **{format_coins(banked)}** of player money earning **{bank_apr_pct:.2f}% APR** (`{prefix}bank`).\n"
+            f"• **House net worth:** **{format_coins(on_hand + reserve)}**\n\n"
             f"**Ways to bleed the on-hand cash:**\n"
-            f"• 🟢 Hit **green** on `{prefix}bet` — random **{green_pct_range}** of on-hand (**{green_lo:,}–{green_hi:,}**).\n"
-            f"• 🏦 Rob the house with `{prefix}heist @{bot_name}` — 1-in-{vault_odds}, random **{heist_pct_range}** of on-hand (**{heist_lo:,}–{heist_hi:,}**)."
+            f"• 🟢 Hit **green** on `{prefix}bet` — random **{green_pct_range}** of on-hand (**{format_coins(green_lo)}–{format_coins(green_hi)}**).\n"
+            f"• 🏦 Rob the house with `{prefix}heist @{bot_name}` — 1-in-{vault_odds}, random **{heist_pct_range}** of on-hand (**{format_coins(heist_lo)}–{format_coins(heist_hi)}**)."
         )
 
     def _bot_name(self, guild) -> str:

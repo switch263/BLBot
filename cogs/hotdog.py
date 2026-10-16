@@ -6,7 +6,7 @@ import logging
 
 from economy import get_coins, casino_payout, record_game
 from amount import format_compact
-from game_common import StakeView, casino_prelude, refund_stake, button_label, prestige_trailer
+from game_common import StakeView, casino_prelude, refund_stake, button_label, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class HotDogView(StakeView):
             record_game(g.guild_id, g.user_id, "hotdog", won=True)
             requested = int(g.bet * g.multiplier)
             paid = casino_payout(g.guild_id, g.user_id, requested)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
             g.log.append(f"⏰ **Auto-tapped out at ×{g.multiplier:.2f}** — you went quiet.{short}" + prestige_trailer(g.guild_id, g.user_id))
         self._refresh()
         return self.cog._render(g, final=True)
@@ -170,7 +170,7 @@ class HotDogView(StakeView):
             record_game(g.guild_id, g.user_id, "hotdog", won=True)
             requested = int(g.bet * g.multiplier)
             paid = casino_payout(g.guild_id, g.user_id, requested)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
             g.log.append(f"🏆 **TEN DOG LIMIT REACHED.** You are a national treasure. Auto-bank at ×{g.multiplier:.2f}.{short}" + prestige_trailer(g.guild_id, g.user_id))
             self._refresh()
             for child in self.children:
@@ -197,7 +197,7 @@ class HotDogView(StakeView):
         record_game(g.guild_id, g.user_id, "hotdog", won=True)
         requested = int(g.bet * g.multiplier)
         paid = casino_payout(g.guild_id, g.user_id, requested)
-        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
         g.log.append(f"✅ **Tapped out at ×{g.multiplier:.2f}.** {random.choice(BANK_MESSAGES)}{short}" + prestige_trailer(g.guild_id, g.user_id))
         self._refresh()
         for child in self.children:
@@ -217,7 +217,7 @@ class HotDogContest(commands.Cog):
         next_risk = HURL_START + HURL_INCREMENT * g.eaten
         next_risk = min(next_risk, 0.99)
         lines = [
-            f"🌭 **{g.user_name}'s Hot Dog Eating Contest** — buy-in **{g.bet:,}**",
+            f"🌭 **{g.user_name}'s Hot Dog Eating Contest** — buy-in **{format_coins(g.bet)}**",
             f"Dogs eaten: **{g.eaten}/{MAX_DOGS}** | Multiplier: **{g.multiplier:.2f}×**",
         ]
         if not g.ended:
@@ -227,7 +227,7 @@ class HotDogContest(commands.Cog):
             lines.extend(g.log[-6:])
         if final:
             lines.append("")
-            lines.append(f"Balance: **{get_coins(g.guild_id, g.user_id):,}**")
+            lines.append(f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**")
         return "\n".join(lines)
 
     async def _start(self, ctx_or_interaction, bet):

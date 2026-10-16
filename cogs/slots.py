@@ -5,7 +5,7 @@ import random
 import logging
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount, prestige_trailer
+from game_common import parse_wallet_amount, prestige_trailer, format_coins, format_coins_exact
 from items import BONUS_SPIN
 
 logger = logging.getLogger(__name__)
@@ -67,10 +67,10 @@ class Slots(commands.Cog):
 
         if payout_mult > 0:
             color = discord.Color.gold() if payout_mult >= 50 else discord.Color.green()
-            result_text = f"{desc} You won **{gross:,}** coins!"
+            result_text = f"{desc} You won **{format_coins(gross)}** coins!"
         else:
             color = discord.Color.dark_grey()
-            result_text = f"Better luck next time! You lost **{stake:,}** coins."
+            result_text = f"Better luck next time! You lost **{format_coins(stake)}** coins."
 
         embed = discord.Embed(
             title="🎰 Slot Machine 🎰",
@@ -79,7 +79,7 @@ class Slots(commands.Cog):
         )
 
         new_balance = wallet["coins"] + net
-        embed.set_footer(text=f"Balance: {new_balance:,} coins | Bet: {bet:,}")
+        embed.set_footer(text=f"Balance: {format_coins(new_balance)} coins | Bet: {format_coins(bet)}")
 
         return embed
 
@@ -104,7 +104,7 @@ class Slots(commands.Cog):
         if wallet["coins"] < bet:
             return discord.Embed(
                 title="🎰 Broke!",
-                description=f"You only have **{wallet['coins']:,}** coins but tried to bet **{bet:,}**.",
+                description=f"You only have **{format_coins(wallet['coins'])}** coins but tried to bet **{format_coins(bet)}**.",
                 color=discord.Color.red()
             )
 
@@ -171,7 +171,7 @@ class Slots(commands.Cog):
         reel_display = f"**[ {reels[0]} | {reels[1]} | {reels[2]} ]**"
         if winnings > 0:
             color = discord.Color.gold() if payout_mult >= 50 else discord.Color.green()
-            result_text = f"{desc} You won **{winnings:,}** coins — and risked nothing!" + prestige_trailer(guild_id, user_id)
+            result_text = f"{desc} You won **{format_coins(winnings)}** coins — and risked nothing!" + prestige_trailer(guild_id, user_id)
         else:
             color = discord.Color.dark_grey()
             result_text = f"{desc} No win — but a free spin costs you nothing."
@@ -182,7 +182,7 @@ class Slots(commands.Cog):
         )
         balance = economy.get_coins(guild_id, user_id)
         left = economy.item_qty(guild_id, user_id, BONUS_SPIN)
-        embed.set_footer(text=f"Balance: {balance:,} coins | Bonus Spins left: {left}")
+        embed.set_footer(text=f"Balance: {format_coins(balance)} coins | Bonus Spins left: {left}")
         return embed
 
     # (game_key, embed_label_with_emoji, plays_word, wins_word) — every key that
@@ -238,11 +238,15 @@ class Slots(commands.Cog):
             title=f"🪙 {user.display_name}'s Wallet",
             color=discord.Color.blurple()
         )
-        embed.add_field(name="Balance", value=f"🪙 **{wallet['coins']:,}**", inline=True)
-        embed.add_field(name="Total Won", value=f"🪙 {wallet['total_won']:,}", inline=True)
-        embed.add_field(name="Total Lost", value=f"🪙 {wallet['total_lost']:,}", inline=True)
+        # The one place a player sees every digit — games print scientific
+        # notation once a figure gets long. Long fields go full-width.
         net = wallet['total_won'] - wallet['total_lost']
-        embed.add_field(name="Net Profit", value=f"🪙 {'+' if net >= 0 else ''}{net:,}", inline=True)
+        for name, amount, sign in (("Balance", wallet['coins'], ""),
+                                   ("Total Won", wallet['total_won'], ""),
+                                   ("Total Lost", wallet['total_lost'], ""),
+                                   ("Net Profit", net, "+" if net >= 0 else "")):
+            value = f"🪙 {sign}{format_coins_exact(amount)}"
+            embed.add_field(name=name, value=value, inline="\n" not in value)
 
         embed.add_field(
             name="🎰 Slots",
@@ -280,7 +284,7 @@ class Slots(commands.Cog):
             jackpots = row[5] if len(row) > 5 else 0
             member = guild.get_member(uid)
             name = member.display_name if member else f"User {uid}"
-            desc += f"{medals[i]} **{name}** - {coins:,} coins ({jackpots} jackpots)\n"
+            desc += f"{medals[i]} **{name}** - {format_coins(coins)} coins ({jackpots} jackpots)\n"
         return discord.Embed(title="🎰 Slots Leaderboard", description=desc, color=discord.Color.gold())
 
     # --- Prefix Commands ---

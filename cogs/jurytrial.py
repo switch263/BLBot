@@ -30,6 +30,7 @@ from economy import (
     jail_remaining, get_jail_info, release_from_jail, adjust_jail_sentence,
     transfer_to_house, refund_from_house, record_game, get_coins,
 )
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class JuryTrial(commands.Cog):
                 f"🕊️ Acquittal walks them out today. 🔨 Conviction adds "
                 f"**{int(GUILTY_EXTENSION_PCT * 100)}%** to the sentence.\n"
                 f"Jurors on the winning side split civic-duty pay "
-                f"(**{JUROR_FEE:,}** each, house money).\n\n"
+                f"(**{format_coins(JUROR_FEE)}** each, house money).\n\n"
                 f"🗳️ Ballots cast: **{ballots}**"
             ),
             color=discord.Color.dark_gold(),
@@ -141,7 +142,7 @@ class JuryTrial(commands.Cog):
         fee = transfer_to_house(guild.id, defendant.id, TRIAL_FEE, is_bet=False)
         if not fee.get("ok"):
             have = get_coins(guild.id, defendant.id)
-            await reply(f"🏛️ Court fees are **{TRIAL_FEE:,}** and you're holding **{have:,}**. "
+            await reply(f"🏛️ Court fees are **{format_coins(TRIAL_FEE)}** and you're holding **{format_coins(have)}**. "
                         f"The public defender is a raccoon. Motion denied.")
             return
         kv_set(guild.id, defendant.id, NAMESPACE, "tried_at", jailed_at)
@@ -190,7 +191,7 @@ class JuryTrial(commands.Cog):
             self._pay_jury(guild.id, votes, winning_guilty=False)
             verdict = (f"🏛️🕊️ **NOT GUILTY** ({innocent}–{guilty}). {defendant.mention} walks! "
                        f"The jury believes you, which says more about them than you. "
-                       f"Majority jurors collect **{JUROR_FEE:,}** each.")
+                       f"Majority jurors collect **{format_coins(JUROR_FEE)}** each.")
         elif guilty > innocent:
             remaining = jail_remaining(guild.id, defendant.id)
             extension = max(60, int(remaining * GUILTY_EXTENSION_PCT))
@@ -201,7 +202,7 @@ class JuryTrial(commands.Cog):
             verdict = (f"🏛️🔨 **GUILTY** ({guilty}–{innocent}). The jury took one look at "
                        f"{defendant.mention} and added **{extension // 60} minutes** "
                        f"(now {mins}m total). Should've taken the plea deal that "
-                       f"didn't exist. Majority jurors collect **{JUROR_FEE:,}** each.")
+                       f"didn't exist. Majority jurors collect **{format_coins(JUROR_FEE)}** each.")
         else:
             record_game(guild.id, defendant.id, "jurytrial", False)
             verdict = (f"🏛️ **HUNG JURY** ({guilty}–{innocent}). No verdict, no refund, no "
@@ -229,7 +230,7 @@ class JuryTrial(commands.Cog):
         """Demand a jury trial for your current sentence."""
         await self._file(ctx.guild, ctx.author, ctx.channel, ctx.send)
 
-    @app_commands.command(name="trial", description=f"Demand a jury trial — {TRIAL_FEE:,} in court fees, chat decides your fate")
+    @app_commands.command(name="trial", description=f"Demand a jury trial — {format_coins(TRIAL_FEE)} in court fees, chat decides your fate")
     async def trial_slash(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("Server only.", ephemeral=True)

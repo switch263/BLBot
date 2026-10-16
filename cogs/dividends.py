@@ -24,6 +24,7 @@ import logging
 
 import economy
 from config import ADMIN_CHANNEL_ID
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class Dividends(commands.Cog):
 
     async def _announce(self, guild: discord.Guild, result: dict):
         lines = [
-            f"The house cleared **{result['profit']:,}** in profit. "
+            f"The house cleared **{format_coins(result['profit'])}** in profit. "
             f"**{int(economy.HOUSE_PROFIT_SHARE_PCT * 100)}%** goes to the "
             f"shareholders.",
             "",
@@ -86,7 +87,7 @@ class Dividends(commands.Cog):
         for uid, cut in result["payouts"]:
             member = guild.get_member(uid)
             name = member.display_name if member else f"<@{uid}>"
-            lines.append(f"💰 {name} — **{cut:,}**")
+            lines.append(f"💰 {name} — **{format_coins(cut)}**")
         embed = discord.Embed(
             title="🏛️ Dividend Day",
             description="\n".join(lines),
@@ -145,7 +146,7 @@ class Dividends(commands.Cog):
         )
         embed.add_field(name="Shares outstanding", value=f"**{outstanding}**", inline=True)
         embed.add_field(name="House funds",
-                        value=f"**{state['on_hand'] + state['reserve']:,}**", inline=True)
+                        value=f"**{format_coins(state['on_hand'] + state['reserve'])}**", inline=True)
         embed.set_footer(
             text=f"Dividends settle every {SETTLE_MINUTES} minutes on new profit "
                  f"above the house's high-water mark. Shareholders cannot gamble.")

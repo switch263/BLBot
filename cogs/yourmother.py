@@ -20,7 +20,7 @@ from discord.ext import commands
 
 import yomama
 from economy import is_memorial, prestige_surcharge
-from game_common import charge_fee, fee_trailer
+from game_common import charge_fee, fee_trailer, format_coins
 from yomama_art import render_joke_image
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ class YourMother(commands.Cog):
     # ---- slash ------------------------------------------------------------
 
     @app_commands.command(name="yourmother",
-                          description=f"A joke about someone's mother. 1,300+ of them. {YOURMOTHER_FEE:,} coins.")
+                          description=f"A joke about someone's mother. 1,300+ of them. {format_coins(YOURMOTHER_FEE)} coins.")
     @app_commands.describe(member="Whose mother (leave empty to insult your own)",
                            category="Pick the flavor, or leave it to chance")
     @app_commands.choices(category=[

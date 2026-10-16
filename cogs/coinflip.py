@@ -5,7 +5,7 @@ import random
 import logging
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount, prestige_trailer
+from game_common import parse_wallet_amount, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,11 @@ class CoinFlip(commands.Cog):
             return discord.Embed(description="Pick **heads** or **tails**!", color=discord.Color.red())
 
         if bet < MIN_BET:
-            return discord.Embed(description=f"Bet must be at least **{MIN_BET:,}** coin.", color=discord.Color.red())
+            return discord.Embed(description=f"Bet must be at least **{format_coins(MIN_BET)}** coin.", color=discord.Color.red())
 
         balance = economy.get_coins(guild_id, user_id)
         if balance < bet:
-            return discord.Embed(description=f"You only have **{balance:,}** coins!", color=discord.Color.red())
+            return discord.Embed(description=f"You only have **{format_coins(balance)}** coins!", color=discord.Color.red())
 
         # Normalize call
         call_full = "heads" if call in ("heads", "h") else "tails"
@@ -78,7 +78,7 @@ class CoinFlip(commands.Cog):
             new_bal = balance + winnings
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and won **{winnings:,}** coins! {random.choice(WIN_MESSAGES)}"
+                description=f"You called **{call_full}** and won **{format_coins(winnings)}** coins! {random.choice(WIN_MESSAGES)}"
                             + prestige_trailer(guild_id, user_id),
                 color=discord.Color.green()
             )
@@ -88,7 +88,7 @@ class CoinFlip(commands.Cog):
             new_bal = balance - stake
             embed = discord.Embed(
                 title=f"{result_emoji} {result.upper()}!",
-                description=f"You called **{call_full}** and lost **{stake:,}** coins. {random.choice(LOSE_MESSAGES)}",
+                description=f"You called **{call_full}** and lost **{format_coins(stake)}** coins. {random.choice(LOSE_MESSAGES)}",
                 color=discord.Color.red()
             )
 
@@ -98,7 +98,7 @@ class CoinFlip(commands.Cog):
         # Kept on the NOMINAL bet, as today.
         economy.memorial_tithe(guild_id, bet)
 
-        embed.set_footer(text=f"Balance: {new_bal:,} coins")
+        embed.set_footer(text=f"Balance: {format_coins(new_bal)} coins")
         return embed
 
     @commands.command(aliases=['flip', 'cf'])

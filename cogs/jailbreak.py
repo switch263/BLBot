@@ -9,6 +9,7 @@ from economy import (
     get_coins, jail_remaining, release_from_jail, adjust_jail_sentence,
     transfer_to_house, record_game, kv_get, kv_set, get_jail_info,
 )
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +148,8 @@ class JailBreak(commands.Cog):
             if fine > 0:
                 transfer_to_house(guild.id, user.id, fine, is_bet=False)
                 result_line = (
-                    f"🔴 The bribe cost you **{fine:,}** coins, but your sentence stands at "
-                    f"**{self._fmt(remaining)}**. Balance: **{get_coins(guild.id, user.id):,}**."
+                    f"🔴 The bribe cost you **{format_coins(fine)}** coins, but your sentence stands at "
+                    f"**{self._fmt(remaining)}**. Balance: **{format_coins(get_coins(guild.id, user.id))}**."
                 )
             else:
                 # Dead broke — nothing to shake down, so they just walk you back.

@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import casino_prelude, prestige_trailer
+from game_common import casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -71,30 +71,30 @@ class WheelOfMisfortune(commands.Cog):
 
         if outcome == "jackpot_10x":
             paid = casino_payout(guild_id, user_id, bet * 10)
-            short = f" *(house was short — owed {bet*10:,})*" if paid < bet * 10 else ""
-            return f"🎉 **JACKPOT ×10!** You won **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(bet*10)})*" if paid < bet * 10 else ""
+            return f"🎉 **JACKPOT ×10!** You won **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "jackpot_5x":
             paid = casino_payout(guild_id, user_id, bet * 5)
-            short = f" *(house was short — owed {bet*5:,})*" if paid < bet * 5 else ""
-            return f"💎 **×5 HIT!** **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(bet*5)})*" if paid < bet * 5 else ""
+            return f"💎 **×5 HIT!** **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "payout_3x":
             paid = casino_payout(guild_id, user_id, bet * 3)
-            short = f" *(house was short — owed {bet*3:,})*" if paid < bet * 3 else ""
-            return f"🎰 **×3!** **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(bet*3)})*" if paid < bet * 3 else ""
+            return f"🎰 **×3!** **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "payout_2x":
             paid = casino_payout(guild_id, user_id, bet * 2)
-            short = f" *(house was short — owed {bet*2:,})*" if paid < bet * 2 else ""
-            return f"✨ **×2!** **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(bet*2)})*" if paid < bet * 2 else ""
+            return f"✨ **×2!** **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(guild_id, user_id)
 
         if outcome == "break_even":
             casino_payout(guild_id, user_id, bet)
             return "🙃 **Break even.** The wheel is bored. Bet returned." + prestige_trailer(guild_id, user_id)
 
         if outcome == "nothing":
-            return f"💀 **The wheel ate your {bet:,} coins and stared silently.**"
+            return f"💀 **The wheel ate your {format_coins(bet)} coins and stared silently.**"
 
         if outcome == "lose_extra":
             extra_target = bet // 2
@@ -104,8 +104,8 @@ class WheelOfMisfortune(commands.Cog):
                 if extra_result.get("ok"):
                     extra = extra_target
             if extra > 0:
-                return f"🪦 **Cursed!** Lost **{bet:,}** + an extra **{extra:,}** fee ripped from your wallet."
-            return f"🪦 **Cursed!** Lost **{bet:,}**. Tried to charge you more but you're already broke. Humiliating."
+                return f"🪦 **Cursed!** Lost **{format_coins(bet)}** + an extra **{format_coins(extra)}** fee ripped from your wallet."
+            return f"🪦 **Cursed!** Lost **{format_coins(bet)}**. Tried to charge you more but you're already broke. Humiliating."
 
         if outcome == "pay_channel":
             recent_users = []
@@ -120,20 +120,20 @@ class WheelOfMisfortune(commands.Cog):
             except discord.HTTPException:
                 pass
             if not recent_users:
-                return f"🏚️ **The wheel wanted to pay the audience but nobody's around. Lose {bet:,}.**"
+                return f"🏚️ **The wheel wanted to pay the audience but nobody's around. Lose {format_coins(bet)}.**"
             per = max(1, bet // len(recent_users))
             for u in recent_users:
                 casino_payout(guild_id, u.id, per)
             names = ", ".join(u.display_name for u in recent_users)
-            return f"🎁 **The wheel is generous (with your money)!** {names} each get **{per:,}**. You lose **{bet:,}**."
+            return f"🎁 **The wheel is generous (with your money)!** {names} each get **{format_coins(per)}**. You lose **{format_coins(bet)}**."
 
         if outcome == "pay_random_user":
             members = [m for m in guild.members if not m.bot and m.id != user_id]
             if not members:
-                return f"💀 **No lucky winners in sight. Lose {bet:,}.**"
+                return f"💀 **No lucky winners in sight. Lose {format_coins(bet)}.**"
             lucky = random.choice(members)
             casino_payout(guild_id, lucky.id, bet)
-            return f"🎰 **The wheel chose a benefactor!** **{lucky.display_name}** pockets your **{bet:,}** coins."
+            return f"🎰 **The wheel chose a benefactor!** **{lucky.display_name}** pockets your **{format_coins(bet)}** coins."
 
         if outcome == "silly_nickname":
             nick = random.choice(SILLY_NICKNAMES)
@@ -143,10 +143,10 @@ class WheelOfMisfortune(commands.Cog):
                 try:
                     await member.edit(nick=nick, reason="Wheel of Misfortune")
                     asyncio.create_task(self._restore_nickname(member, old_nick, 3600))
-                    return f"🤡 **CURSED!** You are now **{nick}** for 1 hour. Also lose **{bet:,}**."
+                    return f"🤡 **CURSED!** You are now **{nick}** for 1 hour. Also lose **{format_coins(bet)}**."
                 except discord.Forbidden:
-                    return f"🤡 The wheel tried to rename you to **{nick}** but the bot lacks permissions. Lose **{bet:,}** anyway, coward."
-            return f"🤡 Somehow couldn't curse you. Lose **{bet:,}** regardless."
+                    return f"🤡 The wheel tried to rename you to **{nick}** but the bot lacks permissions. Lose **{format_coins(bet)}** anyway, coward."
+            return f"🤡 Somehow couldn't curse you. Lose **{format_coins(bet)}** regardless."
 
         return "???"
 
@@ -184,9 +184,9 @@ class WheelOfMisfortune(commands.Cog):
         record_game(guild.id, user.id, "wheel",
                     won=outcome in ("jackpot_10x", "jackpot_5x", "payout_3x", "payout_2x"))
         final = (
-            f"🎡 **{user.display_name}** fed the Wheel of Misfortune **{bet:,}** coins.\n"
+            f"🎡 **{user.display_name}** fed the Wheel of Misfortune **{format_coins(bet)}** coins.\n"
             f"{result}\n"
-            f"Balance: **{get_coins(guild.id, user.id):,}**"
+            f"Balance: **{format_coins(get_coins(guild.id, user.id))}**"
         )
         try:
             await msg.edit(content=final)

@@ -55,6 +55,7 @@ from economy import (
     get_coins, jail_user, jail_remaining, is_memorial,
 )
 from amount import parse_amount, amount_error
+from game_common import format_coins, fill
 
 logger = logging.getLogger(__name__)
 
@@ -216,10 +217,10 @@ class LoanShark(commands.Cog):
             await reply(amount_error(raw_amount, contextual=True))
             return
         if amount < MIN_LOAN:
-            await reply(f"🦈 Sal laughs in your face. He doesn't get out of his chair for less than **{MIN_LOAN:,}**.")
+            await reply(f"🦈 Sal laughs in your face. He doesn't get out of his chair for less than **{format_coins(MIN_LOAN)}**.")
             return
         if amount > MAX_LOAN:
-            await reply(f"🦈 Sal whistles. **{MAX_LOAN:,}** is the ceiling — he's a loanshark, not a bank.")
+            await reply(f"🦈 Sal whistles. **{format_coins(MAX_LOAN)}** is the ceiling — he's a loanshark, not a bank.")
             return
         principal = refund_from_house(guild.id, user.id, amount)
         if principal <= 0:
@@ -235,10 +236,10 @@ class LoanShark(commands.Cog):
             "stage": 0,
             "channel_id": channel_id,
         })
-        short_note = "" if principal == amount else f"\n-# (House could only front {principal:,} of the {amount:,} you asked for.)"
+        short_note = "" if principal == amount else f"\n-# (House could only front {format_coins(principal)} of the {format_coins(amount)} you asked for.)"
         await reply(
-            f"🦈 Sal counts out **{principal:,}** coins into your hand and doesn't blink.\n"
-            f"You owe **{owed:,}** (that's the vig, {int(VIG_PCT * 100)}%, don't ask questions) "
+            f"🦈 Sal counts out **{format_coins(principal)}** coins into your hand and doesn't blink.\n"
+            f"You owe **{format_coins(owed)}** (that's the vig, {int(VIG_PCT * 100)}%, don't ask questions) "
             f"by <t:{due}:f> — <t:{due}:R>.\n"
             f"Pay with `!loan repay <amount>`. Miss the date and the number grows. "
             f"Keep missing it and... don't keep missing it.{short_note}"
@@ -264,7 +265,7 @@ class LoanShark(commands.Cog):
         res = transfer_to_house(guild.id, user.id, amount, is_bet=False)
         if not res.get("ok"):
             have = res.get("have", wallet)
-            await reply(f"🦈 You're short — you owe a payment of **{amount:,}** but you're holding **{have:,}**. "
+            await reply(f"🦈 You're short — you owe a payment of **{format_coins(amount)}** but you're holding **{format_coins(have)}**. "
                         f"Sal suggests you go win some. Quickly.")
             return
         owed -= amount
@@ -272,16 +273,16 @@ class LoanShark(commands.Cog):
             kv_delete(guild.id, user.id, NAMESPACE, "loan")
             on_time = time.time() < loan["due_ts"]
             if on_time:
-                await reply(f"🦈 Paid in full — **{amount:,}** on the table. Sal nods once. "
+                await reply(f"🦈 Paid in full — **{format_coins(amount)}** on the table. Sal nods once. "
                             f"You're good for it. Door's open next time.")
             else:
-                await reply(f"🦈 Paid in full — **{amount:,}**, late, but paid. Sal pockets it "
+                await reply(f"🦈 Paid in full — **{format_coins(amount)}**, late, but paid. Sal pockets it "
                             f"and lets whatever was about to happen... not happen.")
             return
         loan["owed"] = owed
         self._save_loan(guild.id, user.id, loan)
-        await reply(f"🦈 Sal takes your **{amount:,}** and marks the book. Still on the tab: "
-                    f"**{owed:,}**, due <t:{int(loan['due_ts'])}:R>.")
+        await reply(f"🦈 Sal takes your **{format_coins(amount)}** and marks the book. Still on the tab: "
+                    f"**{format_coins(owed)}**, due <t:{int(loan['due_ts'])}:R>.")
 
     # ---- work off the debt ---------------------------------------------------
 
@@ -312,13 +313,13 @@ class LoanShark(commands.Cog):
             cut = max(1, int(owed * pct))
             loan["owed"] = owed - cut
             self._save_loan(guild.id, user.id, loan)
-            await reply(f"🦈💼 {flavor.format(cut=cut)}\nStill on the book: **{loan['owed']:,}**, "
+            await reply(f"🦈💼 {fill(flavor, cut=cut)}\nStill on the book: **{format_coins(loan['owed'])}**, "
                         f"due <t:{int(loan['due_ts'])}:R>.")
         elif pct < 0:
             added = int(owed * -pct)
             loan["owed"] = min(owed + added, int(principal * MAX_OWED_MULT))
             self._save_loan(guild.id, user.id, loan)
-            await reply(f"🦈💼 {flavor.format(cut=added)}\nThe book now says **{loan['owed']:,}**.")
+            await reply(f"🦈💼 {fill(flavor, cut=added)}\nThe book now says **{format_coins(loan['owed'])}**.")
         elif jail_seconds > 0:
             jail_user(guild.id, user.id, jail_seconds,
                       reason="Caught doing Sal's dirty work",
@@ -343,15 +344,15 @@ class LoanShark(commands.Cog):
             if until > time.time():
                 await reply(f"🦈 No tab — and no service. Sal remembers what you did. Blacklisted until <t:{int(until)}:f>.")
             else:
-                await reply(f"🦈 Clean slate. Sal can front you up to **{MAX_LOAN:,}** — `!loan borrow <amount>`, "
+                await reply(f"🦈 Clean slate. Sal can front you up to **{format_coins(MAX_LOAN)}** — `!loan borrow <amount>`, "
                             f"{int(VIG_PCT * 100)}% vig, 48 hours. Simple terms. Serious consequences.")
             return
         due = int(loan["due_ts"])
         mood = self._STAGE_MOOD.get(int(loan.get("stage", 0)), "It's gone very badly.")
         overdue = " ⚠️ **OVERDUE**" if time.time() >= due else ""
         await reply(
-            f"🦈 **The book on you:** borrowed **{int(loan['principal']):,}**, "
-            f"owe **{int(loan['owed']):,}**, due <t:{due}:f> (<t:{due}:R>).{overdue}\n{mood}\n"
+            f"🦈 **The book on you:** borrowed **{format_coins(int(loan['principal']))}**, "
+            f"owe **{format_coins(int(loan['owed']))}**, due <t:{due}:f> (<t:{due}:R>).{overdue}\n{mood}\n"
             f"-# Pay with `!loan repay <amount>`, or work it off — `!loan job` (one every "
             f"{JOB_COOLDOWN_SECONDS // 3600}h)."
         )
@@ -372,7 +373,7 @@ class LoanShark(commands.Cog):
     @borrow_prefix.error
     async def borrow_prefix_error(self, ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"Usage: `!loan borrow <amount>` — up to {MAX_LOAN:,}, vig is {int(VIG_PCT * 100)}%, due in 48h. Sal takes `10k`, `1.5m`-style amounts and `max`.")
+            await ctx.send(f"Usage: `!loan borrow <amount>` — up to {format_coins(MAX_LOAN)}, vig is {int(VIG_PCT * 100)}%, due in 48h. Sal takes `10k`, `1.5m`-style amounts and `max`.")
         else:
             raise error
 
@@ -396,7 +397,7 @@ class LoanShark(commands.Cog):
                                     guild_only=True)
 
     @loan_group.command(name="borrow", description="Borrow coins from Big Sal. The vig is not negotiable.")
-    @app_commands.describe(amount=f"Coins to borrow — up to {MAX_LOAN:,}; supports 10k, 250k, max")
+    @app_commands.describe(amount=f"Coins to borrow — up to {format_coins(MAX_LOAN)}; supports 10k, 250k, max")
     async def borrow_slash(self, interaction: discord.Interaction, amount: str):
         if not interaction.guild:
             await interaction.response.send_message("Sal only works the casino floor. Server only.", ephemeral=True)
@@ -462,7 +463,7 @@ class LoanShark(commands.Cog):
         seized = self._seize(guild_id, user_id, demand, include_bank=include_bank)
         applied = min(seized, owed)
         extra = seized - applied
-        note = (f"\n-# Sal added a **{extra:,}** late fee on top — you were "
+        note = (f"\n-# Sal added a **{format_coins(extra)}** late fee on top — you were "
                 f"visibly good for it." if extra > 0 else "")
         return seized, owed - applied, note
 
@@ -505,7 +506,7 @@ class LoanShark(commands.Cog):
             loan["owed"], loan["stage"] = owed, 1
             self._save_loan(guild.id, user_id, loan)
             await self._announce(guild, channel_id, user_id,
-                f"🦈📞 {mention} — you missed the date. The tab just grew to **{owed:,}** "
+                f"🦈📞 {mention} — you missed the date. The tab just grew to **{format_coins(owed)}** "
                 f"and it grows again every 12 hours. Sal doesn't call a third time. `!loan repay all`.")
             return
 
@@ -515,14 +516,14 @@ class LoanShark(commands.Cog):
             if owed <= 0:
                 self._settle(guild.id, user_id, BLACKLIST_SETTLED_SECONDS)
                 await self._announce(guild, channel_id, user_id,
-                    f"🦈 {mention} — two guys in tracksuits just emptied **{seized:,}** out of your "
+                    f"🦈 {mention} — two guys in tracksuits just emptied **{format_coins(seized)}** out of your "
                     f"pockets. Tab's square. Sal won't be lending to you for a few days.{fee}")
             else:
                 loan["owed"], loan["stage"] = owed, 2
                 self._save_loan(guild.id, user_id, loan)
                 await self._announce(guild, channel_id, user_id,
-                    f"🦈 {mention} — the goons took **{seized:,}** off you and it *still* isn't enough. "
-                    f"**{owed:,}** left on the book. The next visit isn't about money.{fee}")
+                    f"🦈 {mention} — the goons took **{format_coins(seized)}** off you and it *still* isn't enough. "
+                    f"**{format_coins(owed)}** left on the book. The next visit isn't about money.{fee}")
             return
 
         if target == 3:
@@ -531,7 +532,7 @@ class LoanShark(commands.Cog):
             if owed <= 0:
                 self._settle(guild.id, user_id, BLACKLIST_SETTLED_SECONDS)
                 await self._announce(guild, channel_id, user_id,
-                    f"🦈 {mention} — they found the bank account. **{seized:,}** collected, tab closed. "
+                    f"🦈 {mention} — they found the bank account. **{format_coins(seized)}** collected, tab closed. "
                     f"You kept your kneecaps. Barely.{fee}")
             else:
                 loan["owed"], loan["stage"] = owed, 3
@@ -540,8 +541,8 @@ class LoanShark(commands.Cog):
                           reason="Educational beating (loanshark)", bail_amount=0,
                           channel_id=channel_id)
                 await self._announce(guild, channel_id, user_id,
-                    f"🦈🏥 {mention} — wallet and bank cleaned out for **{seized:,}** and you're still "
-                    f"**{owed:,}** short, so the boys gave you an education. Enjoy the hospital ward "
+                    f"🦈🏥 {mention} — wallet and bank cleaned out for **{format_coins(seized)}** and you're still "
+                    f"**{format_coins(owed)}** short, so the boys gave you an education. Enjoy the hospital ward "
                     f"({BEATING_JAIL_SECONDS // 3600}h, nobody's posting bail). One stage left. Don't find out.{fee}")
             return
 
@@ -554,7 +555,7 @@ class LoanShark(commands.Cog):
                   reason="Settled a debt in blood (loanshark)", bail_amount=0,
                   channel_id=channel_id, no_release=True)
         await self._announce(guild, channel_id, user_id,
-            f"🦈🩸 {mention} — you really made Sal mad. Everything you had (**{seized:,}**) is gone — "
+            f"🦈🩸 {mention} — you really made Sal mad. Everything you had (**{format_coins(seized)}**) is gone — "
             f"wallet, bank, the coins in the couch — the rest of the debt was settled in blood, "
             f"and you're in a hole for **{KNEECAP_JAIL_SECONDS // 3600} hours** — no bail, no cards, "
             f"no calls. Sal's book says you don't exist for a week.")

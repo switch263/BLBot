@@ -7,6 +7,7 @@ from economy import (
     HOUSE_STARTING_COINS,
     HOUSE_LOW_WATER_PCT,
 )
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,8 @@ class HouseUpkeep(commands.Cog):
             if result.get("replenished"):
                 logger.info(
                     f"House replenished in guild {guild.id}: added "
-                    f"{result['added']:,} (total was below {low_water:,}); "
-                    f"reserve now {result['reserve']:,}."
+                    f"{format_coins(result['added'])} (total was below {format_coins(low_water)}); "
+                    f"reserve now {format_coins(result['reserve'])}."
                 )
 
     @replenish_loop.before_loop

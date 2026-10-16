@@ -20,7 +20,7 @@ import logging
 import economy
 from economy import add_coins, record_game, get_coins
 from amount import format_compact
-from game_common import STAKE_TIMEOUT, button_label
+from game_common import STAKE_TIMEOUT, button_label, format_coins
 from gridgame import GridView
 from cogs.lootdrop import _current_slot  # share /loot's am/pm slot schedule
 
@@ -118,7 +118,7 @@ class DigView(GridView):
             self.finish()
             content = self.cog._render(
                 self, f"💀 **BAD JUJU!** {random.choice(JUJU_NARRATIVES)}\n"
-                      f"The **{lost:,}** coins you'd dug up are gone.")
+                      f"The **{format_coins(lost)}** coins you'd dug up are gone.")
             await interaction.response.edit_message(content=content, view=self)
             return
 
@@ -131,7 +131,7 @@ class DigView(GridView):
             # Cleared the whole board — the full cap, auto-banked.
             await self._bank(interaction,
                              f"🏆 **CLEARED THE DIG!** Every tile was loot — you haul the "
-                             f"full **{DIG_CAP:,}** coins out of the ground.")
+                             f"full **{format_coins(DIG_CAP)}** coins out of the ground.")
             return
 
         self._refresh_cashout()
@@ -151,7 +151,7 @@ class DigView(GridView):
         add_coins(self.guild_id, self.user_id, amount)
         record_game(self.guild_id, self.user_id, "juju", won=True)
         self.finish()
-        content = self.cog._render(self, f"{headline}\nBanked **+{amount:,}** coins.")
+        content = self.cog._render(self, f"{headline}\nBanked **+{format_coins(amount)}** coins.")
         await interaction.response.edit_message(content=content, view=self)
 
     async def on_abandon(self):
@@ -161,7 +161,7 @@ class DigView(GridView):
             add_coins(self.guild_id, self.user_id, amount)
             record_game(self.guild_id, self.user_id, "juju", won=True)
             footer = (f"⏰ **Auto-cashed** at {self.safe} tiles — you went quiet. "
-                      f"Banked **+{amount:,}** coins.")
+                      f"Banked **+{format_coins(amount)}** coins.")
         else:
             footer = "⏰ You wandered off before digging anything. Nothing banked."
         self.finish()
@@ -197,16 +197,16 @@ class LootDig(commands.Cog):
     def _render(self, v: DigView, footer: str | None = None) -> str:
         lines = [
             f"⛏️ **{v.user_name}'s Loot Dig** — free, twice a day",
-            f"**{NUM_LOOT}** tiles are loot (escalating, up to **{DIG_CAP:,}** for a full clear); "
+            f"**{NUM_LOOT}** tiles are loot (escalating, up to **{format_coins(DIG_CAP)}** for a full clear); "
             f"**{NUM_JUJU}** is 💀 bad juju that buries everything you've dug.",
-            f"Tiles dug: **{v.safe}** | Banked so far: **{v.bank:,}**",
+            f"Tiles dug: **{v.safe}** | Banked so far: **{format_coins(v.bank)}**",
         ]
         if not v.resolved:
             lines.append("Each tile digs up MORE than the last. Cash out any time — or push for the 💀.")
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(v.guild_id, v.user_id):,}**")
+            lines.append(f"Balance: **{format_coins(get_coins(v.guild_id, v.user_id))}**")
         return "\n".join(lines)
 
     async def _start(self, ctx_or_interaction):

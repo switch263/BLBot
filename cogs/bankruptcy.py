@@ -28,6 +28,7 @@ import random
 
 import economy
 from config import ADMIN_CHANNEL_ID
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -107,17 +108,17 @@ class Bankruptcy(commands.Cog):
                 f"<@{winner_id}> bankrupted the house, so we took **{pct}** of "
                 f"everyone's bank to cover losses.",
                 "",
-                f"House owed **{owed:,}** and couldn't pay. **{cover['seized']:,}** "
+                f"House owed **{format_coins(owed)}** and couldn't pay. **{format_coins(cover['seized'])}** "
                 f"seized from **{cover['accounts']}** account(s).",
             ]
             if minted > 0:
                 lines.append(f"Even that wasn't enough — the printer minted the "
-                             f"last **{minted:,}**.")
+                             f"last **{format_coins(minted)}**.")
         else:
             lines = [
                 f"<@{winner_id}> bankrupted the house and the safe-deposit boxes "
                 f"were empty too, so the printer covered the whole "
-                f"**{minted:,}**.",
+                f"**{format_coins(minted)}**.",
             ]
         return discord.Embed(
             title="🏚️ THE HOUSE IS BANKRUPT — EVERYONE PAYS",
@@ -131,8 +132,8 @@ class Bankruptcy(commands.Cog):
         return discord.Embed(
             title="🖨️ THE MONEY PRINTER GOES BRRR",
             description=(
-                f"<@{winner_id}> bankrupted the house — it owed **{owed:,}** and "
-                f"couldn't pay, so BLBot minted **{minted:,}** fresh coins to "
+                f"<@{winner_id}> bankrupted the house — it owed **{format_coins(owed)}** and "
+                f"couldn't pay, so BLBot minted **{format_coins(minted)}** fresh coins to "
                 f"settle the debt. Your banks are safe. The coin's purchasing "
                 f"power? Don't ask."
             ),

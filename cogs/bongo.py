@@ -21,7 +21,7 @@ import logging
 import economy
 from economy import get_coins, casino_payout, record_game
 from amount import format_compact
-from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label, prestige_trailer
+from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label, prestige_trailer, format_coins
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,7 @@ class BongoView(GridView):
             self.finish()
             content = self.cog._render(
                 self, f"🙀 **DROPPED THE BEAT!** {random.choice(BUST_NARRATIVES)}\n"
-                      f"You lose **{self.bet:,}** coins.")
+                      f"You lose **{format_coins(self.bet)}** coins.")
             await interaction.response.edit_message(content=content, view=self)
             return
 
@@ -197,13 +197,13 @@ class BongoView(GridView):
             record_game(self.guild_id, self.user_id, "bongo", won=True)
             self.finish()
             net = paid - self.bet
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
             if first:
                 headline = "😻 **FIRST-TAP KITTY!** " + random.choice(KITTY_FIRST_NARRATIVES)
             else:
                 headline = "😻 **THE KITTY!** " + random.choice(KITTY_NARRATIVES)
             content = self.cog._render(
-                self, f"{headline}\nFinal multiplier **{_fmt_mult(final)}×** → net **{net:+,}** coins.{short}"
+                self, f"{headline}\nFinal multiplier **{_fmt_mult(final)}×** → net **{format_coins(net, signed=True)}** coins.{short}"
                 + prestige_trailer(self.guild_id, self.user_id))
             await interaction.response.edit_message(content=content, view=self)
             return
@@ -229,11 +229,11 @@ class BongoView(GridView):
         record_game(self.guild_id, self.user_id, "bongo", won=True)
         self.finish()
         net = paid - self.bet
-        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
         content = self.cog._render(
             self,
             f"🎤 **Called the set after {self.reveals} tiles.** {random.choice(CASHOUT_FLAVOR)}\n"
-            f"Multiplier **{_fmt_mult(self.mult)}×** → net **{net:+,}** coins.{short}"
+            f"Multiplier **{_fmt_mult(self.mult)}×** → net **{format_coins(net, signed=True)}** coins.{short}"
             + prestige_trailer(self.guild_id, self.user_id),
         )
         await interaction.response.edit_message(content=content, view=self)
@@ -244,9 +244,9 @@ class BongoView(GridView):
             requested = int(self.bet * self.mult)
             paid = casino_payout(self.guild_id, self.user_id, requested)
             record_game(self.guild_id, self.user_id, "bongo", won=True)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
             footer = (f"⏰ **Auto-called the set** at **{_fmt_mult(self.mult)}×** — you went quiet. "
-                      f"Net **{paid - self.bet:+,}** coins.{short}"
+                      f"Net **{format_coins(paid - self.bet, signed=True)}** coins.{short}"
                       + prestige_trailer(self.guild_id, self.user_id))
         else:
             footer = refund_stake(self.guild_id, self.user_id, self.bet)
@@ -277,7 +277,7 @@ class BongoKitty(commands.Cog):
 
     def _render(self, v: BongoView, footer: str | None = None) -> str:
         lines = [
-            f"🥁 **{v.user_name}'s Bongo Solo** — bet **{v.bet:,}** coins",
+            f"🥁 **{v.user_name}'s Bongo Solo** — bet **{format_coins(v.bet)}** coins",
             f"**{NUM_SMALL}×🐾 (×1.5)**, **{NUM_BIG}×💯 (×100)**, **{NUM_BONGO}×🥁 (×25)**, "
             f"**1×😻 kitty**, **{NUM_ENDERS}×🙀 enders** across **{GRID_SIZE}** tiles.",
             f"Tiles flipped: **{v.reveals}** | Running multiplier: **{_fmt_mult(v.mult)}×**",
@@ -290,7 +290,7 @@ class BongoKitty(commands.Cog):
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(v.guild_id, v.user_id):,}**")
+            lines.append(f"Balance: **{format_coins(get_coins(v.guild_id, v.user_id))}**")
         return "\n".join(lines)
 
     async def _start(self, ctx_or_interaction, bet):

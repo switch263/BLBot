@@ -22,6 +22,7 @@ import logging
 import economy
 from taunts import ceiling_taunt
 from config import ADMIN_CHANNEL_ID
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +84,9 @@ class CoinCap(commands.Cog):
         lines = [
             ceiling_taunt(),
             "",
-            f"The house owed **{owed:,}** on {what}. Their wallet had room for "
-            f"**{paid:,}**.",
-            f"**{lost:,}** coins bounced off the ceiling and stayed with the house.",
+            f"The house owed **{format_coins(owed)}** on {what}. Their wallet had room for "
+            f"**{format_coins(paid)}**.",
+            f"**{format_coins(lost)}** coins bounced off the ceiling and stayed with the house.",
             "",
             f"Wallets cap at **{economy.MAX_COINS_LABEL}** coins. Spend something.",
         ]

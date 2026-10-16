@@ -7,7 +7,7 @@ import asyncio
 
 from economy import (get_coins, add_coins, casino_ban_message,
                      deduct_coins, jail_message, memorial_tithe, record_game)
-from game_common import casino_prelude
+from game_common import casino_prelude, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class ChallengeView(discord.ui.View):
             return
         if get_coins(c.guild_id, c.opponent.id) < c.bet:
             await interaction.response.send_message(
-                f"You can't cover the **{c.bet:,}** bet.", ephemeral=True)
+                f"You can't cover the **{format_coins(c.bet)}** bet.", ephemeral=True)
             return
         if get_coins(c.guild_id, c.challenger.id) < c.bet:
             # Challenger went broke in the meantime
@@ -131,7 +131,7 @@ class CockroachFightClub(commands.Cog):
         intro = (
             f"🪳 **COCKROACH FIGHT CLUB** 🪳\n"
             f"{c.challenger.mention}'s **{roach_a}** vs {c.opponent.mention}'s **{roach_b}**\n"
-            f"Pot: **{c.bet * 2:,}** coins. The rules are simple: there are no rules."
+            f"Pot: **{format_coins(c.bet * 2)}** coins. The rules are simple: there are no rules."
         )
         msg = await channel.send(intro)
         await asyncio.sleep(2)
@@ -172,7 +172,7 @@ class CockroachFightClub(commands.Cog):
 
         final = (
             f"\n💀 **{winner_roach}** {flourish}\n"
-            f"🏆 **{winner_member.mention}** wins the pot of **{payout:,}** coins. "
+            f"🏆 **{winner_member.mention}** wins the pot of **{format_coins(payout)}** coins. "
             f"{loser_roach} has gone to the great garbage disposal in the sky."
         )
         try:
@@ -197,18 +197,18 @@ class CockroachFightClub(commands.Cog):
             await reply("Bots don't fight. They just judge.")
             return
         if get_coins(guild.id, user.id) < bet:
-            await reply(f"Too broke for this bout. Balance: **{get_coins(guild.id, user.id):,}**")
+            await reply(f"Too broke for this bout. Balance: **{format_coins(get_coins(guild.id, user.id))}**")
             return
         if get_coins(guild.id, opponent.id) < bet:
-            await reply(f"{opponent.display_name} can't cover the **{bet:,}** bet.")
+            await reply(f"{opponent.display_name} can't cover the **{format_coins(bet)}** bet.")
             return
 
         challenge = RoachChallenge(user, opponent, bet, guild.id, channel.id)
         view = ChallengeView(self, challenge)
         content = (
             f"🪳 **{user.display_name}** wants to settle this in the **Cockroach Fight Club**.\n"
-            f"{opponent.mention}, you have 60s to accept a bout for **{bet:,}** coins a side. "
-            f"Winner takes **{bet * 2:,}**."
+            f"{opponent.mention}, you have 60s to accept a bout for **{format_coins(bet)}** coins a side. "
+            f"Winner takes **{format_coins(bet * 2)}**."
         )
         await reply(content, view=view)
 

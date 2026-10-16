@@ -32,6 +32,7 @@ from economy import (
     item_qty, consume_item, grant_item, today_str,
 )
 from items import JAIL_CARD, display as item_display
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class Lawyer(commands.Cog):
             extra = " — needs a 🃏 Get Out of Jail Free card, one per day" if needs_card else ""
             lines.append(
                 f"{emoji} **`{key}`** — {label}: **{int(fee_pct * 100)}%** of wallet "
-                f"(~**{fee:,}** for you), ~**{int(win * 100)}%** to walk{extra}."
+                f"(~**{format_coins(fee)}** for you), ~**{int(win * 100)}%** to walk{extra}."
             )
         lines.append("_Lose and you serve extra time on top — bigger bets, bigger backfire._")
         return "\n".join(lines)
@@ -186,8 +187,8 @@ class Lawyer(commands.Cog):
         fee = self._fee(wallet, fee_pct)
         if wallet < fee:
             await reply(
-                f"💸 {emoji} A **{label}** wants **{fee:,}** coins up front "
-                f"({int(fee_pct * 100)}% of your wallet). You've got **{wallet:,}**. "
+                f"💸 {emoji} A **{label}** wants **{format_coins(fee)}** coins up front "
+                f"({int(fee_pct * 100)}% of your wallet). You've got **{format_coins(wallet)}**. "
                 f"Make some money first."
             )
             return
@@ -225,7 +226,7 @@ class Lawyer(commands.Cog):
 
         text = (
             f"⚖️ **{user.display_name} lawyers up — {emoji} {label}** "
-            f"(**{fee:,}** coin retainer)\n\n"
+            f"(**{format_coins(fee)}** coin retainer)\n\n"
             f"_{flavor}_\n\n"
             f"{result}"
         )

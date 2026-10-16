@@ -4,7 +4,7 @@ import random
 import logging
 
 from economy import get_coins, casino_payout, record_game
-from game_common import StakeView, casino_prelude, prestige_trailer
+from game_common import StakeView, casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -204,21 +204,21 @@ class MethGator(commands.Cog):
         if mult > 0:
             requested = int(bet * mult)
             paid = casino_payout(guild_id, user_id, requested)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
             if mult >= 1.0:
-                result = f"**×{mult:.2f}** → **{paid - bet:+,}** coins.{short}"
+                result = f"**×{mult:.2f}** → **{format_coins(paid - bet, signed=True)}** coins.{short}"
             else:
-                result = f"**×{mult:.2f}** → partial refund **{paid:,}**. Lost **{bet - paid:,}**.{short}"
+                result = f"**×{mult:.2f}** → partial refund **{format_coins(paid)}**. Lost **{format_coins(bet - paid)}**.{short}"
             result += prestige_trailer(guild_id, user_id)
         else:
-            result = f"**Lost {bet:,}** coins."
+            result = f"**Lost {format_coins(bet)}** coins."
 
         record_game(guild_id, user_id, "methgator", won=mult >= 1.0)
         text = (
             f"🐊 **{interaction.user.display_name}'s Meth Gator** picks: **{action['emoji']} {action['label']}**\n\n"
             f"_{flavor}_\n\n"
             f"{result}\n"
-            f"Balance: **{get_coins(guild_id, user_id):,}**"
+            f"Balance: **{format_coins(get_coins(guild_id, user_id))}**"
         )
         await interaction.response.edit_message(content=text, view=view)
 
@@ -229,7 +229,7 @@ class MethGator(commands.Cog):
         user, bet, reply = start.user, start.bet, start.reply
         view = MethGatorView(self, start.guild.id, user.id, bet)
         content = (
-            f"🐊 **{user.display_name}** is a meth gator. **{bet:,}** coins on the line.\n"
+            f"🐊 **{user.display_name}** is a meth gator. **{format_coins(bet)}** coins on the line.\n"
             f"Pick your rampage. Each option has a different personality — and a different distribution of chaos."
         )
         view.message = await reply(content, view=view)

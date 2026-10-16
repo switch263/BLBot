@@ -9,7 +9,7 @@ from economy import (
     get_coins, transfer_to_house, casino_payout,
     record_game, check_bet,
 )
-from game_common import casino_prelude, prestige_trailer
+from game_common import casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +119,8 @@ class Lottery(commands.Cog):
         for key, t in TICKETS.items():
             top = max(m for _, m in t["table"])
             lines.append(
-                f"{t['emoji']} **{t['label']}** (`{key}`) — **{t['price']:,}** coins · "
-                f"top prize **{int(t['price'] * top):,}**\n   _{t['blurb']}_"
+                f"{t['emoji']} **{t['label']}** (`{key}`) — **{format_coins(t['price'])}** coins · "
+                f"top prize **{format_coins(int(t['price'] * top))}**\n   _{t['blurb']}_"
             )
         return "\n".join(lines)
 
@@ -151,8 +151,8 @@ class Lottery(commands.Cog):
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
                 await reply(
-                    f"Too broke for a **{ticket['label']}** (**{price:,}** coins). "
-                    f"Balance: **{bet_result.get('have', 0):,}**"
+                    f"Too broke for a **{ticket['label']}** (**{format_coins(price)}** coins). "
+                    f"Balance: **{format_coins(bet_result.get('have', 0))}**"
                 )
             else:
                 await reply("Purchase failed. Try again.")
@@ -164,27 +164,27 @@ class Lottery(commands.Cog):
         # Suspense: show the ticket bought, then reveal after a beat.
         msg = await reply(
             f"{ticket['emoji']} **{user.display_name}** buys a **{ticket['label']}** "
-            f"for **{price:,}**...\n\n`▒ ▒ ▒`  *scratching...*"
+            f"for **{format_coins(price)}**...\n\n`▒ ▒ ▒`  *scratching...*"
         )
 
         row = _reveal_row(mult)
         if mult > 0:
             requested = int(price * mult)
             paid = casino_payout(guild.id, user.id, requested)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
             if mult >= 1:
                 net = paid - price
                 if net > 0:
-                    outcome = f"🟢 **WINNER ×{mult:g}** → **+{net:,}** coins!{short}" + prestige_trailer(guild.id, user.id)
+                    outcome = f"🟢 **WINNER ×{mult:g}** → **+{format_coins(net)}** coins!{short}" + prestige_trailer(guild.id, user.id)
                 else:
                     outcome = f"⚪ Money back (**×{mult:g}**). Broke even.{short}" + prestige_trailer(guild.id, user.id)
             else:
                 outcome = (
-                    f"🟡 Partial **×{mult:g}** → got **{paid:,}** back, "
-                    f"lost **{price - paid:,}**.{short}"
+                    f"🟡 Partial **×{mult:g}** → got **{format_coins(paid)}** back, "
+                    f"lost **{format_coins(price - paid)}**.{short}"
                 ) + prestige_trailer(guild.id, user.id)
         else:
-            outcome = f"🔴 **No win.** Down **{price:,}**."
+            outcome = f"🔴 **No win.** Down **{format_coins(price)}**."
 
         record_game(guild.id, user.id, "lottery", won)
 
@@ -192,7 +192,7 @@ class Lottery(commands.Cog):
             f"{ticket['emoji']} **{ticket['label']}** — {user.display_name}\n\n"
             f"`{row}`\n\n"
             f"{outcome}\n"
-            f"Balance: **{get_coins(guild.id, user.id):,}**"
+            f"Balance: **{format_coins(get_coins(guild.id, user.id))}**"
         )
         try:
             await asyncio.sleep(1.3)
@@ -213,7 +213,7 @@ class Lottery(commands.Cog):
     @app_commands.command(name="scratch", description="Buy an instant-win lottery ticket and scratch it.")
     @app_commands.describe(ticket="Which ticket to buy")
     @app_commands.choices(ticket=[
-        app_commands.Choice(name=f"{t['emoji']} {t['label']} — {t['price']:,}", value=key)
+        app_commands.Choice(name=f"{t['emoji']} {t['label']} — {format_coins(t['price'])}", value=key)
         for key, t in TICKETS.items()
     ])
     async def scratch_slash(self, interaction: discord.Interaction, ticket: app_commands.Choice[str]):

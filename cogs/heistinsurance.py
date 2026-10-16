@@ -29,7 +29,7 @@ import time
 import logging
 
 import economy
-from game_common import prestige_trailer
+from game_common import prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +104,8 @@ class HeistInsurance(commands.Cog):
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
                 await reply(
-                    f"🧾 The premium is **{premium:,}** ({int(INSURANCE_PREMIUM_PCT * 100)}% of your "
-                    f"wallet). You can't cover it — balance: **{bet_result.get('have', 0):,}**."
+                    f"🧾 The premium is **{format_coins(premium)}** ({int(INSURANCE_PREMIUM_PCT * 100)}% of your "
+                    f"wallet). You can't cover it — balance: **{format_coins(bet_result.get('have', 0))}**."
                 )
             else:
                 await reply("Couldn't write the policy. Try again.")
@@ -117,7 +117,7 @@ class HeistInsurance(commands.Cog):
         economy.kv_set(guild.id, user.id, INSURANCE_NS, "since_ts", now)
         economy.kv_set(guild.id, user.id, INSURANCE_NS, "expires_ts", expires)
         await reply(
-            f"🧾 **Heist insurance written.** Premium of **{premium:,}** paid to the house.\n"
+            f"🧾 **Heist insurance written.** Premium of **{format_coins(premium)}** paid to the house.\n"
             f"If you're robbed in the next week, `/reclaim` recovers "
             f"**{int(INSURANCE_COVERAGE_PCT * 100)}%** of the loss from the bank. "
             f"Policy expires <t:{expires}:R>."
@@ -173,8 +173,8 @@ class HeistInsurance(commands.Cog):
 
         mint_note = "" if minted <= 0 else "\n*(the bank fired up the printer to honor it 🖨️)*"
         await reply(
-            f"🧾💰 **Claim approved.** You were robbed of **{amount:,}**; the bank reimburses "
-            f"**{payout:,}** ({int(INSURANCE_COVERAGE_PCT * 100)}%). Policy is now spent.{mint_note}"
+            f"🧾💰 **Claim approved.** You were robbed of **{format_coins(amount)}**; the bank reimburses "
+            f"**{format_coins(payout)}** ({int(INSURANCE_COVERAGE_PCT * 100)}%). Policy is now spent.{mint_note}"
             + prestige_trailer(guild.id, user.id)
         )
 
@@ -212,8 +212,8 @@ class HeistInsurance(commands.Cog):
         ]
         if amount > 0 and loss_ts >= policy["since_ts"]:
             lines.append(
-                f"📌 Pending claim: robbed of **{amount:,}** — `/reclaim` to collect "
-                f"**{int(amount * INSURANCE_COVERAGE_PCT):,}**."
+                f"📌 Pending claim: robbed of **{format_coins(amount)}** — `/reclaim` to collect "
+                f"**{format_coins(int(amount * INSURANCE_COVERAGE_PCT))}**."
             )
         else:
             lines.append("No claimable robbery yet. Stay frosty.")

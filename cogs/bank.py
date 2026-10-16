@@ -6,6 +6,7 @@ import logging
 import economy
 from amount import parse_amount
 from taunts import ceiling_taunt
+from game_common import format_coins, format_coins_exact
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,11 @@ class Bank(commands.Cog):
             description=f"Account holder: **{user.display_name}**",
             color=discord.Color.blue(),
         )
-        embed.add_field(name="💵 On hand", value=f"**{wallet:,}** coins", inline=True)
-        embed.add_field(name="🏦 In the bank", value=f"**{banked:,}** coins", inline=True)
+        # Exact digits here (games print scientific notation once a figure
+        # gets long); long fields go full-width.
+        for name, amount in (("💵 On hand", wallet), ("🏦 In the bank", banked)):
+            value = f"{format_coins_exact(amount)} coins"
+            embed.add_field(name=name, value=value, inline="\n" not in value)
         apr_pct = economy.BANK_INTEREST_APR * 100
         embed.add_field(
             name="The fine print",
@@ -76,8 +80,8 @@ class Bank(commands.Cog):
         if not result.get("ok"):
             if result.get("error") == "broke":
                 return (
-                    f"💸 You only have **{result.get('have', 0):,}** coins on hand — "
-                    f"can't deposit **{amount:,}**."
+                    f"💸 You only have **{format_coins(result.get('have', 0))}** coins on hand — "
+                    f"can't deposit **{format_coins(amount)}**."
                 )
             if result.get("error") == "capped":
                 return (
@@ -88,9 +92,9 @@ class Bank(commands.Cog):
         # A deposit trims itself to the account's remaining room under the coin
         # ceiling, so report what actually moved.
         amount = result.get("amount", amount)
-        msg = f"🏦 Deposited **{amount:,}** coins into the {BANK_NAME}."
+        msg = f"🏦 Deposited **{format_coins(amount)}** coins into the {BANK_NAME}."
         if show_balances:
-            msg += f"\n💵 On hand: **{result['wallet']:,}** • 🏦 Banked: **{result['bank']:,}**"
+            msg += f"\n💵 On hand: **{format_coins(result['wallet'])}** • 🏦 Banked: **{format_coins(result['bank'])}**"
         msg += "\nSafe from thieves — unless someone robs the whole house."
         return msg
 
@@ -107,8 +111,8 @@ class Bank(commands.Cog):
         if not result.get("ok"):
             if result.get("error") == "broke":
                 return (
-                    f"💸 Your account holds **{result.get('have', 0):,}** coins — "
-                    f"can't withdraw **{amount:,}**."
+                    f"💸 Your account holds **{format_coins(result.get('have', 0))}** coins — "
+                    f"can't withdraw **{format_coins(amount)}**."
                 )
             if result.get("error") == "capped":
                 return (
@@ -118,9 +122,9 @@ class Bank(commands.Cog):
                 )
             return "⚠️ The vault door stuck (database error). Try again."
         amount = result.get("amount", amount)
-        msg = f"💵 Withdrew **{amount:,}** coins. Cash in hand — go lose it responsibly."
+        msg = f"💵 Withdrew **{format_coins(amount)}** coins. Cash in hand — go lose it responsibly."
         if show_balances:
-            msg += f"\n💵 On hand: **{result['wallet']:,}** • 🏦 Banked: **{result['bank']:,}**"
+            msg += f"\n💵 On hand: **{format_coins(result['wallet'])}** • 🏦 Banked: **{format_coins(result['bank'])}**"
         return msg
 
     # ---- prefix commands ---------------------------------------------------

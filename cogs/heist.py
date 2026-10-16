@@ -7,7 +7,7 @@ import time
 import asyncio
 import economy
 from amount import format_compact
-from game_common import button_label
+from game_common import button_label, format_coins, fill
 
 logger = logging.getLogger(__name__)
 
@@ -677,14 +677,14 @@ class RansomView(discord.ui.View):
         notes = []
         if res["from_bank"] > 0 and res["from_wallet"] > 0:
             notes.append(
-                f"-# 🏦 **{res['from_bank']:,}** came out of the vault and "
-                f"**{res['from_wallet']:,}** off {self.victim.display_name} directly — "
+                f"-# 🏦 **{format_coins(res['from_bank'])}** came out of the vault and "
+                f"**{format_coins(res['from_wallet'])}** off {self.victim.display_name} directly — "
                 f"moving it mid-standoff didn't help."
             )
         elif res["from_wallet"] > 0:
             notes.append(
                 f"-# 🏦 The vault was already empty. {self.thief.display_name} took "
-                f"**{res['from_wallet']:,}** out of their pockets instead."
+                f"**{format_coins(res['from_wallet'])}** out of their pockets instead."
             )
         else:
             notes.append(f"-# 🏦 Straight out of {self.victim.display_name}'s bank account.")
@@ -694,7 +694,7 @@ class RansomView(discord.ui.View):
             if moved.get("ok"):
                 notes.append(
                     f"-# 🤝 {self.accomplice.display_name} drove the van and takes a "
-                    f"**{moved['amount']:,}** cut."
+                    f"**{format_coins(moved['amount'])}** cut."
                 )
         return got, "\n".join(notes)
 
@@ -715,8 +715,8 @@ class RansomView(discord.ui.View):
         )
         hours = max(1, round(seconds / 3600))
         body = (
-            f"🚔 {random.choice(RANSOM_BOTCH_MESSAGES).format(thief=self.thief.display_name)}\n\n"
-            f"{self.thief.mention} is doing **{hours}h**. Bail: **{bail:,} coins**. "
+            f"🚔 {fill(random.choice(RANSOM_BOTCH_MESSAGES), thief=self.thief.display_name)}\n\n"
+            f"{self.thief.mention} is doing **{hours}h**. Bail: **{format_coins(bail)} coins**. "
             f"{self.victim.mention} keeps every coin."
         )
         if self.accomplice is not None:
@@ -725,7 +725,7 @@ class RansomView(discord.ui.View):
             collected = economy.fine_user_wealth(self.guild_id, self.accomplice.id, fine)
             body += (
                 f"\n-# 🤝 {self.accomplice.display_name} was driving and got hit with a "
-                f"**{collected:,}** coin fine."
+                f"**{format_coins(collected)}** coin fine."
             )
         return body
 
@@ -741,7 +741,7 @@ class RansomView(discord.ui.View):
                     f"{self.thief.mention} kidnapped a broke person.",
                     discord.Color.greyple(),
                 )
-            line = random.choice(RANSOM_BLUFF_WIN_MESSAGES).format(
+            line = fill(random.choice(RANSOM_BLUFF_WIN_MESSAGES),
                 thief=self.thief.display_name, amount=got)
             return self._embed(
                 "💰 RANSOM COLLECTED",
@@ -778,12 +778,12 @@ class RansomView(discord.ui.View):
                 discord.Color.greyple(),
             )
         else:
-            line = random.choice(RANSOM_PAID_MESSAGES).format(amount=got)
+            line = fill(random.choice(RANSOM_PAID_MESSAGES), amount=got)
             embed = self._embed(
                 "🤝 RANSOM PAID",
                 f"**{self.victim.display_name}** {line}\n{notes}\n\n"
                 f"-# Settling early cost {int(RANSOM_PAYUP_DISCOUNT * 100)}% of the "
-                f"**{self.demand:,}** demand — and {self.thief.display_name} walks clean.",
+                f"**{format_coins(self.demand)}** demand — and {self.thief.display_name} walks clean.",
                 discord.Color.green(),
             )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -802,7 +802,7 @@ class RansomView(discord.ui.View):
     async def on_timeout(self):
         if not self._claim():
             return
-        line = random.choice(RANSOM_TIMEOUT_MESSAGES).format(thief=self.thief.display_name)
+        line = fill(random.choice(RANSOM_TIMEOUT_MESSAGES), thief=self.thief.display_name)
         embed = self._ride_it_out(f"⌛ **{self.victim.display_name}** {line}")
         if self.message:
             try:
@@ -844,9 +844,9 @@ class Heist(commands.Cog):
         bust_pct = (1.0 - (BOT_HEIST_VAULT_ODDS + BOT_HEIST_BOXES_ODDS + BOT_HEIST_BOTH_ODDS)) * 100
         desc = (
             f"⚠️ {thief.mention}, you're about to **rob the house**. Three ways this pays, one way it doesn't:\n\n"
-            f"• **1 in {vault_odds:,}** — you crack the **vault**: **{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%** of the house's on-hand coins (uniform random — could be a scratch, could be a fortune).\n"
-            f"• **1 in {boxes_odds:,}** — you skip the vault and pry open the **safe-deposit boxes**: **{int(economy.BANK_RAID_MIN_PCT*100)}–{int(economy.BANK_RAID_MAX_PCT*100)}%** skimmed off every player's `/bank` account (yours is spared).\n"
-            f"• **1 in {both_odds:,}** — **THE FULL SWEEP**: vault AND boxes, one job.\n"
+            f"• **1 in {format_coins(vault_odds)}** — you crack the **vault**: **{int(HOUSE_HEIST_MIN_PCT*100)}–{int(HOUSE_HEIST_MAX_PCT*100)}%** of the house's on-hand coins (uniform random — could be a scratch, could be a fortune).\n"
+            f"• **1 in {format_coins(boxes_odds)}** — you skip the vault and pry open the **safe-deposit boxes**: **{int(economy.BANK_RAID_MIN_PCT*100)}–{int(economy.BANK_RAID_MAX_PCT*100)}%** skimmed off every player's `/bank` account (yours is spared).\n"
+            f"• **1 in {format_coins(both_odds)}** — **THE FULL SWEEP**: vault AND boxes, one job.\n"
             f"• **Everything else (~{bust_pct:.1f}%):** caught — **casino jail for a random {min_h}–{max_h} hours**. No bets, no gambling.\n"
             f"• A friend can **`/bail`** you out (once per week). Bail scales with the vault — and gets steeper every time you re-offend.\n"
         )
@@ -869,17 +869,17 @@ class Heist(commands.Cog):
         else:
             fmt = dict(thief=thief.mention, victim=victim.display_name)
             lines = HEIST_BUILDUP_SOLO
-        return [line.format(**fmt) for line in lines]
+        return [fill(line, **fmt) for line in lines]
 
     def _bot_heist_buildup(self, thief: discord.Member, accomplice: discord.Member | None) -> list[str]:
         """Suspense beats for robbing the house."""
         fmt = dict(thief=thief.mention, accomplice=accomplice.mention if accomplice else "")
-        return [line.format(**fmt) for line in HEIST_BUILDUP_BOT]
+        return [fill(line, **fmt) for line in HEIST_BUILDUP_BOT]
 
     def _bank_heist_buildup(self, thief: discord.Member, victim: discord.Member) -> list[str]:
         """Suspense beats for drilling a player's bank vault."""
         fmt = dict(thief=thief.mention, victim=victim.display_name)
-        return [line.format(**fmt) for line in HEIST_BUILDUP_BANK]
+        return [fill(line, **fmt) for line in HEIST_BUILDUP_BANK]
 
     async def _reveal_heist(self, message: discord.Message, buildup: list[str], final_embed: discord.Embed,
                             *, view: discord.ui.View | None = None,
@@ -1013,8 +1013,8 @@ class Heist(commands.Cog):
                 loot = int(victim_coins * heist_pct)
                 if loot > 0:
                     economy.transfer_coins(guild_id, victim.id, thief.id, loot)
-                lines.append(random.choice(BOT_SUCCESS_MESSAGES).format(
-                    thief=thief.mention, amount=f"{loot:,}", pct=int(round(heist_pct * 100)),
+                lines.append(fill(random.choice(BOT_SUCCESS_MESSAGES),
+                    thief=thief.mention, amount=f"{format_coins(loot)}", pct=int(round(heist_pct * 100)),
                 ))
             if outcome in ("boxes", "both"):
                 # Crack the safe-deposit boxes: skim a rolled cut of every
@@ -1027,17 +1027,17 @@ class Heist(commands.Cog):
                         lines.append(
                             f"🏧 And on the way out — the **safe-deposit boxes**: "
                             f"**{int(round(raid_pct * 100))}%** skimmed off **{raid['accounts']} bank account{plural}** "
-                            f"for another **{raid['total']:,} coins**."
+                            f"for another **{format_coins(raid['total'])} coins**."
                         )
                     else:
                         lines.append("🏧 The safe-deposit boxes were empty. The vault will have to do.")
                 elif raid["total"] > 0:
-                    lines.append(random.choice(BOT_BOXES_SUCCESS_MESSAGES).format(
-                        thief=thief.mention, amount=f"{raid['total']:,}",
+                    lines.append(fill(random.choice(BOT_BOXES_SUCCESS_MESSAGES),
+                        thief=thief.mention, amount=f"{format_coins(raid['total'])}",
                         pct=int(round(raid_pct * 100)), accounts=raid["accounts"],
                     ))
                 else:
-                    lines.append(random.choice(BOT_BOXES_EMPTY_MESSAGES).format(thief=thief.mention))
+                    lines.append(fill(random.choice(BOT_BOXES_EMPTY_MESSAGES), thief=thief.mention))
             title = "💎 THE FULL SWEEP" if outcome == "both" else "🏦 HOUSE ROBBED"
             msg = "\n\n".join(lines)
             return discord.Embed(title=title, description=msg, color=discord.Color.gold()), None, buildup
@@ -1054,8 +1054,8 @@ class Heist(commands.Cog):
         )
 
         thief_hours = max(1, round(thief_seconds / 3600))
-        msg = random.choice(BOT_FAIL_MESSAGES).format(thief=thief.mention, hours=thief_hours)
-        msg += f"\n\n💰 Bail set at **{thief_bail:,} coins** (offense #{thief_offenses}). Use the buttons below — or `/bail` — once per week, per inmate."
+        msg = fill(random.choice(BOT_FAIL_MESSAGES), thief=thief.mention, hours=thief_hours)
+        msg += f"\n\n💰 Bail set at **{format_coins(thief_bail)} coins** (offense #{thief_offenses}). Use the buttons below — or `/bail` — once per week, per inmate."
 
         # Accomplice: 95% chance to slip out of the bust entirely — no jail, no
         # offense bump, no bail. Only the thief eats the full consequence in that case.
@@ -1063,7 +1063,7 @@ class Heist(commands.Cog):
         accomplice_bail = 0
         if accomplice:
             if random.random() < ACCOMPLICE_ESCAPE_RATE:
-                escape_line = random.choice(ACCOMPLICE_ESCAPE_FLAVOR).format(accomplice=accomplice.mention)
+                escape_line = fill(random.choice(ACCOMPLICE_ESCAPE_FLAVOR), accomplice=accomplice.mention)
                 msg += f"\n\n🏃 {escape_line} **{accomplice.display_name}** walks free."
             else:
                 acc_offenses = economy.increment_bot_heist_offenses(guild_id, accomplice.id)
@@ -1078,7 +1078,7 @@ class Heist(commands.Cog):
                 acc_hours = max(1, round(acc_seconds / 3600))
                 msg += (
                     f"\n\n{accomplice.mention} caught their own **{acc_hours}-hour** sentence "
-                    f"(offense #{acc_offenses}). Bail: **{accomplice_bail:,} coins**."
+                    f"(offense #{acc_offenses}). Bail: **{format_coins(accomplice_bail)} coins**."
                 )
         embed = discord.Embed(title="🚔 CAUGHT ROBBING THE HOUSE", description=msg, color=discord.Color.dark_red())
         # Only attach an accomplice row of bail/extend buttons if the accomplice
@@ -1125,7 +1125,7 @@ class Heist(commands.Cog):
         if reason == "empty":
             return discord.Embed(
                 description=(
-                    f"**{victim.display_name}**'s bank vault holds under **{BANK_HEIST_MIN_BANK:,}** coins "
+                    f"**{victim.display_name}**'s bank vault holds under **{format_coins(BANK_HEIST_MIN_BANK)}** coins "
                     f"— not worth cracking. Try their wallet instead (`!heist @{victim.display_name}`)."
                 ),
                 color=discord.Color.red(),
@@ -1150,14 +1150,14 @@ class Heist(commands.Cog):
                 # Stamp the loss so heist insurance covers a vault job like any
                 # other robbery (see cogs/heistinsurance.py).
                 economy.kv_set(guild_id, victim.id, "heistins", "last_loss", f"{taken}:{int(time.time())}")
-                msg = f"{thief.mention} " + random.choice(BANK_HEIST_SUCCESS_MESSAGES).format(
+                msg = f"{thief.mention} " + fill(random.choice(BANK_HEIST_SUCCESS_MESSAGES),
                     victim=victim.display_name, amount=taken, pct=int(round(pct * 100)),
                 )
             else:
-                msg = f"{thief.mention} " + random.choice(BANK_HEIST_EMPTY_MESSAGES).format(
+                msg = f"{thief.mention} " + fill(random.choice(BANK_HEIST_EMPTY_MESSAGES),
                     victim=victim.display_name,
                 )
-            msg += f"\n-# 💸 Cover charge: **{paid_cost:,}** coins ({int(BANK_HEIST_COST_PCT * 100)}% of your worth), gone either way."
+            msg += f"\n-# 💸 Cover charge: **{format_coins(paid_cost)}** coins ({int(BANK_HEIST_COST_PCT * 100)}% of your worth), gone either way."
             return discord.Embed(title="🏦 VAULT CRACKED", description=msg, color=discord.Color.gold()), None, buildup
 
         # Botched: the cover charge is already spent; the thief catches a sentence.
@@ -1169,10 +1169,10 @@ class Heist(commands.Cog):
             bail_amount=bail, channel_id=channel_id,
         )
         hours = max(1, round(seconds / 3600))
-        msg = random.choice(BANK_HEIST_FAIL_MESSAGES).format(thief=thief.mention, hours=hours)
+        msg = fill(random.choice(BANK_HEIST_FAIL_MESSAGES), thief=thief.mention, hours=hours)
         msg += (
-            f"\n\n💸 Cover charge lost: **{paid_cost:,}** coins. "
-            f"Bail set at **{bail:,} coins**. Use the buttons below — or `/bail`."
+            f"\n\n💸 Cover charge lost: **{format_coins(paid_cost)}** coins. "
+            f"Bail set at **{format_coins(bail)} coins**. Use the buttons below — or `/bail`."
         )
         embed = discord.Embed(title="🚔 VAULT JOB BOTCHED", description=msg, color=discord.Color.dark_red())
         view = JailActionView(self, guild_id, thief, bail)
@@ -1246,7 +1246,7 @@ class Heist(commands.Cog):
         # A plain heist needs a wallet worth robbing; a BANK heist checks the
         # victim's vault instead (inside _run_bank_heist), so skip this gate.
         if not target_bank and victim_coins < MIN_VICTIM_COINS:
-            return discord.Embed(description=f"{victim.display_name} only has **{victim_coins:,}** coins. Not worth the risk!", color=discord.Color.red()), None, None
+            return discord.Embed(description=f"{victim.display_name} only has **{format_coins(victim_coins)}** coins. Not worth the risk!", color=discord.Color.red()), None, None
 
         # --- Robbing the house (the bot itself) ---
         # Don't auto-execute — surface the risk and require confirmation. The view will call _execute_bot_heist on confirm.
@@ -1298,7 +1298,7 @@ class Heist(commands.Cog):
             pct = random.uniform(economy.RANSOM_MIN_PCT, economy.RANSOM_MAX_PCT)
             demand = max(1, int(victim_bank * pct))
             payup = max(1, int(demand * RANSOM_PAYUP_DISCOUNT))
-            ransom_buildup = [line.format(thief=thief.mention, victim=victim.display_name)
+            ransom_buildup = [fill(line, thief=thief.mention, victim=victim.display_name)
                               for line in RANSOM_BUILDUP]
             deadline = int(time.time()) + RANSOM_TIMEOUT
             crew = f" {accomplice.mention} is driving." if accomplice is not None else ""
@@ -1306,14 +1306,14 @@ class Heist(commands.Cog):
                 title=RANSOM_STANDOFF_TITLE,
                 description=(
                     f"📟 {thief.mention} has **{victim.display_name}** in the back of a van "
-                    f"and is demanding **{demand:,} coins** out of their bank account.{crew}\n\n"
+                    f"and is demanding **{format_coins(demand)} coins** out of their bank account.{crew}\n\n"
                     f"{victim.mention} — **it's your call**, and the clock runs out "
                     f"<t:{deadline}:R>:\n"
-                    f"💸 **Pay the ransom** — settle right now for **{payup:,}** "
+                    f"💸 **Pay the ransom** — settle right now for **{format_coins(payup)}** "
                     f"({int(RANSOM_PAYUP_DISCOUNT * 100)}% of the demand). Certain, cheaper, "
                     f"and they walk away clean.\n"
                     f"🔫 **Call their bluff** — pay nothing yet. Most of the time they drain "
-                    f"the full **{demand:,}** anyway, but it can fall apart badly for them.\n\n"
+                    f"the full **{format_coins(demand)}** anyway, but it can fall apart badly for them.\n\n"
                     f"-# Say nothing and they'll improvise. That's the same roll as calling the bluff."
                 ),
                 color=discord.Color.orange(),
@@ -1346,11 +1346,11 @@ class Heist(commands.Cog):
                 thief_take = stolen - cut
 
                 msg_template = random.choice(DUO_SUCCESS_MESSAGES)
-                msg = msg_template.format(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, amount=stolen)
-                msg += f"\n\n{thief.display_name} keeps **{thief_take:,}** coins, {accomplice.display_name} gets a **{cut:,}** coin cut ({int(cut_pct * 100)}%)."
+                msg = fill(msg_template, thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, amount=stolen)
+                msg += f"\n\n{thief.display_name} keeps **{format_coins(thief_take)}** coins, {accomplice.display_name} gets a **{format_coins(cut)}** coin cut ({int(cut_pct * 100)}%)."
             else:
                 msg_template = random.choice(SOLO_SUCCESS_MESSAGES)
-                msg = f"{thief.mention} " + msg_template.format(victim=victim.display_name, amount=stolen)
+                msg = f"{thief.mention} " + fill(msg_template, victim=victim.display_name, amount=stolen)
 
             embed = discord.Embed(title="Heist Successful!", description=msg, color=discord.Color.green())
 
@@ -1368,11 +1368,11 @@ class Heist(commands.Cog):
                 economy.fine_user_wealth(guild_id, accomplice.id, accomplice_fine)
 
                 msg_template = random.choice(DUO_FAIL_MESSAGES)
-                msg = msg_template.format(thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, fine=fine)
-                msg += f"\n\n{accomplice.display_name} was also fined **{accomplice_fine:,}** coins."
+                msg = fill(msg_template, thief=thief.mention, accomplice=accomplice.mention, victim=victim.display_name, fine=fine)
+                msg += f"\n\n{accomplice.display_name} was also fined **{format_coins(accomplice_fine)}** coins."
             else:
                 msg_template = random.choice(SOLO_FAIL_MESSAGES)
-                msg = f"{thief.mention} " + msg_template.format(victim=victim.display_name, fine=fine)
+                msg = f"{thief.mention} " + fill(msg_template, victim=victim.display_name, fine=fine)
 
             embed = discord.Embed(title="Heist Failed!", description=msg, color=discord.Color.red())
 
@@ -1447,9 +1447,9 @@ class Heist(commands.Cog):
         if bail and bail > 0:
             cd = economy.bail_cooldown_remaining(member.guild.id, member.id)
             if cd > 0:
-                line += f"\n💰 Bail is **{bail:,} coins**, but they were already bailed recently — eligible again in **{self._format_duration(cd)}**."
+                line += f"\n💰 Bail is **{format_coins(bail)} coins**, but they were already bailed recently — eligible again in **{self._format_duration(cd)}**."
             else:
-                line += f"\n💰 Bail is **{bail:,} coins**. A friend can `/bail @{member.display_name}`."
+                line += f"\n💰 Bail is **{format_coins(bail)} coins**. A friend can `/bail @{member.display_name}`."
         return line
 
     jail_group = app_commands.Group(name="jail", description="Casino jail — check status or extend a sentence")
@@ -1504,7 +1504,7 @@ class Heist(commands.Cog):
                 f"**Released in:** {self._format_duration(remaining)}",
             ]
             if bail and bail > 0:
-                value_lines.append(f"**Bail:** {bail:,} coins")
+                value_lines.append(f"**Bail:** {format_coins(bail)} coins")
             else:
                 value_lines.append("**Bail:** _not available_")
             if extended and extended > 0:
@@ -1540,8 +1540,8 @@ class Heist(commands.Cog):
         result = economy.pay_bail(guild.id, jailed.id, payer.id)
         if result["ok"]:
             amount = result["amount"]
-            msg = random.choice(BAIL_RELEASE_MESSAGES).format(
-                user=jailed.display_name, payer=payer.display_name, amount=f"{amount:,}",
+            msg = fill(random.choice(BAIL_RELEASE_MESSAGES),
+                user=jailed.display_name, payer=payer.display_name, amount=f"{format_coins(amount)}",
             )
             return msg
 
@@ -1556,7 +1556,7 @@ class Heist(commands.Cog):
             cd = result.get("cooldown_remaining", 0)
             return f"⏳ **{jailed.display_name}** was bailed out too recently. They're eligible again in **{self._format_duration(cd)}**."
         if err == "broke":
-            return f"💸 You'd need **{result.get('need', 0):,} coins** to post bail. You have **{result.get('have', 0):,}**."
+            return f"💸 You'd need **{format_coins(result.get('need', 0))} coins** to post bail. You have **{format_coins(result.get('have', 0))}**."
         return "⚠️ Bail attempt failed (database error). Try again in a moment."
 
     @commands.command(name="bail")
@@ -1575,7 +1575,7 @@ class Heist(commands.Cog):
     # ---- Extend jail ------------------------------------------------------
 
     def _extend_options_summary(self) -> str:
-        return ", ".join(f"+{h}h = **{c:,}**" for h, c in sorted(EXTEND_OPTIONS.items()))
+        return ", ".join(f"+{h}h = **{format_coins(c)}**" for h, c in sorted(EXTEND_OPTIONS.items()))
 
     async def _do_extend_jail(self, guild: discord.Guild, payer: discord.Member, target: discord.Member, hours: int) -> tuple[bool, str]:
         """Run an extension attempt. Returns (succeeded, message)."""
@@ -1598,7 +1598,7 @@ class Heist(commands.Cog):
         if result["ok"]:
             new_extended = result["extended_seconds"]
             return True, (
-                f"⛓️ **{payer.display_name}** slipped the warden **{cost:,} coins** to keep "
+                f"⛓️ **{payer.display_name}** slipped the warden **{format_coins(cost)} coins** to keep "
                 f"**{target.mention}** in their cell **+{hours}h** longer. "
                 f"Total extension on this sentence: **{self._format_duration(new_extended)}** / "
                 f"**{self._format_duration(EXTEND_MAX_TOTAL_SECONDS)}** cap."
@@ -1617,7 +1617,7 @@ class Heist(commands.Cog):
                 f"Adding {hours}h would blow past it."
             )
         if err == "broke":
-            return False, f"💸 Extending **{target.display_name}** by **{hours}h** costs **{result.get('need', cost):,} coins**. You have **{result.get('have', 0):,}**."
+            return False, f"💸 Extending **{target.display_name}** by **{hours}h** costs **{format_coins(result.get('need', cost))} coins**. You have **{format_coins(result.get('have', 0))}**."
         if err == "self":
             return False, "🚫 You can't extend your own sentence."
         if err == "memorial":
@@ -1689,7 +1689,7 @@ class Heist(commands.Cog):
                         display = member.display_name
                 if display is None:
                     display = f"<@{user_id}>"
-                text = random.choice(TIME_SERVED_MESSAGES).format(user=display)
+                text = fill(random.choice(TIME_SERVED_MESSAGES), user=display)
                 try:
                     await channel.send(text)
                 except (discord.Forbidden, discord.HTTPException):

@@ -32,7 +32,7 @@ import logging
 
 import economy
 from amount import amount_error, format_compact
-from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label, prestige_trailer
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label, prestige_trailer, format_coins
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -99,12 +99,12 @@ class MinesView(GridView):
     def active_embed(self) -> discord.Embed:
         k = len(self.revealed)
         lines = [
-            f"**Bet:** {self.bet:,}   **Mines:** {self.num_mines}/{MINES_N}",
-            f"**Gems:** {k}/{self.safe}   **Banked:** {self.banked:,} (×{self.current_mult:g})",
+            f"**Bet:** {format_coins(self.bet)}   **Mines:** {self.num_mines}/{MINES_N}",
+            f"**Gems:** {k}/{self.safe}   **Banked:** {format_coins(self.banked)} (×{self.current_mult:g})",
         ]
         if k < self.safe:
             nxt = self._mult(k + 1)
-            lines.append(f"Next gem → ×{nxt:g} (**{int(self.bet * nxt):,}**)")
+            lines.append(f"Next gem → ×{nxt:g} (**{format_coins(int(self.bet * nxt))}**)")
         lines.append("Pick a tile, or cash out.")
         return discord.Embed(
             title="💣 MINES",
@@ -124,7 +124,7 @@ class MinesView(GridView):
             lead = f"You banked **{len(self.revealed)}** gem(s) at **×{self.current_mult:g}**."
         return discord.Embed(
             title=title,
-            description=f"{lead}\nPayout: **{paid:,}**  (net {sign}{net:,}){mint_note}" + prestige_trailer(self.guild_id, self.user_id),
+            description=f"{lead}\nPayout: **{format_coins(paid)}**  (net {sign}{format_coins(net)}){mint_note}" + prestige_trailer(self.guild_id, self.user_id),
             color=discord.Color.green(),
         )
 
@@ -132,7 +132,7 @@ class MinesView(GridView):
         return discord.Embed(
             title="💥 BOOM",
             description=(
-                f"Tile {hit + 1} was a mine. Your **{self.bet:,}** stays with the house — "
+                f"Tile {hit + 1} was a mine. Your **{format_coins(self.bet)}** stays with the house — "
                 f"after **{len(self.revealed)}** clean pick(s)."
             ),
             color=discord.Color.dark_red(),
@@ -235,7 +235,7 @@ class Mines(commands.Cog):
             await reply(f"Mines must be between **{MINES_MIN}** and **{MINES_MAX}**.")
             return
         if bet < MINES_MIN_BET:
-            await reply(f"Minimum buy-in for Mines is **{MINES_MIN_BET:,}**.")
+            await reply(f"Minimum buy-in for Mines is **{format_coins(MINES_MIN_BET)}**.")
             return
 
         house_on_hand = economy.get_coins(guild.id, economy.get_house_id())
@@ -245,7 +245,7 @@ class Mines(commands.Cog):
             return
         if bet > table_limit:
             await reply(
-                f"Table limit right now is **{table_limit:,}** "
+                f"Table limit right now is **{format_coins(table_limit)}** "
                 f"({int(MINES_MAX_HOUSE_PCT * 100)}% of the house bankroll)."
             )
             return
@@ -253,7 +253,7 @@ class Mines(commands.Cog):
         bet_result = economy.transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
+                await reply(f"Too broke. Balance: **{format_coins(bet_result.get('have', 0))}**")
             else:
                 await reply("Bet failed. Try again.")
             return

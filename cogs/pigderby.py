@@ -8,7 +8,7 @@ import time
 
 from economy import (get_coins, add_coins, casino_ban_message,
                      deduct_coins, jail_message, memorial_tithe, record_game)
-from game_common import casino_prelude
+from game_common import casino_prelude, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ class PigButton(discord.ui.Button):
         balance = get_coins(d.guild_id, interaction.user.id)
         if balance < d.buy_in:
             await interaction.response.send_message(
-                f"Too broke for the buy-in **{d.buy_in:,}**. Balance: **{balance:,}**", ephemeral=True)
+                f"Too broke for the buy-in **{format_coins(d.buy_in)}**. Balance: **{format_coins(balance)}**", ephemeral=True)
             return
         deduct_coins(d.guild_id, interaction.user.id, d.buy_in)
         d.bets.append(Bet(interaction.user, self.idx, d.buy_in))
@@ -276,7 +276,7 @@ class PigDerby(commands.Cog):
 
     def _render_lobby(self, d: Derby) -> str:
         lines = [
-            f"🏁 **Pig Derby** — buy-in **{d.buy_in:,}** per player",
+            f"🏁 **Pig Derby** — buy-in **{format_coins(d.buy_in)}** per player",
             f"Race starts <t:{int(d.lobby_deadline)}:R>. Pick a pig:",
         ]
         # Summary of bets per pig
@@ -318,7 +318,7 @@ class PigDerby(commands.Cog):
         if winners:
             lines.append("**Payouts:**")
             for b, pay in winners:
-                lines.append(f"• {b.user.display_name}: bet **{b.amount:,}** → **+{pay - b.amount:,}** (total **{pay:,}**)")
+                lines.append(f"• {b.user.display_name}: bet **{format_coins(b.amount)}** → **+{format_coins(pay - b.amount)}** (total **{format_coins(pay)}**)")
         if losers:
             loser_names = ", ".join(b.user.display_name for b, _ in losers)
             lines.append(f"**Lost:** {loser_names}")
@@ -339,7 +339,7 @@ class PigDerby(commands.Cog):
             await reply("A pig derby is already running in this channel.")
             return
         if get_coins(guild.id, user.id) < bet:
-            await reply(f"You're too broke. Balance: **{get_coins(guild.id, user.id):,}**")
+            await reply(f"You're too broke. Balance: **{format_coins(get_coins(guild.id, user.id))}**")
             return
 
         d = Derby(guild.id, channel.id, user.id, bet)

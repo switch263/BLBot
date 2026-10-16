@@ -26,6 +26,7 @@ from discord.ext import commands
 
 import economy
 from config import ADMIN_CHANNEL_ID
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class UsageStats(commands.Cog):
             for key, n in top:
                 ts = stamps.get(key)
                 last = f" · last <t:{int(float(ts))}:R>" if ts else ""
-                lines.append(f"`{key}` — **{n:,}**{last}")
+                lines.append(f"`{key}` — **{format_coins(n)}**{last}")
             embed.add_field(name=f"Most used (top {len(top)})",
                             value="\n".join(lines)[:1024], inline=False)
 
@@ -115,7 +116,7 @@ class UsageStats(commands.Cog):
         if busiest and busiest[0][1] > 0:
             embed.add_field(
                 name="Busiest cogs",
-                value="\n".join(f"**{cog}** — {n:,}" for cog, n in busiest if n > 0)[:1024],
+                value="\n".join(f"**{cog}** — {format_coins(n)}" for cog, n in busiest if n > 0)[:1024],
                 inline=False,
             )
 
@@ -123,7 +124,7 @@ class UsageStats(commands.Cog):
         if heaviest:
             embed.add_field(
                 name="🎖️ Top users",
-                value="\n".join(f"<@{uid}> — **{n:,}** commands" for uid, n in heaviest)[:1024],
+                value="\n".join(f"<@{uid}> — **{format_coins(n)}** commands" for uid, n in heaviest)[:1024],
                 inline=False,
             )
 
@@ -159,10 +160,10 @@ class UsageStats(commands.Cog):
             embed.description = "No recorded uses. Either nobody's run it since tracking began, or that's not a command."
             return embed
         top = sorted(per_user.items(), key=lambda kv: -kv[1])[:10]
-        embed.description = f"**{total:,}** total uses since tracking began."
+        embed.description = f"**{format_coins(total)}** total uses since tracking began."
         embed.add_field(
             name="Top users",
-            value="\n".join(f"<@{uid}> — **{n:,}**" for uid, n in top)[:1024],
+            value="\n".join(f"<@{uid}> — **{format_coins(n)}**" for uid, n in top)[:1024],
             inline=False,
         )
         return embed

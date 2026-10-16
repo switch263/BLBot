@@ -6,7 +6,7 @@ import logging
 import asyncio
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import StakeView, casino_prelude, prestige_trailer
+from game_common import StakeView, casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -158,25 +158,25 @@ class VendingMachine(commands.Cog):
         uid = user.id
         if outcome == "jackpot":
             paid = casino_payout(gid, uid, bet * 10)
-            short = f" *(house was short — owed {bet*10:,})*" if paid < bet * 10 else ""
-            return f"💎 **JACKPOT.** The can was stuffed with hundred-dollar bills. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
+            short = f" *(house was short — owed {format_coins(bet*10)})*" if paid < bet * 10 else ""
+            return f"💎 **JACKPOT.** The can was stuffed with hundred-dollar bills. **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "big_win":
             paid = casino_payout(gid, uid, bet * 5)
-            short = f" *(house was short — owed {bet*5:,})*" if paid < bet * 5 else ""
-            return f"🎰 **×5!** Crungus smiles upon you. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
+            short = f" *(house was short — owed {format_coins(bet*5)})*" if paid < bet * 5 else ""
+            return f"🎰 **×5!** Crungus smiles upon you. **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "medium_win":
             paid = casino_payout(gid, uid, bet * 3)
-            short = f" *(house was short — owed {bet*3:,})*" if paid < bet * 3 else ""
-            return f"✨ **×3!** The soda is also cold. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
+            short = f" *(house was short — owed {format_coins(bet*3)})*" if paid < bet * 3 else ""
+            return f"✨ **×3!** The soda is also cold. **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "small_win":
             paid = casino_payout(gid, uid, bet * 2)
-            short = f" *(house was short — owed {bet*2:,})*" if paid < bet * 2 else ""
-            return f"🥤 **×2!** It's drinkable. **{paid - bet:+,}** coins.{short}" + prestige_trailer(gid, uid)
+            short = f" *(house was short — owed {format_coins(bet*2)})*" if paid < bet * 2 else ""
+            return f"🥤 **×2!** It's drinkable. **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(gid, uid)
         if outcome == "break_even":
             casino_payout(gid, uid, bet)
             return "😐 **Break even.** The can is empty but the coin fell back out. Weird." + prestige_trailer(gid, uid)
         if outcome == "nothing":
-            return f"💀 **Nothing drops.** The machine takes your **{bet:,}** and whistles innocently."
+            return f"💀 **Nothing drops.** The machine takes your **{format_coins(bet)}** and whistles innocently."
         if outcome == "extra_loss":
             extra_target = bet // 2
             extra = 0
@@ -185,8 +185,8 @@ class VendingMachine(commands.Cog):
                 if extra_result.get("ok"):
                     extra = extra_target
             if extra > 0:
-                return f"🪦 **The machine charges a processing fee.** Lost **{bet:,}** + an extra **{extra:,}**."
-            return f"🪦 **Processing fee attempted, but you're broke.** Lost **{bet:,}**."
+                return f"🪦 **The machine charges a processing fee.** Lost **{format_coins(bet)}** + an extra **{format_coins(extra)}**."
+            return f"🪦 **Processing fee attempted, but you're broke.** Lost **{format_coins(bet)}**."
         if outcome == "pay_channel":
             recent = []
             try:
@@ -200,12 +200,12 @@ class VendingMachine(commands.Cog):
             except discord.HTTPException:
                 pass
             if not recent:
-                return f"🏚️ **The machine dispenses a pity handful of receipts.** Lose **{bet:,}**."
+                return f"🏚️ **The machine dispenses a pity handful of receipts.** Lose **{format_coins(bet)}**."
             per = max(1, bet // len(recent))
             for u in recent:
                 casino_payout(gid, u.id, per)
             names = ", ".join(u.display_name for u in recent)
-            return f"🎁 **The machine is generous... to others.** {names} each get **{per:,}** from your **{bet:,}**."
+            return f"🎁 **The machine is generous... to others.** {names} each get **{format_coins(per)}** from your **{format_coins(bet)}**."
         if outcome == "cursed_nick":
             nick = random.choice(CURSED_NICKS)
             member = guild.get_member(uid)
@@ -214,16 +214,16 @@ class VendingMachine(commands.Cog):
                 try:
                     await member.edit(nick=nick, reason="Vending Machine curse")
                     asyncio.create_task(self._restore_nickname(member, old, 3600))
-                    return f"🤡 **Branded!** You are **{nick}** for 1 hour. Also lose **{bet:,}**."
+                    return f"🤡 **Branded!** You are **{nick}** for 1 hour. Also lose **{format_coins(bet)}**."
                 except discord.Forbidden:
                     pass
-            return f"🤡 Tried to brand you **{nick}** but couldn't. Lose **{bet:,}** anyway."
+            return f"🤡 Tried to brand you **{nick}** but couldn't. Lose **{format_coins(bet)}** anyway."
         if outcome == "insult_dm":
             try:
                 await user.send(f"💌 A wet receipt slides out of a nearby machine. It reads: *{random.choice(INSULTS)}*")
             except discord.Forbidden:
                 pass
-            return f"📃 **A receipt slides out. It is not kind.** Lose **{bet:,}**. Check DMs."
+            return f"📃 **A receipt slides out. It is not kind.** Lose **{format_coins(bet)}**. Check DMs."
         if outcome == "explosion":
             extra_target = bet
             extra = 0
@@ -239,7 +239,7 @@ class VendingMachine(commands.Cog):
                             extra = have
             return (
                 f"💥 **THE MACHINE EXPLODES.** Glass, soda, and regret everywhere. "
-                f"Lose **{bet:,}** + **{extra:,}** in damages. You are also wet."
+                f"Lose **{format_coins(bet)}** + **{format_coins(extra)}** in damages. You are also wet."
             )
         return "???"
 
@@ -264,7 +264,7 @@ class VendingMachine(commands.Cog):
             f"🎛️ **{interaction.user.display_name}** {pick_line}.\n"
             f"_{flavor}_\n"
             f"{result}\n"
-            f"Balance: **{get_coins(interaction.guild.id, interaction.user.id):,}**"
+            f"Balance: **{format_coins(get_coins(interaction.guild.id, interaction.user.id))}**"
         )
         await interaction.response.edit_message(content=text, view=view)
 
@@ -276,7 +276,7 @@ class VendingMachine(commands.Cog):
         user, bet, reply = start.user, start.bet, start.reply
         view = VendingView(self, start.guild.id, user.id, bet)
         content = (
-            f"🤖 **THE VENDING MACHINE FROM HELL** accepts **{user.display_name}**'s offering of **{bet:,}** coins.\n"
+            f"🤖 **THE VENDING MACHINE FROM HELL** accepts **{user.display_name}**'s offering of **{format_coins(bet)}** coins.\n"
             f"Pick a slot. You probably shouldn't."
         )
         view.message = await reply(content, view=view)

@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, jail_user, casino_payout, record_game
-from game_common import StakeView, casino_prelude, prestige_trailer
+from game_common import StakeView, casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -153,15 +153,15 @@ class Insurance(commands.Cog):
         if mult >= 1.0:
             requested = int(bet * mult)
             paid = casino_payout(guild_id, user_id, requested)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            result = f"**×{mult:.2f}** → **{paid - bet:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
+            result = f"**×{mult:.2f}** → **{format_coins(paid - bet, signed=True)}** coins.{short}" + prestige_trailer(guild_id, user_id)
         elif mult > 0:
             requested = int(bet * mult)
             paid = casino_payout(guild_id, user_id, requested)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            result = f"**×{mult:.2f}** → partial payout **{paid:,}**. Lost **{bet - paid:,}**.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
+            result = f"**×{mult:.2f}** → partial payout **{format_coins(paid)}**. Lost **{format_coins(bet - paid)}**.{short}" + prestige_trailer(guild_id, user_id)
         else:
-            result = f"**Lost {bet:,}** coins."
+            result = f"**Lost {format_coins(bet)}** coins."
 
         jail_line = ""
         if jail_s > 0:
@@ -174,7 +174,7 @@ class Insurance(commands.Cog):
             )
             mins = max(1, jail_s // 60)
             jail_line = (
-                f"\n🚔 **Jailed for {mins}m.** Bail set at **{bail_amount:,}** — "
+                f"\n🚔 **Jailed for {mins}m.** Bail set at **{format_coins(bail_amount)}** — "
                 f"a friend can `/bail` you (once per week)."
             )
 
@@ -184,7 +184,7 @@ class Insurance(commands.Cog):
             f"**{claim['emoji']} {claim['label']}**\n\n"
             f"_{flavor}_\n\n"
             f"{result}{jail_line}\n"
-            f"Balance: **{get_coins(guild_id, user_id):,}**"
+            f"Balance: **{format_coins(get_coins(guild_id, user_id))}**"
         )
         await interaction.response.edit_message(content=text, view=view)
 
@@ -196,7 +196,7 @@ class Insurance(commands.Cog):
         view = InsuranceView(self, start.guild.id, user.id, bet)
         content = (
             f"📋 **{user.display_name}** walks into the Insurance Fraud Bureau. "
-            f"Premium paid: **{bet:,}** coins.\n"
+            f"Premium paid: **{format_coins(bet)}** coins.\n"
             f"Pick a claim. Each has a different risk profile — and a different chance of jail."
         )
         view.message = await reply(content, view=view)

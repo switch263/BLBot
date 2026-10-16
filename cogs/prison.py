@@ -42,6 +42,7 @@ from economy import (
     refund_from_house, record_game,
 )
 from amount import parse_amount, amount_error
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +252,7 @@ class Prison(commands.Cog):
             await reply("🎲 Rico doesn't roll for zero. Put smokes on the blanket.")
             return
         if not self._spend_cigs(guild.id, user.id, bet):
-            await reply(f"🎲 You're short — you've got **{stash}** cigs and tried to bet **{bet:,}**.")
+            await reply(f"🎲 You're short — you've got **{stash}** cigs and tried to bet **{format_coins(bet)}**.")
             return
         roll = random.random()
         if roll < DICE_CHEAT_PCT:
@@ -347,7 +348,7 @@ class Prison(commands.Cog):
         covered = -(-paid // GUARD_RATE)  # ceil
         if covered < cigs:
             kv_incr(guild.id, user.id, NAMESPACE, "cigs", cigs - covered)
-        await reply(f"🧢 The guard takes **{covered}** cigs without breaking stride and **{paid:,}** coins "
+        await reply(f"🧢 The guard takes **{covered}** cigs without breaking stride and **{format_coins(paid)}** coins "
                     f"appear in your account. You've seen nothing, he's seen nothing. "
                     f"(stash: **{self._cigs(guild.id, user.id)}**)")
 
@@ -363,7 +364,7 @@ class Prison(commands.Cog):
             await reply("🃏 The Accountant doesn't deal for free. Put smokes on the crate.")
             return
         if not self._spend_cigs(guild.id, user.id, stake):
-            await reply(f"🃏 You've got **{stash}** cigs and tried to stake **{stake:,}**. He counts better than you.")
+            await reply(f"🃏 You've got **{stash}** cigs and tried to stake **{format_coins(stake)}**. He counts better than you.")
             return
         weights = [o[0] for o in CARDS_OUTCOMES]
         _w, mult, flavor = random.choices(CARDS_OUTCOMES, weights=weights)[0]

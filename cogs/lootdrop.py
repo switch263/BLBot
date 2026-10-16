@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 import logging
 import economy
 from amount import format_compact
-from game_common import button_label
+from game_common import button_label, format_coins
 from lootdrop_card import render_card, pick_species, _OBJECT_DISPLAY_NAMES
 from items import ITEMS, ALL_ITEMS
 
@@ -204,7 +204,7 @@ class ItemDropView(discord.ui.View):
         embed = interaction.message.embeds[0]
         embed.add_field(
             name="💰 Sold",
-            value=f"**{payout:,}** coins added to your wallet.",
+            value=f"**{format_coins(payout)}** coins added to your wallet.",
             inline=False,
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -343,7 +343,7 @@ class LootDrop(commands.Cog):
             logger.error(f"Loot card render failed, falling back to text embed: {e}")
             embed.add_field(
                 name="Value",
-                value=f"**{coins:,}** coins added to your wallet!",
+                value=f"**{format_coins(coins)}** coins added to your wallet!",
                 inline=False,
             )
             embed.add_field(name="Slot", value=slot.upper(), inline=True)
@@ -372,7 +372,7 @@ class LootDrop(commands.Cog):
 
         sell_value = meta.get("sell_value")
         worth_line = (
-            f"Worth **{sell_value:,}** coins if you `/shop sell` it.\n"
+            f"Worth **{format_coins(sell_value)}** coins if you `/shop sell` it.\n"
             if sell_value else ""
         )
         embed = discord.Embed(

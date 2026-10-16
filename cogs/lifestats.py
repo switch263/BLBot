@@ -25,6 +25,7 @@ import economy
 import splurges
 import achievements
 from character_art import render_character_image
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class Lifestats(commands.Cog):
         except Exception:
             pass
         win_rate = (total_wins / total_plays * 100) if total_plays else 0.0
-        fav_text = (f"{_prettify(favorite[0])} ({favorite[1]:,} plays)"
+        fav_text = (f"{_prettify(favorite[0])} ({format_coins(favorite[1])} plays)"
                     if favorite and favorite[1] > 0 else "None yet")
 
         # Prestige: current level, win multiplier, lifetime levels.
@@ -175,19 +176,19 @@ class Lifestats(commands.Cog):
         if not has_image:
             embed.set_thumbnail(url=target.display_avatar.url)
 
-        embed.add_field(name="Wealth", value=f"{wealth:,}", inline=True)
-        embed.add_field(name="Wallet", value=f"{coins:,}", inline=True)
-        embed.add_field(name="Banked", value=f"{banked:,}", inline=True)
+        embed.add_field(name="Wealth", value=f"{format_coins(wealth)}", inline=True)
+        embed.add_field(name="Wallet", value=f"{format_coins(coins)}", inline=True)
+        embed.add_field(name="Banked", value=f"{format_coins(banked)}", inline=True)
 
-        embed.add_field(name="Games Played", value=f"{total_plays:,}", inline=True)
-        embed.add_field(name="Wins", value=f"{total_wins:,}", inline=True)
+        embed.add_field(name="Games Played", value=f"{format_coins(total_plays)}", inline=True)
+        embed.add_field(name="Wins", value=f"{format_coins(total_wins)}", inline=True)
         embed.add_field(name="Win Rate", value=f"{win_rate:.1f}%", inline=True)
 
         embed.add_field(name="Favorite Game", value=fav_text, inline=True)
-        embed.add_field(name="Total Won", value=f"{total_won:,}", inline=True)
+        embed.add_field(name="Total Won", value=f"{format_coins(total_won)}", inline=True)
         embed.add_field(
             name="Prestige",
-            value=f"Level {level} (×{win_mult} wins) · {lifetime_levels:,} lifetime",
+            value=f"Level {level} (×{win_mult} wins) · {format_coins(lifetime_levels)} lifetime",
             inline=True,
         )
 
@@ -199,7 +200,7 @@ class Lifestats(commands.Cog):
         )
         embed.add_field(
             name="Achievements",
-            value=f"{earned_count}/{total_achievements} · {points:,} pts",
+            value=f"{earned_count}/{total_achievements} · {format_coins(points)} pts",
             inline=False,
         )
         return embed

@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
 import logging
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +104,12 @@ class Info(commands.Cog):
         embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
         embed.add_field(name="Created", value=guild.created_at.strftime("%b %d, %Y"), inline=True)
 
-        embed.add_field(name="Members", value=f"{guild.member_count or len(guild.members):,}", inline=True)
-        embed.add_field(name="Humans / Bots", value=f"{humans:,} / {bots:,}", inline=True)
-        embed.add_field(name="Online", value=f"{online:,}", inline=True)
+        embed.add_field(name="Members", value=f"{format_coins(guild.member_count or len(guild.members))}", inline=True)
+        embed.add_field(name="Humans / Bots", value=f"{format_coins(humans)} / {format_coins(bots)}", inline=True)
+        embed.add_field(name="Online", value=f"{format_coins(online)}", inline=True)
 
         embed.add_field(name="Text / Voice / Categories", value=f"{text_count} / {voice_count} / {category_count}", inline=True)
-        embed.add_field(name="In Voice", value=f"{in_voice:,}", inline=True)
+        embed.add_field(name="In Voice", value=f"{format_coins(in_voice)}", inline=True)
         embed.add_field(name="Roles", value=f"{len(guild.roles)}", inline=True)
 
         embed.add_field(name="Boost Tier", value=f"Level {guild.premium_tier}", inline=True)
@@ -119,9 +120,9 @@ class Info(commands.Cog):
         all_guilds = self.bot.guilds
         total_users = sum(g.member_count or 0 for g in all_guilds)
         top = sorted(all_guilds, key=lambda g: g.member_count or 0, reverse=True)[:5]
-        top_lines = [f"• {g.name} — {(g.member_count or 0):,}" for g in top]
+        top_lines = [f"• {g.name} — {format_coins((g.member_count or 0))}" for g in top]
         embed.add_field(
-            name=f"Bot reach — {len(all_guilds)} server(s), {total_users:,} users",
+            name=f"Bot reach — {len(all_guilds)} server(s), {format_coins(total_users)} users",
             value="\n".join(top_lines) if top_lines else "—",
             inline=False,
         )

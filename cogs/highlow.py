@@ -6,7 +6,7 @@ import logging
 
 from economy import get_coins, record_game, casino_payout
 from amount import format_compact
-from game_common import StakeView, casino_prelude, refund_stake, button_label, prestige_trailer
+from game_common import StakeView, casino_prelude, refund_stake, button_label, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +99,11 @@ class CashOutButton(discord.ui.Button):
         record_game(g.guild_id, g.user_id, "highlow", won=net > 0)
         for child in view.children:
             child.disabled = True
-        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
         footer = (
-            f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{paid:,}** coins "
-            f"(net **{net:+,}**).{short} Streak: **{g.streak}**.\n"
-            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+            f"💰 **Cashed out** at **{g.multiplier:.2f}×** — **{format_coins(paid)}** coins "
+            f"(net **{format_coins(net, signed=True)}**).{short} Streak: **{g.streak}**.\n"
+            f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**"
         ) + prestige_trailer(g.guild_id, g.user_id)
         await interaction.response.edit_message(content=view.cog._render(g, footer), view=view)
 
@@ -136,11 +136,11 @@ class HighLowView(StakeView):
         requested = int(g.bet * g.multiplier)
         paid = casino_payout(g.guild_id, g.user_id, requested)
         record_game(g.guild_id, g.user_id, "highlow", won=paid > g.bet)
-        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
         return self.cog._render(g, (
             f"⏰ **Auto-cashed out** at **{g.multiplier:.2f}×** — you went quiet. "
-            f"**{paid:,}** coins (net **{paid - g.bet:+,}**).{short} Streak: **{g.streak}**.\n"
-            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+            f"**{format_coins(paid)}** coins (net **{format_coins(paid - g.bet, signed=True)}**).{short} Streak: **{g.streak}**.\n"
+            f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**"
         ) + prestige_trailer(g.guild_id, g.user_id))
 
 
@@ -210,14 +210,14 @@ class HigherOrLower(commands.Cog):
         for child in view.children:
             child.disabled = True
         footer = (
-            f"💀 **BUSTED** at streak **{g.streak}**. Lost **{g.bet:,}** coins.\n"
-            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+            f"💀 **BUSTED** at streak **{g.streak}**. Lost **{format_coins(g.bet)}** coins.\n"
+            f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**"
         )
         await interaction.response.edit_message(content=self._render(g, footer), view=view)
 
     def _render(self, g: HighLowGame, footer: str | None = None) -> str:
         lines = [
-            f"🃏 **{g.user_name}'s Higher or Lower** — bet **{g.bet:,}**",
+            f"🃏 **{g.user_name}'s Higher or Lower** — bet **{format_coins(g.bet)}**",
             f"Current card: **{suit_wrap(g.current_rank_idx, g.current_suit)}**",
             f"Streak: **{g.streak}** | Multiplier: **{g.multiplier:.2f}×**",
         ]

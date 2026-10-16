@@ -22,7 +22,7 @@ import time
 from collections import Counter
 
 from economy import get_coins, record_game, casino_payout, kv_get, kv_set
-from game_common import StakeView, casino_prelude, refund_stake, prestige_trailer
+from game_common import StakeView, casino_prelude, format_coins, refund_stake, prestige_trailer
 
 logger = logging.getLogger(__name__)
 
@@ -261,14 +261,14 @@ class SubmitButton(discord.ui.Button):
             short_note = ""
             if paid < requested:
                 short_note = (
-                    f"\n💥 **YOU BROKE THE BANK.** The house owed **{requested:,}** and could "
-                    f"only scrape together **{paid:,}** — emergency measures incoming."
+                    f"\n💥 **YOU BROKE THE BANK.** The house owed **{format_coins(requested)}** and could "
+                    f"only scrape together **{format_coins(paid)}** — emergency measures incoming."
                 )
             footer = (
                 f"{random.choice(cfg['solve_flavor'])}\n"
-                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{paid:,}** coins "
-                f"(net **{paid - g.bet:+,}**).{short_note}\n"
-                f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+                f"Cracked in **{attempts_used}** attempt(s). Payout: **{mult:.2f}×** → **{format_coins(paid)}** coins "
+                f"(net **{format_coins(paid - g.bet, signed=True)}**).{short_note}\n"
+                f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**"
             ) + prestige_trailer(g.guild_id, g.user_id)
         elif attempts_used >= MAX_ATTEMPTS:
             g.ended = True
@@ -279,8 +279,8 @@ class SubmitButton(discord.ui.Button):
             code_str = "".join(str(d) for d in g.code)
             footer = (
                 f"{random.choice(cfg['fail_flavor'])}\n"
-                f"The code was **{code_str}**. **{g.bet:,}** coins transferred to the house.\n"
-                f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+                f"The code was **{code_str}**. **{format_coins(g.bet)}** coins transferred to the house.\n"
+                f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**"
             )
         else:
             footer = None
@@ -318,8 +318,8 @@ class VaultView(StakeView):
         code_str = "".join(str(d) for d in g.code)
         return self.cog._render(g, (
             f"⏰ **The alarm tripped while you stood there.** The code was **{code_str}**. "
-            f"**{g.bet:,}** coins stay with the house.\n"
-            f"Balance: **{get_coins(g.guild_id, g.user_id):,}**"
+            f"**{format_coins(g.bet)}** coins stay with the house.\n"
+            f"Balance: **{format_coins(get_coins(g.guild_id, g.user_id))}**"
         ))
 
 
@@ -334,7 +334,7 @@ class TheVault(commands.Cog):
     def _render(self, g: VaultGame, footer: str | None = None) -> str:
         cfg = g.cfg
         lines = [
-            f"🏦 **{g.user_name}'s {cfg['title']}** — bet **{g.bet:,}**",
+            f"🏦 **{g.user_name}'s {cfg['title']}** — bet **{format_coins(g.bet)}**",
             f"{cfg['rules']} **{MAX_ATTEMPTS - len(g.attempts)}** attempts left.",
             cfg["legend"],
             "",

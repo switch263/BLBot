@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import get_coins, transfer_to_house, casino_payout, record_game
-from game_common import StakeView, casino_prelude, prestige_trailer
+from game_common import StakeView, casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +129,8 @@ class TrollBridge(commands.Cog):
             requested = bet * 3
             paid = casino_payout(guild_id, user_id, requested)
             net = paid - bet
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            result = f"✅ **Correct!** {random.choice(WIN_FLAVOR)}\n**{net:+,}** coins.{short}" + prestige_trailer(guild_id, user_id)
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
+            result = f"✅ **Correct!** {random.choice(WIN_FLAVOR)}\n**{format_coins(net, signed=True)}** coins.{short}" + prestige_trailer(guild_id, user_id)
         else:
             fine_target = bet // 2
             extra = 0
@@ -139,14 +139,14 @@ class TrollBridge(commands.Cog):
                 if fine_result.get("ok"):
                     extra = fine_target
             if extra > 0:
-                fine_line = f"**Lost {bet:,}** + **{extra:,}** fine."
+                fine_line = f"**Lost {format_coins(bet)}** + **{format_coins(extra)}** fine."
             else:
-                fine_line = f"**Lost {bet:,}**."
+                fine_line = f"**Lost {format_coins(bet)}**."
             result = f"❌ **Wrong!** {random.choice(FAIL_FLAVOR)}\n{fine_line}"
 
         record_game(guild_id, user_id, "troll", won=correct)
         original = interaction.message.content
-        new_content = f"{original}\n\n{result}\nBalance: **{get_coins(guild_id, user_id):,}**"
+        new_content = f"{original}\n\n{result}\nBalance: **{format_coins(get_coins(guild_id, user_id))}**"
         await interaction.response.edit_message(content=new_content, view=view)
 
     async def _start(self, ctx_or_interaction, bet):
@@ -158,7 +158,7 @@ class TrollBridge(commands.Cog):
         view = BridgeView(self, start.guild.id, user.id, bet, options, correct_idx)
         text = (
             f"🌉 **{user.display_name}** approaches the bridge. The troll emerges, reeking of bologna.\n"
-            f"The troll demands **{bet:,}** coins and poses a riddle:\n\n"
+            f"The troll demands **{format_coins(bet)}** coins and poses a riddle:\n\n"
             f"**❓ {question}**\n\n"
             f"Pick wisely. Correct = **3×** back. Wrong = lose bet + 50% fine."
         )

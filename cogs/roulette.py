@@ -5,6 +5,7 @@ import random
 import asyncio
 import logging
 import economy
+from game_common import format_coins, fill
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,8 @@ class RussianRoulette(commands.Cog):
                 game["stakes"][author.id] = stake
                 game["pot"] += stake
                 await ctx.send(
-                    f"{author.mention} throws in **{stake:,}** coins. "
-                    f"({len(game['players'])} players, pot: **{game['pot']:,}** coins)\n"
+                    f"{author.mention} throws in **{format_coins(stake)}** coins. "
+                    f"({len(game['players'])} players, pot: **{format_coins(game['pot'])}** coins)\n"
                     f"Type `!roulette` to join. Starter: `!pull` when ready."
                 )
                 return
@@ -106,7 +107,7 @@ class RussianRoulette(commands.Cog):
         embed = discord.Embed(
             title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} anted up **{stake:,}** coins.\n\n"
+                f"{author.mention} anted up **{format_coins(stake)}** coins.\n\n"
                 f"**No buy-in. Your whole wallet is the ante.** Join with `!roulette` — your stake goes into the pot.\n"
                 f"Winner takes everything.\n\n"
                 f"{author.display_name}: type `!pull` when the table's full."
@@ -162,7 +163,7 @@ class RussianRoulette(commands.Cog):
 
             if current_shot == bullet_chamber:
                 # BANG
-                await ctx.send(random.choice(BANG_MESSAGES).format(user=current.mention))
+                await ctx.send(fill(random.choice(BANG_MESSAGES), user=current.mention))
 
                 # Try to timeout
                 try:
@@ -183,7 +184,7 @@ class RussianRoulette(commands.Cog):
                     current_shot = 0
                     turn = 0  # Start from first remaining player
             else:
-                await ctx.send(random.choice(CLICK_MESSAGES).format(user=current.mention))
+                await ctx.send(fill(random.choice(CLICK_MESSAGES), user=current.mention))
                 await asyncio.sleep(1)
                 # Only increment turn when player survives
                 turn += 1
@@ -199,7 +200,7 @@ class RussianRoulette(commands.Cog):
         for p in game["players"]:
             if p.id != winner.id:
                 economy.record_game(guild_id, p.id, "rr", False)
-        await ctx.send(random.choice(VICTORY_MESSAGES).format(winner=winner.mention, pot=pot))
+        await ctx.send(fill(random.choice(VICTORY_MESSAGES), winner=winner.mention, pot=pot))
 
         del self.active_games[channel.id]
 
@@ -229,8 +230,8 @@ class RussianRoulette(commands.Cog):
                 game["stakes"][author.id] = stake
                 game["pot"] += stake
                 await interaction.response.send_message(
-                    f"{author.mention} throws in **{stake:,}** coins. "
-                    f"({len(game['players'])} players, pot: **{game['pot']:,}** coins)\n"
+                    f"{author.mention} throws in **{format_coins(stake)}** coins. "
+                    f"({len(game['players'])} players, pot: **{format_coins(game['pot'])}** coins)\n"
                     f"Use `/roulette` to join. Starter: `!pull` when ready."
                 )
                 return
@@ -257,7 +258,7 @@ class RussianRoulette(commands.Cog):
         embed = discord.Embed(
             title="Russian Roulette — ALL IN",
             description=(
-                f"{author.mention} anted up **{stake:,}** coins.\n\n"
+                f"{author.mention} anted up **{format_coins(stake)}** coins.\n\n"
                 f"**No buy-in. Your whole wallet is the ante.** Join with `!roulette` or `/roulette` — your stake goes in.\n"
                 f"Winner takes everything.\n\n"
                 f"{author.display_name}: type `!pull` when the table's full."

@@ -29,6 +29,7 @@ import random
 import logging
 
 import economy
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +121,8 @@ class ConfirmPrestige(discord.ui.View):
             have = res.get("have", 0)
             await interaction.response.edit_message(
                 content=(f"💸 You can't afford it anymore — someone moved the goalposts "
-                         f"or you spent in between. You need **{self.threshold:,}** wealth, "
-                         f"you have **{have:,}**."),
+                         f"or you spent in between. You need **{format_coins(self.threshold)}** wealth, "
+                         f"you have **{format_coins(have)}**."),
                 view=self)
             return
 
@@ -159,12 +160,12 @@ class ConfirmPrestige(discord.ui.View):
         granted = res.get("granted", 0)
         embed.add_field(
             name="Into the pot",
-            value=(f"**{to_pot:,}** of your wiped fortune ({pot_pct}%) was swept into the house pot. "
+            value=(f"**{format_coins(to_pot)}** of your wiped fortune ({pot_pct}%) was swept into the house pot. "
                    f"Win it back by hitting the **green jackpot** in `/bet` roulette."),
             inline=False)
         embed.add_field(
             name="Fresh start",
-            value=f"The house staked you **{granted:,}** coins for the new journey.",
+            value=f"The house staked you **{format_coins(granted)}** coins for the new journey.",
             inline=False)
         embed.set_footer(text="Your old wallet and bank are gone. That was the cost.")
         await interaction.response.edit_message(content=None, embed=embed, view=self)
@@ -234,11 +235,11 @@ class Prestige(commands.Cog):
         embed.add_field(
             name=f"Next level ({level + 1})",
             value=(
-                f"Costs your **entire fortune** (wallet + bank, now **{wealth:,}**) "
+                f"Costs your **entire fortune** (wallet + bank, now **{format_coins(wealth)}**) "
                 f"wiped to **0**.\n"
-                f"Gate: **{threshold:,}** wealth — "
+                f"Gate: **{format_coins(threshold)}** wealth — "
                 + ("✅ you qualify." if can_afford
-                   else f"❌ you're **{short:,}** short.")),
+                   else f"❌ you're **{format_coins(short)}** short.")),
             inline=False)
 
         if can_afford:
@@ -276,7 +277,7 @@ class Prestige(commands.Cog):
             member = guild.get_member(uid)
             name = member.display_name if member else f"<@{uid}>"
             medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"**{i}.**")
-            lines.append(f"{medal} {name} — **{int(levels):,}** lifetime level(s)")
+            lines.append(f"{medal} {name} — **{format_coins(int(levels))}** lifetime level(s)")
         embed = discord.Embed(
             title="🏅 The Legacy — Lifetime Prestige",
             description="\n".join(lines),

@@ -13,7 +13,7 @@ from discord.ext import commands
 
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount
+from game_common import parse_wallet_amount, format_coins, fill
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +164,8 @@ class Bounty(commands.Cog):
                           placer: discord.Member, target: discord.Member, bet: int) -> str:
         if target is None:
             return (
-                f"Usage: `!bounty @user <bet>` — put a contract on someone. Minimum bet **{BOUNTY_MIN_STAKE:,} coin**. "
-                f"Success chance is {int(MIN_RATE*100)}% up to **{MIN_BOUNTY:,}**, scaling to {int(MAX_RATE*100)}% at {SATURATION_BOUNTY:,}. "
+                f"Usage: `!bounty @user <bet>` — put a contract on someone. Minimum bet **{format_coins(BOUNTY_MIN_STAKE)} coin**. "
+                f"Success chance is {int(MIN_RATE*100)}% up to **{format_coins(MIN_BOUNTY)}**, scaling to {int(MAX_RATE*100)}% at {format_coins(SATURATION_BOUNTY)}. "
                 f"Limits: **once per 3 days per person**, **{BOUNTY_GUILD_LIMIT} per day guild-wide**. "
                 f"**If the bounty fails, you go to jail.**"
             )
@@ -178,7 +178,7 @@ class Bounty(commands.Cog):
         if economy.is_memorial(target.id):
             return await self._smite_for_memorial_bounty(guild, placer)
         if bet is None or bet < BOUNTY_MIN_STAKE:
-            return f"💼 Minimum bounty is **{BOUNTY_MIN_STAKE:,} coin**. You offered **{(bet or 0):,}**."
+            return f"💼 Minimum bounty is **{format_coins(BOUNTY_MIN_STAKE)} coin**. You offered **{format_coins((bet or 0))}**."
 
         # Jail gate: a jailed placer can't put out a hit
         jmsg = economy.jail_message(guild.id, placer.id)
@@ -204,10 +204,10 @@ class Bounty(commands.Cog):
                 return self._format_economy_error(result, bet)
             hours = max(1, round(jail_seconds / 3600))
             if result.get("jailed_longer"):
-                return random.choice(ALREADY_JAILED_FLAVOR).format(
+                return fill(random.choice(ALREADY_JAILED_FLAVOR),
                     placer=placer.mention, target=target.mention, bet=bet, hours=hours,
                 )
-            return random.choice(SUCCESS_FLAVOR).format(
+            return fill(random.choice(SUCCESS_FLAVOR),
                 placer=placer.mention, target=target.mention, bet=bet, hours=hours,
             )
 
@@ -223,7 +223,7 @@ class Bounty(commands.Cog):
             return self._format_economy_error(result, bet)
         backfire_seconds = _roll_jail_seconds()
         # Unhinged botch flavor; substitute the target's name where the template asks for it.
-        botch = random.choice(PLACER_BOTCH_REASONS).format(target=target.display_name)
+        botch = fill(random.choice(PLACER_BOTCH_REASONS), target=target.display_name)
         economy.jail_user(
             guild.id, placer.id, backfire_seconds,
             reason=botch,
@@ -231,7 +231,7 @@ class Bounty(commands.Cog):
             channel_id=channel_id,
         )
         hours = max(1, round(backfire_seconds / 3600))
-        return random.choice(FAIL_FLAVOR).format(
+        return fill(random.choice(FAIL_FLAVOR),
             placer=placer.mention, target=target.mention, bet=bet, hours=hours,
         )
 
@@ -257,7 +257,7 @@ class Bounty(commands.Cog):
         )
         if seized > 0:
             msg += (
-                f"kev2tall tears **{seized:,} coins** — half of {placer.mention}'s wallet — "
+                f"kev2tall tears **{format_coins(seized)} coins** — half of {placer.mention}'s wallet — "
                 f"loose and locks them away in the house's safe-harbor reserve.{crab}"
                 f"Untouchable now. Let this be a lesson."
             )
@@ -284,13 +284,13 @@ class Bounty(commands.Cog):
     def _format_economy_error(self, result: dict, bet: int) -> str:
         err = result.get("error")
         if err == "broke":
-            return f"💸 You'd need **{result.get('need', bet):,} coins** to put up that bounty. You have **{result.get('have', 0):,}**."
+            return f"💸 You'd need **{format_coins(result.get('need', bet))} coins** to put up that bounty. You have **{format_coins(result.get('have', 0))}**."
         if err == "self":
             return "🚫 You can't bounty yourself."
         if err == "memorial":
             return "🕊️ kev2tall can't be bountied. The memorial is off-limits — nothing was charged."
         if err == "invalid_bet":
-            return f"💼 Minimum bounty is **{BOUNTY_MIN_STAKE:,} coin**."
+            return f"💼 Minimum bounty is **{format_coins(BOUNTY_MIN_STAKE)} coin**."
         if err == "rate_limited_user":
             wait = self._format_wait(result.get("seconds_until_slot", 0))
             return (

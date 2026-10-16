@@ -6,7 +6,7 @@ import logging
 
 from economy import get_coins, record_game, casino_payout, transfer_to_house
 from amount import format_compact
-from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label, prestige_trailer
+from game_common import STAKE_TIMEOUT, casino_prelude, refund_stake, button_label, prestige_trailer, format_coins
 from gridgame import GridView
 
 logger = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ class DenView(GridView):
             self.finish()
             scream = random.choice(RACCOON_SCREAMS)
             content = self.cog._render(
-                self, f"🦝 **BITTEN!** {scream}\nYou lose **{self.bet:,}** coins.")
+                self, f"🦝 **BITTEN!** {scream}\nYou lose **{format_coins(self.bet)}** coins.")
             await interaction.response.edit_message(content=content, view=self)
             return
 
@@ -197,13 +197,13 @@ class DenView(GridView):
         record_game(self.guild_id, self.user_id, "den", won=True)
         self.finish()
         net = paid - self.bet
-        short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
+        short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
         flavor = random.choice(WIN_FLAVOR)
         if perfect:
             lead = f"🏆 **PERFECT RUN at {mult:.2f}×!** You cleaned out the den.\n"
         else:
             lead = f"💰 **Climbed out at {mult:.2f}×.** "
-        content = self.cog._render(self, f"{lead}Net **{net:+,}** coins.{short} _{flavor}_" + prestige_trailer(self.guild_id, self.user_id))
+        content = self.cog._render(self, f"{lead}Net **{format_coins(net, signed=True)}** coins.{short} _{flavor}_" + prestige_trailer(self.guild_id, self.user_id))
         await interaction.response.edit_message(content=content, view=self)
 
     async def on_abandon(self):
@@ -213,8 +213,8 @@ class DenView(GridView):
             requested = int(self.bet * mult)
             paid = casino_payout(self.guild_id, self.user_id, requested)
             record_game(self.guild_id, self.user_id, "den", won=True)
-            short = f" *(house was short — owed {requested:,})*" if paid < requested else ""
-            footer = f"⏰ **Auto-climbed out** at **{mult:.2f}×** — you went quiet. Net **{paid - self.bet:+,}** coins.{short}" + prestige_trailer(self.guild_id, self.user_id)
+            short = f" *(house was short — owed {format_coins(requested)})*" if paid < requested else ""
+            footer = f"⏰ **Auto-climbed out** at **{mult:.2f}×** — you went quiet. Net **{format_coins(paid - self.bet, signed=True)}** coins.{short}" + prestige_trailer(self.guild_id, self.user_id)
         else:
             footer = refund_stake(self.guild_id, self.user_id, self.bet)
         self.finish()
@@ -266,16 +266,16 @@ class RaccoonDen(commands.Cog):
         if v.bonus_triggered and v.bonus_type:
             mult_label += f" {v.bonus_type['label']}"
         lines = [
-            f"🦝 **{v.user_name}'s Raccoon Den** — bet **{v.bet:,}** coins",
+            f"🦝 **{v.user_name}'s Raccoon Den** — bet **{format_coins(v.bet)}** coins",
             f"**{v.num_raccoons}** feral raccoons hide in {GRID_SIZE} bins. "
             f"Revealed: **{len(v.revealed)}/{safe_possible}** | Multiplier: {mult_label}",
         ]
         if not v.resolved:
-            lines.append(f"Click bins to dig. Climb Out any time to bank **{int(v.bet * mult):,}** coins.")
+            lines.append(f"Click bins to dig. Climb Out any time to bank **{format_coins(int(v.bet * mult))}** coins.")
         if footer:
             lines.append("")
             lines.append(footer)
-            lines.append(f"Balance: **{get_coins(v.guild_id, v.user_id):,}**")
+            lines.append(f"Balance: **{format_coins(get_coins(v.guild_id, v.user_id))}**")
         return "\n".join(lines)
 
     async def _start_game(self, ctx_or_interaction, bet, raccoons: int = DEFAULT_RACCOONS):
@@ -295,7 +295,7 @@ class RaccoonDen(commands.Cog):
         res = transfer_to_house(start.guild.id, start.user.id, start.bet)
         if not res.get("ok"):
             if res.get("error") == "broke":
-                await start.reply(f"Too broke. Balance: **{res.get('have', 0):,}**", ephemeral=True)
+                await start.reply(f"Too broke. Balance: **{format_coins(res.get('have', 0))}**", ephemeral=True)
             else:
                 await start.reply("Bet failed. Try again.", ephemeral=True)
             return

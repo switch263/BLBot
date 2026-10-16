@@ -11,7 +11,7 @@ from economy import (
     get_active_jails, pay_bail, jail_user,
     casino_payout,
 )
-from game_common import prestige_trailer
+from game_common import prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class BailBonds(commands.Cog):
             reason = r["reason"] or "Unspecified mayhem"
             remaining = max(0, int(r["until_ts"] - time.time()))
             lines.append(
-                f"• **{name}** — bail **{bail:,}** — {_format_duration(remaining)} left — _{reason}_"
+                f"• **{name}** — bail **{format_coins(bail)}** — {_format_duration(remaining)} left — _{reason}_"
             )
         lines.append("")
         lines.append("Use `/bailbonds @user` to post their bond. Outcome roll is your problem.")
@@ -117,8 +117,8 @@ class BailBonds(commands.Cog):
                 return (f"⏳ **{jailed.display_name}** was bailed too recently. "
                         f"Try again in **{_format_duration(cd)}**.")
             if err == "broke":
-                return (f"💸 Posting this bond requires **{result.get('need', 0):,} coins** up front. "
-                        f"You have **{result.get('have', 0):,}**.")
+                return (f"💸 Posting this bond requires **{format_coins(result.get('need', 0))} coins** up front. "
+                        f"You have **{format_coins(result.get('have', 0))}**.")
             return "⚠️ The clerk lost your paperwork. Try again in a moment."
 
         bail = result["amount"]
@@ -127,14 +127,14 @@ class BailBonds(commands.Cog):
         payout = casino_payout(guild.id, payer.id, requested) if requested > 0 else 0
         short_note = ""
         if requested > 0 and payout < requested:
-            short_note = f" *(house was short — owed {requested:,})*"
+            short_note = f" *(house was short — owed {format_coins(requested)})*"
         net = payout - bail
         # Won = the bond turned a profit; break-even, skips, and the bondsman
         # getting jailed all count as plays without a win.
         record_game(guild.id, payer.id, "bailbonds", won=net > 0)
 
         lines = [
-            f"💼 **{payer.display_name}** posts **{bail:,}** for {jailed.mention} — they walk free.",
+            f"💼 **{payer.display_name}** posts **{format_coins(bail)}** for {jailed.mention} — they walk free.",
             "",
             f"_{flavor}_",
         ]
@@ -147,15 +147,15 @@ class BailBonds(commands.Cog):
             )
             lines.append(
                 f"🚔 **{payer.display_name}** is now in casino jail for **{_format_duration(jail_s)}**. "
-                f"Bail: **{bondsman_bail:,}**."
+                f"Bail: **{format_coins(bondsman_bail)}**."
             )
         if net > 0:
-            lines.append(f"📈 Net: **+{net:,}** coins.{short_note}")
+            lines.append(f"📈 Net: **+{format_coins(net)}** coins.{short_note}")
         elif net == 0:
             lines.append(f"⚖️ Net: **break-even**.{short_note}")
         else:
-            lines.append(f"📉 Net: **{net:,}** coins.{short_note}")
-        lines.append(f"Balance: **{get_coins(guild.id, payer.id):,}**")
+            lines.append(f"📉 Net: **{format_coins(net)}** coins.{short_note}")
+        lines.append(f"Balance: **{format_coins(get_coins(guild.id, payer.id))}**")
         result_text = "\n".join(lines)
         if payout > 0:
             result_text += prestige_trailer(guild.id, payer.id)

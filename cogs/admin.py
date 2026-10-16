@@ -6,7 +6,7 @@ import economy
 
 from config import ADMIN_CHANNEL_ID, BOOT_TIME
 from amount import parse_amount, amount_error
-from game_common import parse_wallet_amount
+from game_common import parse_wallet_amount, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +56,10 @@ class Admin(commands.Cog):
         # Confirm
         embed = discord.Embed(
             title="💰 Coins Granted",
-            description=f"{ctx.author.mention} granted **{amount:,}** coins to {user.mention}",
+            description=f"{ctx.author.mention} granted **{format_coins(amount)}** coins to {user.mention}",
             color=discord.Color.gold()
         )
-        embed.add_field(name="New Balance", value=f"{economy.get_coins(guild_id, user.id):,} coins")
+        embed.add_field(name="New Balance", value=f"{format_coins(economy.get_coins(guild_id, user.id))} coins")
         embed.set_footer(text=f"Admin: {ctx.author.display_name}")
         await ctx.send(embed=embed)
 
@@ -158,16 +158,16 @@ class Admin(commands.Cog):
 
         embed = discord.Embed(
             title="💸 Coins Removed",
-            description=f"{ctx.author.mention} removed **{actually_removed:,}** coins from {user.mention}.",
+            description=f"{ctx.author.mention} removed **{format_coins(actually_removed)}** coins from {user.mention}.",
             color=discord.Color.dark_red(),
         )
         if actually_removed < amount:
             embed.add_field(
                 name="Note",
-                value=f"Requested {amount:,}, but balance was only {before:,} — clamped at 0.",
+                value=f"Requested {format_coins(amount)}, but balance was only {format_coins(before)} — clamped at 0.",
                 inline=False,
             )
-        embed.add_field(name="New Balance", value=f"{after:,} coins")
+        embed.add_field(name="New Balance", value=f"{format_coins(after)} coins")
         embed.set_footer(text=f"Admin: {ctx.author.display_name}")
         await ctx.send(embed=embed)
 
@@ -421,7 +421,7 @@ class DeleteWalletView(discord.ui.View):
         return (
             f"🗑️ **WALLET DELETE REQUESTED**\n"
             f"{self.initiator.mention} wants to **wipe {self.target.mention}'s "
-            f"wallet** (currently **{bal:,}** coins). There is no undo.\n\n"
+            f"wallet** (currently **{format_coins(bal)}** coins). There is no undo.\n\n"
             f"**This will reset, for this player only:**\n"
             f"• their wallet (coins + winnings, back to fresh)\n"
             f"• any active jail sentence\n"

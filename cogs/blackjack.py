@@ -7,7 +7,7 @@ import asyncio
 import time
 
 from economy import get_coins, jail_message, record_game, transfer_to_house, casino_payout
-from game_common import casino_prelude, prestige_trailer
+from game_common import casino_prelude, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ class LobbyView(discord.ui.View):
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
                 await interaction.response.send_message(
-                    f"Too broke for the buy-in of **{r.buy_in:,}**. Balance: **{bet_result.get('have', 0):,}**", ephemeral=True)
+                    f"Too broke for the buy-in of **{format_coins(r.buy_in)}**. Balance: **{format_coins(bet_result.get('have', 0))}**", ephemeral=True)
             else:
                 await interaction.response.send_message("Buy-in failed. Try again.", ephemeral=True)
             return
@@ -289,7 +289,7 @@ class PlayingView(discord.ui.View):
         bet_result = transfer_to_house(r.guild_id, p.user_id, bet)
         if not bet_result.get("ok"):
             await interaction.response.send_message(
-                f"Can't double — not enough coins for **{bet:,}**.", ephemeral=True)
+                f"Can't double — not enough coins for **{format_coins(bet)}**.", ephemeral=True)
             return
         p.hand_bets[p.current_hand_idx] *= 2
         p.current_hand.append(r.deck.pop())
@@ -304,7 +304,7 @@ class PlayingView(discord.ui.View):
         bet_result = transfer_to_house(r.guild_id, p.user_id, p.bet)
         if not bet_result.get("ok"):
             await interaction.response.send_message(
-                f"Can't split — not enough coins for **{p.bet:,}**.", ephemeral=True)
+                f"Can't split — not enough coins for **{format_coins(p.bet)}**.", ephemeral=True)
             return
         h = p.current_hand
         second_card = h.pop()
@@ -337,7 +337,7 @@ class Blackjack(commands.Cog):
 
     def _render_lobby(self, r: Round) -> str:
         lines = [
-            f"🃏 **Blackjack Round** — buy-in **{r.buy_in:,}** coins",
+            f"🃏 **Blackjack Round** — buy-in **{format_coins(r.buy_in)}** coins",
             f"Deal starts <t:{int(r.lobby_deadline)}:R>. Max {MAX_PLAYERS} players.",
         ]
         if r.players:
@@ -352,7 +352,7 @@ class Blackjack(commands.Cog):
         return "\n".join(lines)
 
     def _render_playing(self, r: Round, reveal_dealer: bool = False, header_note: str | None = None) -> str:
-        lines = [f"🃏 **Blackjack** — buy-in **{r.buy_in:,}**"]
+        lines = [f"🃏 **Blackjack** — buy-in **{format_coins(r.buy_in)}**"]
         if reveal_dealer:
             lines.append(f"**Dealer:** {format_hand(r.dealer_hand)} — total **{hand_total(r.dealer_hand)}**"
                          + (" **BUST**" if hand_total(r.dealer_hand) > 21 else ""))
@@ -374,7 +374,7 @@ class Blackjack(commands.Cog):
                 elif is_blackjack(h):
                     tag = " **BLACKJACK**"
                 status = p.result_text if r.phase == Round.DONE and p.result_text else ""
-                lines.append(f"**{p.user_name}**{turn_marker}: {format_hand(h)} — total **{total}**{tag} _(bet {p.hand_bets[0]:,})_ {status}")
+                lines.append(f"**{p.user_name}**{turn_marker}: {format_hand(h)} — total **{total}**{tag} _(bet {format_coins(p.hand_bets[0])})_ {status}")
             else:
                 lines.append(f"**{p.user_name}**{turn_marker}:")
                 for hi, h in enumerate(p.hands):
@@ -387,7 +387,7 @@ class Blackjack(commands.Cog):
                         tag = " **BUST**"
                     elif is_blackjack(h):
                         tag = " **BLACKJACK**"
-                    lines.append(f"  Hand {hi+1}{hand_marker}: {format_hand(h)} — total **{total}**{tag} _(bet {p.hand_bets[hi]:,})_")
+                    lines.append(f"  Hand {hi+1}{hand_marker}: {format_hand(h)} — total **{total}**{tag} _(bet {format_coins(p.hand_bets[hi])})_")
                 if r.phase == Round.DONE and p.result_text:
                     lines.append(f"  _{p.result_text}_")
 
@@ -418,7 +418,7 @@ class Blackjack(commands.Cog):
         bet_result = transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"You're too broke for the buy-in. Balance: **{bet_result.get('have', 0):,}**")
+                await reply(f"You're too broke for the buy-in. Balance: **{format_coins(bet_result.get('have', 0))}**")
             else:
                 await reply("Buy-in failed. Try again.")
             return
@@ -521,24 +521,24 @@ class Blackjack(commands.Cog):
                     # natural blackjack — 3:2
                     pay = int(bet * 2.5)
                     payout += pay
-                    results.append(f"🎉 blackjack ({ptotal}) → +{pay - bet:,}")
+                    results.append(f"🎉 blackjack ({ptotal}) → +{format_coins(pay - bet)}")
                 elif dealer_bj and not is_blackjack(h):
-                    results.append(f"💀 dealer blackjack — lose {bet:,}")
+                    results.append(f"💀 dealer blackjack — lose {format_coins(bet)}")
                 elif dealer_bj and is_blackjack(h):
                     payout += bet
                     results.append("🤝 push — dealer blackjack")
                 elif ptotal > 21:
-                    results.append(f"💀 bust ({ptotal}) — lose {bet:,}")
+                    results.append(f"💀 bust ({ptotal}) — lose {format_coins(bet)}")
                 elif dealer_bust or ptotal > dealer_total:
                     pay = bet * 2
                     payout += pay
                     dsuffix = "dealer busts" if dealer_bust else f"beats dealer {dealer_total}"
-                    results.append(f"🎉 win ({ptotal}, {dsuffix}) → +{bet:,}")
+                    results.append(f"🎉 win ({ptotal}, {dsuffix}) → +{format_coins(bet)}")
                 elif ptotal == dealer_total:
                     payout += bet
                     results.append(f"🤝 push ({ptotal})")
                 else:
-                    results.append(f"💀 lose ({ptotal} vs {dealer_total}) — lose {bet:,}")
+                    results.append(f"💀 lose ({ptotal} vs {dealer_total}) — lose {format_coins(bet)}")
             p.payout = payout
             if payout:
                 casino_payout(r.guild_id, p.user_id, payout)

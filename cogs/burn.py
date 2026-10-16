@@ -6,7 +6,7 @@ import logging
 
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount
+from game_common import parse_wallet_amount, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class Burn(commands.Cog):
             if not economy.try_deduct(guild_id, user.id, amount):
                 balance = economy.get_coins(guild_id, user.id)
                 return discord.Embed(
-                    description=f"You only have **{balance:,}** coins.",
+                    description=f"You only have **{format_coins(balance)}** coins.",
                     color=discord.Color.red(),
                 )
             flavor = random.choice(VANISH_FLAVOR)
@@ -53,7 +53,7 @@ class Burn(commands.Cog):
             if not result.get("ok"):
                 if result.get("error") == "broke":
                     return discord.Embed(
-                        description=f"You only have **{result.get('have', 0):,}** coins.",
+                        description=f"You only have **{format_coins(result.get('have', 0))}** coins.",
                         color=discord.Color.red(),
                     )
                 return discord.Embed(description="Donation failed. Try again.", color=discord.Color.red())
@@ -64,10 +64,10 @@ class Burn(commands.Cog):
         new_bal = economy.get_coins(guild_id, user.id)
         embed = discord.Embed(
             title="Coins Burned",
-            description=f"{flavor}\n{user.mention} burned **{amount:,}** coins to {target}.",
+            description=f"{flavor}\n{user.mention} burned **{format_coins(amount)}** coins to {target}.",
             color=color,
         )
-        embed.add_field(name="New Balance", value=f"{new_bal:,} coins", inline=False)
+        embed.add_field(name="New Balance", value=f"{format_coins(new_bal)} coins", inline=False)
         return embed
 
     @commands.command(name="burn")

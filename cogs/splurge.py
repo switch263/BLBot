@@ -26,6 +26,7 @@ import logging
 
 import economy
 import splurges
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class Splurge(commands.Cog):
         embed = discord.Embed(
             title=f"💸 The Splurge Catalog — Tier {show}: {splurges.tier_name(show)}",
             description=(
-                f"Your wealth: **{wealth:,}** • Burned so far: **{burned:,}** "
+                f"Your wealth: **{format_coins(wealth)}** • Burned so far: **{format_coins(burned)}** "
                 f"({rank_emoji} {rank})\n"
                 f"Tiers unlocked: **{len(unlocked)}/{len(splurges.TIERS)}**"
             ),
@@ -109,7 +110,7 @@ class Splurge(commands.Cog):
             embed.add_field(
                 name="🔒 LOCKED",
                 value=(f"{splurges.tier_locked_hint(show)}\n"
-                       f"Needs **{need:,}** wealth — you're **{need - wealth:,}** short."),
+                       f"Needs **{format_coins(need)}** wealth — you're **{format_coins(need - wealth)}** short."),
                 inline=False,
             )
         else:
@@ -121,14 +122,14 @@ class Splurge(commands.Cog):
                 cost = economy.prestige_surcharge(
                     guild.id, user.id, splurges.price_for(key, have))
                 if key == splurges.SHARES_KEY:
-                    value = f"**{cost:,}** coins per share"
+                    value = f"**{format_coins(cost)}** coins per share"
                     if outstanding:
                         value += (f" • **{outstanding}** share(s) outstanding"
                                   + (f", **{have}** yours" if have else ""))
                 elif splurges.is_unique(key) and have:
-                    value = f"~~{entry['price']:,}~~ — **OWNED** (one per customer)"
+                    value = f"~~{format_coins(entry['price'])}~~ — **OWNED** (one per customer)"
                 else:
-                    value = f"**{cost:,}** coins"
+                    value = f"**{format_coins(cost)}** coins"
                     if have:
                         value += f" • owned ×{have} (price climbs each time)"
                     if splurges.is_unique(key):
@@ -141,7 +142,7 @@ class Splurge(commands.Cog):
         footer = "/splurge buy <thing> — coins are destroyed, not spent. "
         if nxt:
             footer += (f"Tier {nxt} ({splurges.tier_name(nxt)}) unlocks at "
-                       f"{splurges.tier_requirement(nxt):,} wealth.")
+                       f"{format_coins(splurges.tier_requirement(nxt))} wealth.")
         else:
             footer += "You have unlocked everything. Seek help."
         embed.set_footer(text=footer)
@@ -170,7 +171,7 @@ class Splurge(commands.Cog):
             await reply(
                 f"🔒 **{entry['name']}** is Tier {tier} ({splurges.tier_name(tier)}).\n"
                 f"{splurges.tier_locked_hint(tier)}\n"
-                f"Needs **{need:,}** wealth — you have **{wealth:,}**.",
+                f"Needs **{format_coins(need)}** wealth — you have **{format_coins(wealth)}**.",
                 ephemeral=True)
             return
 
@@ -204,8 +205,8 @@ class Splurge(commands.Cog):
             if res.get("error") == "broke":
                 short = total - res.get("have", 0)
                 await reply(
-                    f"💸 **{entry['name']}** ×{qty} costs **{total:,}**. "
-                    f"You have **{res.get('have', 0):,}** — **{short:,}** short.\n"
+                    f"💸 **{entry['name']}** ×{qty} costs **{format_coins(total)}**. "
+                    f"You have **{format_coins(res.get('have', 0))}** — **{format_coins(short)}** short.\n"
                     f"Go win it. That's the whole point.",
                     ephemeral=True)
                 return
@@ -223,12 +224,12 @@ class Splurge(commands.Cog):
             description=f"{entry['blurb']}\n*{entry['flavor']}*",
             color=discord.Color.dark_gold(),
         )
-        embed.add_field(name="Burned", value=f"🔥 **{total:,}** coins", inline=True)
-        embed.add_field(name="Balance", value=f"**{res['balance']:,}**", inline=True)
+        embed.add_field(name="Burned", value=f"🔥 **{format_coins(total)}** coins", inline=True)
+        embed.add_field(name="Balance", value=f"**{format_coins(res['balance'])}**", inline=True)
         embed.add_field(name="You now own", value=f"×{now_owned}", inline=True)
         embed.add_field(
             name="Lifetime burned",
-            value=f"**{burned:,}** — {rank_emoji} *{rank}*",
+            value=f"**{format_coins(burned)}** — {rank_emoji} *{rank}*",
             inline=False,
         )
         if buying_shares:
@@ -252,7 +253,7 @@ class Splurge(commands.Cog):
             )
         nxt = splurges.next_rank(burned)
         if nxt:
-            embed.set_footer(text=f"{nxt[0] - burned:,} more burned to reach {nxt[1]}.")
+            embed.set_footer(text=f"{format_coins(nxt[0] - burned)} more burned to reach {nxt[1]}.")
         else:
             embed.set_footer(text="Top rank. There is nothing left to prove and you proved it anyway.")
         await reply(embed=embed)
@@ -281,7 +282,7 @@ class Splurge(commands.Cog):
 
         embed = discord.Embed(
             title=f"{rank_emoji} {who.display_name}'s Trophy Case",
-            description=f"Lifetime burned: **{burned:,}** coins — *{rank}*",
+            description=f"Lifetime burned: **{format_coins(burned)}** coins — *{rank}*",
             color=discord.Color.dark_gold(),
         )
         for tier in sorted(splurges.TIERS):
@@ -316,7 +317,7 @@ class Splurge(commands.Cog):
             name = member.display_name if member else f"<@{uid}>"
             rank, rank_emoji = splurges.burn_rank(int(total))
             medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"**{i}.**")
-            lines.append(f"{medal} {name} — **{int(total):,}** {rank_emoji} *{rank}*")
+            lines.append(f"{medal} {name} — **{format_coins(int(total))}** {rank_emoji} *{rank}*")
         embed = discord.Embed(
             title="🔥 The Bonfire — Coins Destroyed On Purpose",
             description="\n".join(lines),
@@ -382,7 +383,7 @@ class Splurge(commands.Cog):
         out = []
         for key, entry in matches[:_AC_LIMIT]:
             lock = "" if entry["tier"] in unlocked else "🔒 "
-            label = f"{lock}{entry['name']} — {entry['price']:,}"
+            label = f"{lock}{entry['name']} — {format_coins(entry['price'])}"
             out.append(app_commands.Choice(name=label[:100], value=key))
         return out
 

@@ -31,6 +31,8 @@ Because the bet parses with `available=` (the wallet), players can stake
 
 Pure glue — talks to economy.py, never to SQLite.
 """
+import string
+
 import discord
 
 from economy import (casino_ban_message, check_bet, get_coins, jail_message,
@@ -61,12 +63,12 @@ def charge_fee(guild_id: int, user_id: int, amount: int, label: str) -> str | No
         return None
     have = res.get("have", get_coins(guild_id, user_id))
     return (f"💸 {broke_taunt()}\n"
-            f"-# {label} costs {amount:,} coins. You have {have:,}.")
+            f"-# {label} costs {format_coins(amount)} coins. You have {format_coins(have)}.")
 
 
 def fee_trailer(amount: int) -> str:
     """The receipt line appended to a paid command's output."""
-    return f"\n-# −{amount:,} coins. Worth it."
+    return f"\n-# −{format_coins(amount)} coins. Worth it."
 
 
 def prestige_trailer(guild_id: int, user_id: int) -> str:
@@ -95,6 +97,59 @@ def button_label(text: str) -> str:
     should already be `format_compact`, this just keeps a long display name
     from taking the game down with it."""
     return text if len(text) <= BUTTON_LABEL_MAX else text[:BUTTON_LABEL_MAX - 1] + "…"
+
+
+# Discord caps message content at 2,000 chars. A full `f"{coins:,}"` of a
+# maxed balance is ~400, so a message quoting five figures (stake, payout,
+# net, balance...) goes over and the whole send/edit is rejected. Past this
+# many characters a figure switches to scientific notation; /wallet and
+# /bank print the exact digits (`format_coins_exact`).
+COINS_FULL_MAX = 40
+
+
+def _sci(n: int) -> str:
+    """`9.999e299` — four significant digits, truncated (never overstates)
+    and typeable straight back into any amount field."""
+    digits = str(abs(n))
+    frac = digits[1:4].rstrip("0")
+    return f"{'-' if n < 0 else ''}{digits[0]}{'.' + frac if frac else ''}e{len(digits) - 1}"
+
+
+def format_coins(n, signed: bool = False) -> str:
+    """Full `1,234,567` digits while they're short; scientific notation once
+    a figure would eat the message. THE way to print money in a message."""
+    if isinstance(n, float):
+        n = int(n) if n.is_integer() or abs(n) >= 10**COINS_FULL_MAX else n
+    full = f"{n:+,}" if signed else f"{n:,}"
+    if len(full) <= COINS_FULL_MAX:
+        return full
+    sci = _sci(int(n))
+    return f"+{sci}" if signed and n >= 0 else sci
+
+
+def format_coins_exact(n) -> str:
+    """For /wallet and /bank, where a player goes to see the real number:
+    the scientific headline every game shows, then every digit under it."""
+    full = f"{int(n):,}"
+    if len(full) <= COINS_FULL_MAX:
+        return f"**{full}**"
+    return f"**{_sci(int(n))}**\n`{full}`"
+
+
+class _CoinFormatter(string.Formatter):
+    def format_field(self, value, format_spec):
+        if format_spec in (",", "+,") and isinstance(value, (int, float)) and not isinstance(value, bool):
+            return format_coins(value, signed=format_spec == "+,")
+        return super().format_field(value, format_spec)
+
+
+_COIN_FORMATTER = _CoinFormatter()
+
+
+def fill(template: str, /, *args, **kwargs) -> str:
+    """`template.format(...)` for flavor-text tables: identical, except a
+    `{amount:,}` placeholder renders through `format_coins`."""
+    return _COIN_FORMATTER.format(template, *args, **kwargs)
 
 
 def parse_wallet_amount(text, guild_id: int, user_id: int) -> int | None:
@@ -206,7 +261,7 @@ async def casino_prelude(
         res = transfer_to_house(guild.id, user.id, bet)
         if not res.get("ok"):
             if res.get("error") == "broke":
-                await err(f"Too broke. Balance: **{res.get('have', 0):,}**")
+                await err(f"Too broke. Balance: **{format_coins(res.get('have', 0))}**")
             elif res.get("error") == "shareholder":
                 # Backstop — the gate above should already have caught this.
                 await err(casino_ban_message(guild.id, user.id)
@@ -233,9 +288,9 @@ def refund_stake(guild_id: int, user_id: int, bet: int) -> str:
     refunded = refund_from_house(guild_id, user_id, bet)
     mins = STAKE_TIMEOUT // 60
     if refunded >= bet:
-        return f"⏰ **Timed out** — no move in {mins} minutes. Your **{bet:,}** stake was refunded."
-    return (f"⏰ **Timed out** — no move in {mins} minutes. Refunded **{refunded:,}** "
-            f"of your **{bet:,}** stake — the house is tapped out.")
+        return f"⏰ **Timed out** — no move in {mins} minutes. Your **{format_coins(bet)}** stake was refunded."
+    return (f"⏰ **Timed out** — no move in {mins} minutes. Refunded **{format_coins(refunded)}** "
+            f"of your **{format_coins(bet)}** stake — the house is tapped out.")
 
 
 class StakeView(discord.ui.View):

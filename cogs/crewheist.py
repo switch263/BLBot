@@ -9,6 +9,7 @@ import time
 import economy
 from economy import (HOUSE_HEIST_MIN_PCT, HOUSE_HEIST_MAX_PCT, CREW_BOX_MAX_PCT,
                      BANK_RAID_MIN_PCT, BANK_RAID_MAX_PCT)
+from game_common import format_coins, fill
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +416,7 @@ class CrewHeistView(discord.ui.View):
             except discord.HTTPException:
                 pass
 
-    @discord.ui.button(label=f"Join the crew — {CREW_BUYIN:,}", style=discord.ButtonStyle.success, emoji="🧤")
+    @discord.ui.button(label=f"Join the crew — {format_coins(CREW_BUYIN)}", style=discord.ButtonStyle.success, emoji="🧤")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         lobby = self.lobby
         if lobby.resolved:
@@ -434,7 +435,7 @@ class CrewHeistView(discord.ui.View):
         if not res.get("ok"):
             if res.get("error") == "broke":
                 await interaction.response.send_message(
-                    f"💸 The buy-in is **{amount:,}** coins and you have **{res.get('have', 0):,}**. "
+                    f"💸 The buy-in is **{format_coins(amount)}** coins and you have **{format_coins(res.get('have', 0))}**. "
                     "The crew doesn't do IOUs.", ephemeral=True)
             else:
                 await interaction.response.send_message("⚠️ Couldn't collect your buy-in. Try again.", ephemeral=True)
@@ -612,11 +613,11 @@ class CrewHeist(commands.Cog):
                 f"**{int(_steal_pct_bounds(CREW_MAX_CREW)[0] * 100)}–{int(_steal_pct_bounds(CREW_MAX_CREW)[1] * 100)}%** "
                 f"of everything they've got.\n"
                 f"**A bust:** everyone rolls to slip away — the slow ones eat up to "
-                f"{JAIL_MAX_SECONDS // 3600}h of casino jail (bail {BAIL_AMOUNT:,})."
+                f"{JAIL_MAX_SECONDS // 3600}h of casino jail (bail {format_coins(BAIL_AMOUNT)})."
             )
         desc = (
             f"{target_line}\n\n"
-            f"**Buy-in:** {CREW_BUYIN:,} coins per recruit, held in escrow — paid to the "
+            f"**Buy-in:** {format_coins(CREW_BUYIN)} coins per recruit, held in escrow — paid to the "
             f"**ringleader** when the job launches (win or lose). Ringleader rides free.\n"
             f"**Crew ({n}/{CREW_MAX_CREW}):**\n{crew_lines}\n\n"
             f"{odds_line}\n\n"
@@ -645,7 +646,7 @@ class CrewHeist(commands.Cog):
         channel = ctx_or_interaction.channel
 
         if victim is None:
-            await reply(f"Usage: `/crewheist target:@user` — recruit a crew ({CREW_BUYIN:,}/head) and hit their stash. "
+            await reply(f"Usage: `/crewheist target:@user` — recruit a crew ({format_coins(CREW_BUYIN)}/head) and hit their stash. "
                         f"Or `/crewheist target:@bot account:@user approach:<{_approach_usage()}>` "
                         f"to crack one player's safe-deposit box inside the casino.")
             return
@@ -706,7 +707,7 @@ class CrewHeist(commands.Cog):
         if account is not None:
             banked = economy.bank_balance(guild.id, account.id)
             if banked < BOX_MIN_BANK:
-                await reply(f"**{account.display_name}**'s box holds under **{BOX_MIN_BANK:,}** coins. "
+                await reply(f"**{account.display_name}**'s box holds under **{format_coins(BOX_MIN_BANK)}** coins. "
                             "Even a clean job would pay recruits less than their seats. Pick a fatter box.")
                 return
             lobby = CrewLobby(guild.id, channel.id, starter, victim, is_house,
@@ -716,10 +717,10 @@ class CrewHeist(commands.Cog):
         stash_id = economy.get_house_id() if is_house else victim.id
         if economy.get_coins(guild.id, stash_id) < MIN_VICTIM_COINS:
             if is_house:
-                await reply(f"The house's on-hand pot is under **{MIN_VICTIM_COINS:,}** coins right now — "
+                await reply(f"The house's on-hand pot is under **{format_coins(MIN_VICTIM_COINS)}** coins right now — "
                             "even a successful vault job would pay less than the seats. Let it fatten up.")
             else:
-                await reply(f"**{victim.display_name}**'s stash is under **{MIN_VICTIM_COINS:,}** coins. "
+                await reply(f"**{victim.display_name}**'s stash is under **{format_coins(MIN_VICTIM_COINS)}** coins. "
                             "Not worth the buy-ins — pick a richer mark.")
             return
 
@@ -760,11 +761,11 @@ class CrewHeist(commands.Cog):
             self._refund_all(lobby)
             if lobby.is_house:
                 desc = (f"The crew rolled up and the house's on-hand pot was down to "
-                        f"**{stash_now:,}** coins — someone drained it first. Not worth the "
+                        f"**{format_coins(stash_now)}** coins — someone drained it first. Not worth the "
                         f"gas. **Buy-ins refunded.**")
             else:
                 desc = (f"The crew rolled up and **{victim.display_name}**'s stash was down to "
-                        f"**{stash_now:,}** coins. Not worth the gas. **Buy-ins refunded.**")
+                        f"**{format_coins(stash_now)}** coins. Not worth the gas. **Buy-ins refunded.**")
             await self._edit(message, discord.Embed(
                 title="🚐 Crew Heist — Target Skipped Town",
                 description=desc,
@@ -790,7 +791,7 @@ class CrewHeist(commands.Cog):
             await self._edit(message, discord.Embed(
                 title="🛡️ Job Blocked!",
                 description=(f"The crew hit **{victim.display_name}**'s place — and bounced straight off an "
-                             f"active **Heist Shield**. The recruits are out **{CREW_BUYIN:,}** each and "
+                             f"active **Heist Shield**. The recruits are out **{format_coins(CREW_BUYIN)}** each and "
                              f"**{lobby.starter.display_name}** still pocketed the fees. Awkward van ride."),
                 color=discord.Color.blue(),
             ))
@@ -798,7 +799,7 @@ class CrewHeist(commands.Cog):
 
         # Stream the buildup as an append-only log, then land the outcome.
         fmt = dict(starter=lobby.starter.mention, victim=victim.display_name, crew_size=n)
-        buildup = [line.format(**fmt) for line in BUILDUP]
+        buildup = [fill(line, **fmt) for line in BUILDUP]
         revealed = []
         for line in buildup:
             revealed.append(line)
@@ -840,7 +841,7 @@ class CrewHeist(commands.Cog):
                     if not lobby.is_house:
                         economy.kv_set(guild_id, victim.id, "heistins", "last_loss",
                                        f"{loot}:{int(time.time())}")
-                    paid_lines = [f"💰 {m.mention} pockets **{amt:,}** coins."
+                    paid_lines = [f"💰 {m.mention} pockets **{format_coins(amt)}** coins."
                                   for m, (_, amt) in zip(crew, payments)]
                 else:
                     loot = 0
@@ -852,19 +853,19 @@ class CrewHeist(commands.Cog):
                 raid_paid = dict(raid["paid"])
                 if raid["total"] > 0:
                     plural = "s" if raid["accounts"] != 1 else ""
-                    boxes_line = random.choice(HOUSE_BOXES_MESSAGES).format(
+                    boxes_line = fill(random.choice(HOUSE_BOXES_MESSAGES),
                         amount=raid["total"], pct=int(round(raid_pct * 100)),
                         accounts=raid["accounts"], plural=plural)
                 else:
                     boxes_line = HOUSE_BOXES_EMPTY
                 vault_paid = dict(payments) if paid_lines else {}
                 if loot > 0 and paid_lines:
-                    headline = "✅ **" + random.choice(success_pool).format(
+                    headline = "✅ **" + fill(random.choice(success_pool),
                         victim=victim.display_name, amount=loot, pct=int(round(steal_pct * 100))) + "**"
                 else:
                     headline = HOUSE_VAULT_EMPTY
                 if loot > 0 or raid["total"] > 0:
-                    paid_lines = [f"💰 {m.mention} pockets **{vault_paid.get(m.id, 0) + raid_paid.get(m.id, 0):,}** coins."
+                    paid_lines = [f"💰 {m.mention} pockets **{format_coins(vault_paid.get(m.id, 0) + raid_paid.get(m.id, 0))}** coins."
                                   for m in crew]
                     body = (f"{headline}\n{boxes_line}\n\n" + "\n".join(paid_lines) +
                             f"\n\n({n}-way split. The house is furious. So is everyone with a bank account.)")
@@ -872,7 +873,7 @@ class CrewHeist(commands.Cog):
                     body = ("✅ The crew got in clean… and the vault AND the boxes were already bare. "
                             "Somebody beat them to everything. The van ride home was very quiet.")
             elif loot > 0 and paid_lines:
-                headline = random.choice(success_pool).format(
+                headline = fill(random.choice(success_pool),
                     victim=victim.display_name, amount=loot, pct=int(round(steal_pct * 100)))
                 body = (f"✅ **{headline}**\n\n" + "\n".join(paid_lines) +
                         f"\n\n({int(round(steal_pct * 100))}% of the stash, {n}-way split. "
@@ -891,14 +892,14 @@ class CrewHeist(commands.Cog):
                 jail_lo, jail_hi = HOUSE_JAIL_MIN_SECONDS, HOUSE_JAIL_MAX_SECONDS
                 reason = "Crew job on the house vault went sideways"
             else:
-                headline = random.choice(FAIL_MESSAGES).format(victim=victim.display_name)
+                headline = fill(random.choice(FAIL_MESSAGES), victim=victim.display_name)
                 escape_rate = ESCAPE_RATE
                 jail_lo, jail_hi = JAIL_MIN_SECONDS, JAIL_MAX_SECONDS
                 reason = f"Crew heist on {victim.display_name} went sideways"
             lines = [f"🚨 **{headline}**", ""]
             for m in crew:
                 if random.random() < escape_rate:
-                    lines.append(random.choice(ESCAPE_LINES).format(member=m.mention))
+                    lines.append(fill(random.choice(ESCAPE_LINES), member=m.mention))
                 else:
                     seconds = random.randint(jail_lo, jail_hi)
                     if lobby.is_house:
@@ -915,12 +916,12 @@ class CrewHeist(commands.Cog):
                         stretch = f"**{max(1, round(seconds / 3600))} hours**"
                     else:
                         stretch = f"**{max(1, seconds // 60)} minutes**"
-                    lines.append(random.choice(CAUGHT_LINES).format(member=m.mention) +
-                                 f" {stretch} in casino jail (bail {bail:,}).")
+                    lines.append(fill(random.choice(CAUGHT_LINES), member=m.mention) +
+                                 f" {stretch} in casino jail (bail {format_coins(bail)}).")
             if fee_total > 0:
                 lines.append("")
                 lines.append(f"**{lobby.starter.display_name}** still pockets the "
-                             f"**{fee_total:,}** coins in recruiting fees. Obviously.")
+                             f"**{format_coins(fee_total)}** coins in recruiting fees. Obviously.")
             await self._edit(message, discord.Embed(
                 title="🚔 THE JOB WENT SIDEWAYS", description=log + "\n".join(lines),
                 color=discord.Color.dark_red(),
@@ -949,7 +950,7 @@ class CrewHeist(commands.Cog):
             await self._edit(message, discord.Embed(
                 title="🚐 Crew Heist — Target Skipped Town",
                 description=(f"The crew rolled up and **{account.display_name}**'s box was down to "
-                             f"**{banked_now:,}** coins — they withdrew while the van was warming up. "
+                             f"**{format_coins(banked_now)}** coins — they withdrew while the van was warming up. "
                              f"Not worth the gas. **Buy-ins refunded.**"),
                 color=discord.Color.dark_grey(),
             ))
@@ -968,7 +969,7 @@ class CrewHeist(commands.Cog):
             await self._edit(message, discord.Embed(
                 title="🛡️ Job Blocked!",
                 description=(f"The crew reached **{account.display_name}**'s box — and it was wrapped in an "
-                             f"active **Heist Shield**. The recruits are out **{CREW_BUYIN:,}** each and "
+                             f"active **Heist Shield**. The recruits are out **{format_coins(CREW_BUYIN)}** each and "
                              f"**{lobby.starter.display_name}** still pocketed the fees. Awkward van ride."),
                 color=discord.Color.blue(),
             ))
@@ -977,8 +978,8 @@ class CrewHeist(commands.Cog):
         box_no = (account.id % 900) + 100   # cosmetic "box number" — stable per player
         fmt = dict(starter=lobby.starter.mention, account=account.display_name,
                    crew_size=n, box=box_no)
-        buildup = [line.format(**fmt) for line in BOX_BUILDUP[approach]]
-        title = BOX_INPROGRESS_TITLE.format(emoji=a["emoji"], label=a["label"])
+        buildup = [fill(line, **fmt) for line in BOX_BUILDUP[approach]]
+        title = fill(BOX_INPROGRESS_TITLE, emoji=a["emoji"], label=a["label"])
         revealed = []
         for line in buildup:
             revealed.append(line)
@@ -1009,9 +1010,9 @@ class CrewHeist(commands.Cog):
                     paid = dict(res["paid"])
                     economy.kv_set(guild_id, account.id, "heistins", "last_loss",
                                    f"{loot}:{int(time.time())}")
-                    headline = random.choice(BOX_SUCCESS_MESSAGES[approach]).format(
+                    headline = fill(random.choice(BOX_SUCCESS_MESSAGES[approach]),
                         amount=loot, pct=int(round(take_pct * 100)), **fmt)
-                    paid_lines = [f"💰 {m.mention} pockets **{paid.get(m.id, 0):,}** coins." for m in crew]
+                    paid_lines = [f"💰 {m.mention} pockets **{format_coins(paid.get(m.id, 0))}** coins." for m in crew]
                     body = (f"✅ **{headline}**\n\n" + "\n".join(paid_lines) +
                             f"\n\n({int(round(take_pct * 100))}% of the box, {n}-way split. "
                             f"{account.mention}, your safe-deposit box just got crewed. The house is furious.)")
@@ -1024,12 +1025,12 @@ class CrewHeist(commands.Cog):
             ))
             return
 
-        headline = random.choice(BOX_FAIL_MESSAGES[approach]).format(**fmt)
+        headline = fill(random.choice(BOX_FAIL_MESSAGES[approach]), **fmt)
         jail_lo, jail_hi = a["jail"]
         lines = [f"🚨 **{headline}**", ""]
         for m in crew:
             if random.random() < a["escape"]:
-                lines.append(random.choice(BOX_ESCAPE_LINES[approach]).format(member=m.mention))
+                lines.append(fill(random.choice(BOX_ESCAPE_LINES[approach]), member=m.mention))
                 continue
             seconds = random.randint(jail_lo, jail_hi)
             wealth = economy.get_wealth(guild_id, m.id)
@@ -1039,17 +1040,17 @@ class CrewHeist(commands.Cog):
                 reason=f"Crew job on {account.display_name}'s safe-deposit box went sideways ({a['label']})",
                 bail_amount=bail, channel_id=channel_id,
             )
-            line = (random.choice(BOX_CAUGHT_LINES[approach]).format(member=m.mention) +
-                    f" {self._stretch(seconds)} in casino jail (bail {bail:,}).")
+            line = (fill(random.choice(BOX_CAUGHT_LINES[approach]), member=m.mention) +
+                    f" {self._stretch(seconds)} in casino jail (bail {format_coins(bail)}).")
             if a["fine_pct"] > 0:
                 fined = economy.fine_user_wealth(guild_id, m.id, int(wealth * a["fine_pct"]))
                 if fined > 0:
-                    line += f" Counter-hacked for **{fined:,}** coins."
+                    line += f" Counter-hacked for **{format_coins(fined)}** coins."
             lines.append(line)
         if fee_total > 0:
             lines.append("")
             lines.append(f"**{lobby.starter.display_name}** still pockets the "
-                         f"**{fee_total:,}** coins in recruiting fees. Obviously.")
+                         f"**{format_coins(fee_total)}** coins in recruiting fees. Obviously.")
         await self._edit(message, discord.Embed(
             title=f"🚔 THE JOB WENT SIDEWAYS — {a['label'].upper()}",
             description=log + "\n".join(lines), color=discord.Color.dark_red(),
@@ -1074,7 +1075,7 @@ class CrewHeist(commands.Cog):
         <physical|cyber|social|inside>` — one player's safe-deposit box."""
         await self._start(ctx, victim, account, approach)
 
-    @app_commands.command(name="crewheist", description=f"Recruit a crew ({CREW_BUYIN:,}/recruit) to hit a player, the whole casino, or one bank box")
+    @app_commands.command(name="crewheist", description=f"Recruit a crew ({format_coins(CREW_BUYIN)}/recruit) to hit a player, the whole casino, or one bank box")
     @app_commands.describe(
         target="The player whose stash you're hitting — or the bot for the full sweep (vault + every bank account)",
         account="(bot jobs only) Whose safe-deposit box — their bank account — the crew cracks instead of the vault",

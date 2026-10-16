@@ -4,7 +4,7 @@ from discord import app_commands
 import logging
 import economy
 from amount import amount_error
-from game_common import parse_wallet_amount
+from game_common import parse_wallet_amount, format_coins
 from taunts import ceiling_taunt
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class Gift(commands.Cog):
             err = result.get("error")
             if err == "broke":
                 return discord.Embed(
-                    description=f"You only have **{result.get('have', 0):,}** coins!",
+                    description=f"You only have **{format_coins(result.get('have', 0))}** coins!",
                     color=discord.Color.red(),
                 )
             if err == "invalid_amount":
@@ -52,11 +52,11 @@ class Gift(commands.Cog):
         amount = result.get("amount", amount)
         embed = discord.Embed(
             title="Gift Sent!",
-            description=f"{sender.mention} gifted **{amount:,}** coins to {recipient.mention}!",
+            description=f"{sender.mention} gifted **{format_coins(amount)}** coins to {recipient.mention}!",
             color=discord.Color.green()
         )
-        embed.add_field(name=f"{sender.display_name}'s Balance", value=f"{result['sender_balance']:,} coins", inline=True)
-        embed.add_field(name=f"{recipient.display_name}'s Balance", value=f"{result['receiver_balance']:,} coins", inline=True)
+        embed.add_field(name=f"{sender.display_name}'s Balance", value=f"{format_coins(result['sender_balance'])} coins", inline=True)
+        embed.add_field(name=f"{recipient.display_name}'s Balance", value=f"{format_coins(result['receiver_balance'])} coins", inline=True)
         return embed
 
     @commands.command(aliases=['give', 'send'])

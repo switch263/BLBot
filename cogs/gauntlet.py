@@ -25,7 +25,7 @@ import logging
 
 import economy
 from amount import amount_error, format_compact
-from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label, prestige_trailer
+from game_common import STAKE_TIMEOUT, casino_prelude, parse_wallet_amount, refund_stake, button_label, prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -107,15 +107,15 @@ class GauntletView(discord.ui.View):
         p, m = self._next_round()
         win_val = int(self.bet * m)
         lines = [
-            f"**Bet:** {self.bet:,}",
-            f"**Banked:** {self.banked:,}  (×{self.current_mult:g})",
+            f"**Bet:** {format_coins(self.bet)}",
+            f"**Banked:** {format_coins(self.banked)}  (×{self.current_mult:g})",
         ]
         if self.survived:
             lines.append(f"Cleared **{self.survived}** round(s) so far.")
         lines += [
             "",
             f"**Round {self.survived + 1}:** {int(round(p * 100))}% to survive "
-            f"→ ×{m:g} (**{win_val:,}**)",
+            f"→ ×{m:g} (**{format_coins(win_val)}**)",
             "Cash out now, or push your luck?",
         ]
         return discord.Embed(
@@ -137,7 +137,7 @@ class GauntletView(discord.ui.View):
             lead = f"You walked after **{self.survived}** round(s) at **×{self.current_mult:g}**."
         return discord.Embed(
             title=title,
-            description=f"{lead}\nPayout: **{paid:,}**  (net {sign}{net:,}){mint_note}"
+            description=f"{lead}\nPayout: **{format_coins(paid)}**  (net {sign}{format_coins(net)}){mint_note}"
             + prestige_trailer(self.guild_id, self.user_id),
             color=discord.Color.green(),
         )
@@ -149,8 +149,8 @@ class GauntletView(discord.ui.View):
         return discord.Embed(
             title="💥 BUSTED",
             description=(
-                f"Round {self.survived + 1} ate you alive. Your **{self.bet:,}** "
-                f"stays with the house.\nYou were one nerve away from **{missed:,}**."
+                f"Round {self.survived + 1} ate you alive. Your **{format_coins(self.bet)}** "
+                f"stays with the house.\nYou were one nerve away from **{format_coins(missed)}**."
             ),
             color=discord.Color.dark_red(),
         )
@@ -257,7 +257,7 @@ class Gauntlet(commands.Cog):
         bet = amt
 
         if bet < GAUNTLET_MIN_BET:
-            await reply(f"Minimum buy-in for the Gauntlet is **{GAUNTLET_MIN_BET:,}**.")
+            await reply(f"Minimum buy-in for the Gauntlet is **{format_coins(GAUNTLET_MIN_BET)}**.")
             return
 
         # The whole point: the ceiling scales with the house, not a flat 100k.
@@ -268,7 +268,7 @@ class Gauntlet(commands.Cog):
             return
         if bet > table_limit:
             await reply(
-                f"Table limit right now is **{table_limit:,}** "
+                f"Table limit right now is **{format_coins(table_limit)}** "
                 f"({int(GAUNTLET_MAX_HOUSE_PCT * 100)}% of the house bankroll). "
                 f"High roller, but not *that* high."
             )
@@ -277,7 +277,7 @@ class Gauntlet(commands.Cog):
         bet_result = economy.transfer_to_house(guild.id, user.id, bet)
         if not bet_result.get("ok"):
             if bet_result.get("error") == "broke":
-                await reply(f"Too broke. Balance: **{bet_result.get('have', 0):,}**")
+                await reply(f"Too broke. Balance: **{format_coins(bet_result.get('have', 0))}**")
             else:
                 await reply("Bet failed. Try again.")
             return

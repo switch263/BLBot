@@ -17,6 +17,7 @@ from items import (
     ITEMS, ALL_ITEMS, JAIL_CARD, BONUS_SPIN, HEIST_SHIELD,
     item_meta, resolve,
 )
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class Shop(commands.Cog):
         for key in ALL_ITEMS:
             m = ITEMS[key]
             embed.add_field(
-                name=f"{m['emoji']} {m['name']} — {m['price']:,} coins",
+                name=f"{m['emoji']} {m['name']} — {format_coins(m['price'])} coins",
                 value=f"{m['blurb']}\n*{m['flavor']}*",
                 inline=False,
             )
@@ -124,8 +125,8 @@ class Shop(commands.Cog):
         if not economy.try_deduct(guild.id, user.id, total):
             have = economy.get_coins(guild.id, user.id)
             await reply(
-                f"Too broke. {m['emoji']} **{m['name']}** ×{qty} costs **{total:,}** "
-                f"coins — you have **{have:,}**."
+                f"Too broke. {m['emoji']} **{m['name']}** ×{qty} costs **{format_coins(total)}** "
+                f"coins — you have **{format_coins(have)}**."
             )
             return
         economy.grant_item(guild.id, user.id, key, qty)
@@ -139,7 +140,7 @@ class Shop(commands.Cog):
             how = "Use it with `/use`."
         await reply(
             f"🛒 {user.display_name} bought {m['emoji']} **{m['name']}** ×{qty} for "
-            f"**{total:,}** coins. Burned to the void. {how}"
+            f"**{format_coins(total)}** coins. Burned to the void. {how}"
         )
 
     # --- /sell -------------------------------------------------------------
@@ -171,7 +172,7 @@ class Shop(commands.Cog):
         economy.add_coins(guild.id, user.id, payout)
         await reply(
             f"💰 {user.display_name} sold {m['emoji']} **{m['name']}** ×{qty} for "
-            f"**{payout:,}** coins."
+            f"**{format_coins(payout)}** coins."
         )
 
     # --- /inventory --------------------------------------------------------
@@ -194,7 +195,7 @@ class Shop(commands.Cog):
                 value = m["blurb"]
                 sell = m.get("sell_value")
                 if sell:
-                    value += f"\n*Sells for {sell:,} coins each via `/sell`.*"
+                    value += f"\n*Sells for {format_coins(sell)} coins each via `/sell`.*"
                 embed.add_field(
                     name=f"{m['emoji']} {m['name']} ×{count}",
                     value=value,

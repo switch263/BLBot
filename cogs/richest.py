@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 import economy
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class Richest(commands.Cog):
             name = member.display_name if member else f"User {uid}"
             net = won - lost
             net_str = f"+{net}" if net >= 0 else str(net)
-            desc += f"{medals[i]} **{name}** — {wealth:,} coins (net: {net_str})\n"
+            desc += f"{medals[i]} **{name}** — {format_coins(wealth)} coins (net: {net_str})\n"
 
         embed = discord.Embed(
             title="Richest Players",
@@ -43,10 +44,10 @@ class Richest(commands.Cog):
         total_wealth = stats['total_coins'] + stats['total_banked']
         embed.add_field(name="Server Economy", value=(
             f"Players: **{stats['players']}**\n"
-            f"Total Coins: **{total_wealth:,}** "
-            f"(💵 **{stats['total_coins']:,}** on hand, 🏦 **{stats['total_banked']:,}** banked)\n"
-            f"Total Spins: **{stats['total_spins']:,}**\n"
-            f"Total Jackpots: **{stats['total_jackpots']:,}**"
+            f"Total Coins: **{format_coins(total_wealth)}** "
+            f"(💵 **{format_coins(stats['total_coins'])}** on hand, 🏦 **{format_coins(stats['total_banked'])}** banked)\n"
+            f"Total Spins: **{format_coins(stats['total_spins'])}**\n"
+            f"Total Jackpots: **{format_coins(stats['total_jackpots'])}**"
         ), inline=False)
 
         return embed

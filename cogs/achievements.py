@@ -6,7 +6,7 @@ import logging
 
 import economy
 from achievements import ACHIEVEMENTS, TOTAL_POINTS, points, reward
-from game_common import prestige_trailer
+from game_common import prestige_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -88,14 +88,14 @@ class Achievements(commands.Cog):
         if len(newly) > MAX_ANNOUNCED:
             total_pts = sum(points(aid) for aid, _a, _p in newly)
             total_paid = sum(paid for _aid, _a, paid in newly)
-            paid_note = f" and **+{total_paid:,}** coins" if total_paid > 0 else ""
+            paid_note = f" and **+{format_coins(total_paid)}** coins" if total_paid > 0 else ""
             text = (f"🏆 **{user.display_name}** unlocked **{len(newly)}** achievements at once "
                     f"for **{total_pts}** points{paid_note}. `!achievements` for the list.")
         else:
             lines = [f"🏆 **{user.display_name}** unlocked a new achievement!" if len(newly) == 1
                      else f"🏆 **{user.display_name}** unlocked {len(newly)} achievements!"]
             for aid, a, paid in newly:
-                reward_note = f" — **+{paid:,}** coins" if paid > 0 else ""
+                reward_note = f" — **+{format_coins(paid)}** coins" if paid > 0 else ""
                 lines.append(f"{a['emoji']} **{a['name']}** ({points(aid)} pts){reward_note}\n   _{a['desc']}_")
             text = "\n".join(lines)
         if any(paid > 0 for _aid, _a, paid in newly):

@@ -35,6 +35,7 @@ from discord import app_commands
 
 import economy
 from config import ADMIN_CHANNEL_ID
+from game_common import format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ class Taxes(commands.Cog):
 
     async def _announce_levy(self, guild, bills, due_ts):
         pct = int(economy.WINNINGS_TAX_PCT * 100)
-        lines = [f"<@{uid}> owes **{owed:,}**" for uid, owed in bills[:_MAX_LIST]]
+        lines = [f"<@{uid}> owes **{format_coins(owed)}**" for uid, owed in bills[:_MAX_LIST]]
         if len(bills) > _MAX_LIST:
             lines.append(f"…and **{len(bills) - _MAX_LIST}** more.")
         embed = discord.Embed(
@@ -304,7 +305,7 @@ class Taxes(commands.Cog):
         pct = economy.WEALTH_TAX_PCT * 100
         threshold = economy.WEALTH_TAX_THRESHOLD
         lines = [
-            f"<@{uid}> — worth **{total:,}**, paid **{seized:,}**"
+            f"<@{uid}> — worth **{format_coins(total)}**, paid **{format_coins(seized)}**"
             for uid, total, seized in taxed[:_MAX_LIST]
         ]
         if len(taxed) > _MAX_LIST:
@@ -313,7 +314,7 @@ class Taxes(commands.Cog):
             title="💎 MONTHLY WEALTH TAX",
             description=(
                 f"It's the {economy.WEALTH_TAX_DAY}th. Every fortune over "
-                f"**{threshold:,}** coins (wallet + bank) just paid its "
+                f"**{format_coins(threshold)}** coins (wallet + bank) just paid its "
                 f"**{pct:g}%** to the house. Already collected — no bill, no "
                 f"deadline, no appeals. Hoard accordingly.\n\n"
                 + "\n".join(lines)
@@ -357,7 +358,7 @@ class Taxes(commands.Cog):
                     tag = f"repeat offender — **{h2}h**, no card out"
                 else:
                     tag = f"first offense — **{h1}h**"
-                lines.append(f"<@{uid}> — **{seized:,}** seized, {tag}")
+                lines.append(f"<@{uid}> — **{format_coins(seized)}** seized, {tag}")
             if len(evaders) > _MAX_LIST:
                 lines.append(f"…and **{len(evaders) - _MAX_LIST}** more.")
             embed = discord.Embed(
@@ -390,8 +391,8 @@ class Taxes(commands.Cog):
                 return discord.Embed(
                     title="💸 Can't Cover It",
                     description=(
-                        f"Your tax bill is **{owed:,}** but you only have "
-                        f"**{have:,}**. Win it back before the deadline or it's "
+                        f"Your tax bill is **{format_coins(owed)}** but you only have "
+                        f"**{format_coins(have)}**. Win it back before the deadline or it's "
                         f"jail and a forfeited wallet."
                     ),
                     color=discord.Color.red(),
@@ -402,8 +403,8 @@ class Taxes(commands.Cog):
         decayed = self._credit_on_time(guild_id, user.id)
         bal = economy.get_coins(guild_id, user.id)
         desc = (
-            f"{user.mention} settled a **{owed:,}** coin tax bill with the "
-            f"house.\nBalance: **{bal:,}** coins."
+            f"{user.mention} settled a **{format_coins(owed)}** coin tax bill with the "
+            f"house.\nBalance: **{format_coins(bal)}** coins."
         )
         if decayed:
             desc += (
@@ -439,7 +440,7 @@ class Taxes(commands.Cog):
         return discord.Embed(
             title="🧾 Tax Bill",
             description=(
-                f"You owe **{owed:,}** coins on this week's winnings.\n"
+                f"You owe **{format_coins(owed)}** coins on this week's winnings.\n"
                 f"Pay with `/tax pay` before <t:{int(due)}:R> (<t:{int(due)}:f>) "
                 f"or face jail and a forfeited wallet."
             ),

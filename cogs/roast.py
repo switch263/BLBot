@@ -5,7 +5,7 @@ import random
 import logging
 
 from economy import is_memorial, prestige_surcharge
-from game_common import charge_fee, fee_trailer
+from game_common import charge_fee, fee_trailer, format_coins
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ class Roast(commands.Cog):
         target = member or ctx.author
         await ctx.send(self._generate_roast(ctx.guild.id, ctx.author.id, target.id, target.mention))
 
-    @app_commands.command(name="roast", description=f"Roast someone with an actual roast ({ROAST_FEE:,} coins)")
+    @app_commands.command(name="roast", description=f"Roast someone with an actual roast ({format_coins(ROAST_FEE)} coins)")
     @app_commands.describe(member="Who to roast (leave empty to roast yourself)")
     async def roast_slash(self, interaction: discord.Interaction, member: discord.Member = None):
         if interaction.guild is None:
