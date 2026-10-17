@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import logging
+from typing import Union
 
 from economy import is_memorial, prestige_surcharge
 from game_common import charge_fee, fee_trailer, format_coins
@@ -135,14 +136,14 @@ class Roast(commands.Cog):
 
     @commands.command()
     @commands.guild_only()
-    async def roast(self, ctx, member: discord.Member = None):
-        """Roast someone (or yourself if you're brave). Costs 100k."""
+    async def roast(self, ctx, member: Union[discord.Member, discord.Role] = None):
+        """Roast a member or role (or yourself if you're brave). Costs 100k."""
         target = member or ctx.author
         await ctx.send(self._generate_roast(ctx.guild.id, ctx.author.id, target.id, target.mention))
 
     @app_commands.command(name="roast", description=f"Roast someone with an actual roast ({format_coins(ROAST_FEE)} coins)")
-    @app_commands.describe(member="Who to roast (leave empty to roast yourself)")
-    async def roast_slash(self, interaction: discord.Interaction, member: discord.Member = None):
+    @app_commands.describe(member="Member or role to roast (leave empty to roast yourself)")
+    async def roast_slash(self, interaction: discord.Interaction, member: Union[discord.Member, discord.Role] = None):
         if interaction.guild is None:
             await interaction.response.send_message("Server only.", ephemeral=True)
             return
